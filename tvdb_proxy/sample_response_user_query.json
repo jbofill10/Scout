@@ -1,0 +1,990 @@
+{
+  "status": "success",
+  "data": [
+    {
+      "objectID": "series-78857",
+      "country": "jpn",
+      "id": "series-78857",
+      "image_url": "https://artworks.thetvdb.com/banners/v4/series/78857/posters/6069f97b9bad8.jpg",
+      "name": "NARUTO－ナルト－",
+      "first_air_time": "2002-10-03",
+      "overview": "絶対、火影になってやるんだってばよ!!\r\n\r\n木ノ葉隠れの里の落ちこばれ忍者、うずまきナルトの夢はいつか里一番の忍者「火影」の名を受け継ぐ事。その身に封印された尾獣「九尾の妖狐」ゆえに孤独な過去を背負ったナルトだが、サスケとサクラという仲間を得、上忍カカシ率いる第七班の一員として任務をスタートさせた!!",
+      "primary_language": "jpn",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "78857",
+      "year": "2002",
+      "slug": "naruto",
+      "overviews": {
+        "ara": "القرية المخفيّة في الورق هي موطن لأكثر النينجا خفّة وسريّة. لكن قبل اثنتي عشرة سنة، ظهر الثعلب الشيطان ذو التسعة ذيول وبعث الرعب في ساكنيها قبل أن يتمّ كبته وختم روحه في داخل جسد طفلٍ رضيع.",
+        "cat": "En companyia de l'intens Sasuke i de l'enginyosa Sakura, en Naruto comença el seu aprenentatge decidit a convertir-se en mestre Hokage, la més alta distinció entre els ninges. Des de l'examen d'accés a Chunin fins al peregrinatge amb l'ermità pervertit Jiraiya, passant pels enfrontaments amb les forces del shinobi renegat Orochimaru, acompanya en Naruto a perseguir el seu somni en un camí ple d'aventures trepidants, aliats valerosos i enemics mortals amb habilitats extraordinàries, combats explosius, traïció i pèrdua...",
+        "deu": "Ein riesiges neunschwänziges Fuchsmonster greift das Dorf Konohagakure an und zerstört alles in seiner Umgebung. Schließlich schafft es ein einzigartiger Ninja den Dämon zu bändigen und schließt ihn in den Körper eines Neugeborenen ein. Jedoch muss dieser Held, der Hokage der vierten Generation, einen hohen Preis zahlen. Er verliert sein Leben bei der Rettung des Dorfes.\r\n\r\n12 Jahre sind nach diesem Unglück vergangen, der Junge Naruto Uzumaki, ein etwas tollpatschiger Ninja hat gerade seine erste Abschlussprüfung an der Ninja-Akademie bestanden. Nachdem er nun die erste Hürde auf dem Weg ein großer Ninja zu werden, bestanden hat, macht er sich mit seinen beiden Freunden auf um viele Missionen für das Dorf zu erledigen.",
+        "eng": "In another world, ninja are the ultimate power, and in the Village Hidden in the Leaves live the stealthiest ninja in the land. Twelve years earlier, the fearsome Nine-Tailed Fox terrorized the village and claimed many lives before it was subdued and its spirit sealed within the body of a baby boy. That boy, Naruto Uzumaki, has grown up to become a ninja-in-training who's more interested in pranks than in studying ninjutsu.. but Naruto is determined to become the greatest ninja ever!",
+        "fra": "Dans le sympathique village caché de Konoha vit une tribu aux coutumes ancestrales. Les enfants sont entrainés dès leur plus jeune âge pour devenir des ninjas, encouragés en cela par le maitre Hogake, le guerrier le plus puissant de chaque génération. Il y a de cela plusieurs années un démon renard à neuf queues entreprit la destruction du village et c'est le maitre Hokage 4ème du nom qui permit la survie de son peuple, au prix de sa vie. Les enfants de l'école de ninjas essaient donc de devenir aussi forts si ce n'est plus que cet illustre ancêtre.\r\nNaruto fait partie de ces jeunes pleins d'ambitions. Orphelin et éternel farceur, il passe son temps à jouer les pires blagues pour tromper sa solitude et se faire remarquer, n'étant aimé pour une raison inconnue par personne. Cela fait déjà deux fois qu'il échoue au diplôme d'assistant ninja qui doit lui ouvrir les portes de l'entrainement de ninjutsu. Mais les choses vont peut-être enfin changer, une nouvelle épreuve doit bientôt avoir lieu. Mais une surprise attend Naruto... \r\n",
+        "hun": "A sorozat Uzumaki Naruto, egy hiperaktív kamasz nindzsa kalandjait követi végig, aki folyton az elismeréséért küzd és célja, hogy faluja legerősebb nindzsája, azaz a hokage legyen.",
+        "ita": "Naruto Uzumaki è un ragazzo dodicenne del Villaggio di Konoha, sede dei ninja del Paese del Fuoco, che insegue il sogno di diventare Hokage, cioè ninja più forte nonché capo del Villaggio. Il giovane custodisce in sé un segreto di cui lui stesso è all' oscuro: il Quarto Hokage ha sigillato il demone della Volpe a nove code dentro il suo corpo. Da quel momento in poi, nonostante il Quarto Hokage volesse che fosse considerato come salvatore del Villaggio, Naruto fu sempre associato da tutti gli abitanti del Villaggio allo spirito demoniaco che viveva in lui e perciò crebbe isolato da tutti, senza riuscire a spiegarsi il motivo della sua emarginazione. Così, per poter attirare su di sé un po' di attenzione, iniziò a comportarsi da teppista, fingendosi sempre allegro e tentando di nascondere l'enorme sofferenza patita per la propria solitudine e per l'odio nutrito verso di lui dagli abitanti del Villaggio.Ce la farà Naruto a realizzare il suo sogno?",
+        "jpn": "絶対、火影になってやるんだってばよ!!\r\n\r\n木ノ葉隠れの里の落ちこばれ忍者、うずまきナルトの夢はいつか里一番の忍者「火影」の名を受け継ぐ事。その身に封印された尾獣「九尾の妖狐」ゆえに孤独な過去を背負ったナルトだが、サスケとサクラという仲間を得、上忍カカシ率いる第七班の一員として任務をスタートさせた!!",
+        "kor": "닌자 마을 중 하나인 나뭇잎 마을의 문제아 나루토가 같은 학교 학생인 사스케, 사쿠라와 함께 닌자로서의 첫발을 내딛게 되는 이야기",
+        "pol": "Naruto jest dwunastoletnim wojownikiem ninja. Kiedy był niemowlęciem Hokage Yondaime, przywódca Ukrytej Wioski Liścia, stoczył walkę z potężnym demonem. Chcąc ratować swój klan przed zagładą Yondaime uwięził demona w ciele niemowlęcia – małego Naruto. Odkąd młody ninja dowiedział się, jak straszny sekret ukrywali przed nim mieszkańcy wioski, dąży uparcie do jednego celu, chce zostać kolejnym Hokage – przywódcą swojego klanu. (Źródło: Teleman)",
+        "por": "Naruto é o nome de uma série de mangá que originou o anime homónimo de muito sucesso no Japão, e que agora está se difundindo também por várias partes do mundo, como nos EUA e no Brasil. Criada originalmente por Masashi Kishimoto, é uma série Shounen. O mundo de Naruto é composto de ninjas. Eles vivem em vilarejos e ganham dinheiro por missões. Cada vilarejo tem o seu líder, a sua política, normalmente separada da do país onde elas estão. Nas lutas, os ninjas se utilizam de jutsus (técnicas), que são as técnicas secretas de um ninja. Assim eles podem fazer coisas incríveis, como criar fogo, água, ou andar nas paredes. O personagem principal é Uzumaki Naruto, um jovem garoto que sonha em se tornar o líder de seu vilarejo (Hokage), tido como o ninja mais forte e respeitado. Vai ser difícil, já que dentro dele está um demónio, Kyuubi, preso para evitar mais destruição e morte. Naruto cresceu sendo visto como o próprio demónio, sendo excluído, porém pelo trabalho duro ele mostra ser o oposto disso, ganhando respeito, carinho e amizade da maioria.",
+        "pt": "Naruto é um jovem órfão habitante da Vila da Folha que sonha se tornar Hokage, o maior guerreiro e governante da vila. Ao se graduar como ninja, descobre que tem um demônio raposa selado dentro de si.",
+        "rus": "Где-то далеко существует странный мир, так похожий на наш и все же бесконечно далекий. Мир, застывший в средневековье, с феодальными лордами и бродячими купцами, в то же время с рыбаками на моторках и ниндзя за телевизором. Да, ниндзя, ибо миром тем незримо правят хитроумные синоби, познавшие три ветви Великого Искусства – Искусство Тела (тайдзюцу), Искусство Скрытого (ниндзюцу) и Искусство Иллюзии (гэндзюцу). Мощь государств здесь определяется не бесчисленными легионами, а независимыми Сокрытыми деревнями ниндзя, главы которых, носящие титул «Кагэ» (тени), могут справиться даже с могучими Паганцами.\r\n\r\nС одной из таких битв и начинается история. На деревню, Сокрытую в Листве, напал древний Паганец Кьюби, ужасный Девятихвостый Лис. Вождь деревни одолел Паганца, ценой собственной жизни заточив его в теле новорожденного младенца. Мальчик, получивший имя Наруто, рос сиротой и изгоем, но не сломался, не озлобился, потому что рядом оказались люди, верящие в него. И потому, окончив академию ниндзя и узнав нелегкую правду, прямой и непоседливый Наруто принял решение жить для людей и обязате",
+        "spa": "La serie se centra en torno a Uzumaki Naruto, un joven ninja de la aldea oculta de Konoha, del País del Fuego.\r\nNaruto es un chico travieso al que le gusta llamar la atención, haciendo que el maestro Iruka se enfade. Y debido a esto, no parece que sea capaz de graduarse en la escuela de ninjas. Pero Naruto tiene un sueño... convertirse en el jefe de la aldea de ninjas donde vive y así ser el siguiente Hokage, y por consiguiente ser reconocido como el mejor ninja.",
+        "tur": "Başka bir dünyada, ninja nihai güçtür ve Yapraklarda Saklı Köy'de ülkedeki en sinsi ninja yaşar. On iki yıl önce, korkunç Dokuz Kuyruklu Tilki köye terör estirmiştir ve ruhu bir erkek bebeğin vücuduna mühürlenmiştir. O çocuk, Naruto Uzumaki, gelmiş geçmiş en büyük ninja olmaya kararlıdır."
+      },
+      "translations": {
+        "ara": "ناروتو",
+        "cat": "Naruto",
+        "deu": "Naruto",
+        "eng": "Naruto",
+        "fra": "Naruto",
+        "heb": "נארוטו",
+        "hun": "Naruto",
+        "ita": "Naruto",
+        "jpn": "NARUTO－ナルト－",
+        "kor": "나루토",
+        "pol": "Naruto",
+        "por": "Naruto",
+        "pt": "Naruto",
+        "rus": "Наруто",
+        "spa": "Naruto",
+        "tha": "นารูโตะ นินจาจอมคาถา",
+        "tur": "Naruto",
+        "zho": "火影忍者",
+        "zhtw": "火影忍者"
+      },
+      "network": "TV Tokyo",
+      "remote_ids": [
+        {
+          "id": "tt0409591",
+          "type": 2,
+          "sourceName": "IMDB"
+        },
+        {
+          "id": "SH774951",
+          "type": 3,
+          "sourceName": "TMS (Zap2It)"
+        },
+        {
+          "id": "46260",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/v4/series/78857/posters/6069f97b9bad8_t.jpg"
+    },
+    {
+      "objectID": "series-79824",
+      "aliases": [
+        "Naruto: Shippûden",
+        "Naruto: Shippuden",
+        "Naruto Shippūden",
+        "Naruto Shippūden",
+        "Naruto Shippuuden",
+        "Naruto: Shippuden",
+        "Naruto: Shippuuden",
+        "Naruto: Shippûden",
+        "Наруто Шіппуден"
+      ],
+      "country": "jpn",
+      "id": "series-79824",
+      "image_url": "https://artworks.thetvdb.com/banners/v4/series/79824/posters/622cbd72ddadb.jpg",
+      "name": "NARUTO－ナルト－ 疾風伝",
+      "first_air_time": "2007-02-15",
+      "overview": "　人知を超えた力を持ち、忍界大戦の折には、各国、隠れ里が競ってそれを軍事利用しようと躍起になった尾獣——そのひとつ『三尾』を狙う大蛇丸が動き出した。\r\n　 ナルトが自来也のもと、風遁螺旋手裏剣にかわる新たな術、忍ガマとのコラボ忍術の修業に励む中、大蛇丸のアジト発見の報せを受けた木ノ葉隠れの里では、綱手の命令により結成された、カカシ、キバ、シノ、ヒナタの小隊がアジト探索へと乗り出す。\r\n　一方、大蛇丸のアジトでは、サスケの才能を目の当たりにし嫉妬心をあらわにする晶遁使い（しょうとんつかい）のくノ一・紅蓮（グレン）が、大蛇丸よりある計画を持ちかけられていた。その鍵となるのはカブトとともに三尾召還実験を行う少年・幽鬼丸（ユウキマル）である。幽鬼丸は特殊な能力を持ち、自分には帰れる場所がないと思い込んでいる変わった少年だ。\r\nその幽鬼丸とナルトが偶然に出会い心を通わせたのも束の間、幽鬼丸は新たな三尾召還実験のため、大蛇丸の命を受けた紅蓮とともに旅立つことになる。\r\nやがて仲間たちと合流する紅蓮。そこに敵を追跡中だったカカシたちが現れ、両者はついに戦いに突入。だが、初めて戦う相手と術にカカシたちは思いがけず苦戦することになるのである。\r\nそして同じ頃、すべての尾獣狩りを目論む暁も三尾の情報を得て、その捕獲のため不穏な動きを見せ始めていた。\r\nここに忍界大戦以来の一大事、尾獣を巡る、大蛇丸、暁、そして木ノ葉の争いが始まろうとしていた。",
+      "primary_language": "jpn",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "79824",
+      "year": "2007",
+      "slug": "naruto-shippuden",
+      "overviews": {
+        "ara": "يعود ناروتو إلى قريته بعد سنتين ونصف من التدريب على يد السيد جيرايا ليقابل اصدقائه مرة أخرى ثم تكلفه السيدة تسونادي التي أصبحت الهوكاجي أن يقاتل هو وساكورا معلمهم القديم في الفريق السابع هاتاكي كاكاشي لتختبر قوتهم وهنا تأتي النتائج مذهلة فقد ارتفعت قوة ناروتو بشكل كبير وكذلك الحال مع ساكورا التي قضت السنتين والنصف في التدريب على يد تسونادي وعندها تقرر تسونادي ان تكون فريقًا من ناروتو وساكورا وكاكاشي يذهب لمساندة قرية الرمل حليفة كونوها في محنتها مع الأكاتسكي وبالتحديد ديدارا وساسوري الذين خطفوا الكازيكاغي غارا",
+        "ces": "Seriál se odehrává dva a půl roku po odchodu Naruta z Konohy. Náš hlavní hrdina zmoudřel a pomalu si začíná získávat přátele. Tým 7 získá náhradního člena za Sasukeho a pokusí se ho dostat ze spárů Orochimara a následně organizace Akatsuki. Podaří se jim Sasukeho zachránit nebo bude dokonce válka ninjů? Bude Sasukemu stačit pomsta nebo bude schopen zajít dále?",
+        "deu": "Naruto und Sasuke sehen sich nach drei Jahren endlich wieder.\r\nNaruto hat extreme Fortschritte gemacht und ist zu einem sehr guten und coolen  Ninja geworden. Allerdings ist Sasuke unter dem Training von Orochimaru unglaublich stark geworden. Er besitzt ein Schwert, kann das Chidori über seinen ganzen Körper spannen und ist so schnell, dass man ihn nicht mehr mit den Augen verfolgen kann.\r\nOb Naruto da eine Chance hat?",
+        "eng": "Naruto Uzumaki, is a loud, hyperactive, adolescent ninja who constantly searches for approval and recognition, as well as to become Hokage, who is acknowledged as the leader and strongest of all ninja in the village.\r\n",
+        "fra": "Naruto est de retour à Konoha trois ans après son voyage d'entraînement avec Jiraiya. Konoha n'a pas changé, enfin presque. Notre cher héros retrouve une Sakura bien plus forte, un Kakashi toujours fidèle à lui-même, et des compagnons qui n'ont pas l'air d'avoir chômé ces trois dernières années, mais les retrouvailles seront de courte durée... Akatsuki reprend aussi du service et, qui plus est, a l'air de sortir les grands moyens pour exécuter ses plans. Naruto et les autres équipes sont dépêchés pour les contrer, un bon moyen pour voir les résultats d'entraînement de tous. Tout au long des ses aventures, Naruto devra faire face à divers périples et choix bien plus difficiles qu'auparavant. Il devra fournir plus d'efforts et changer d'attitude pour protéger ses amis et surtout espérer ramener Sasuke...",
+        "heb": "אחרי שנתיים וחצי שנארוטו עזב את הכפר עם ג'יראיה למטרות אימונים מתחיל החלק הנ''ל.\r\nהסיפור החדש-ישן מדבר על הרפתקאותיהם החדשות של אוזומאקי נארוטו והארונו סאקורה וכן רבים אחרים בחיפוש אחר סאסקה שעבר אל אורוצ'ימרו כדי לרכוש את כוחו. כמו כן בסיפור נחשפות דמויות ראשיות חדשות בחלק זה האקטסוקי מתחילים לפעול כדי לממש את משימתם ללכוד את כל השדים בעלי הזנבות. בחלק הזה הדמויות שהכרנו מהחלק הקודם גדלו ונעשו בוגרות יותר, תלבושות חדשות, העלאה בדרגה. הדמויות כולן התחזקו בכוחן ולמדו טכניקות חדשות ומלהיבות.",
+        "hun": "A Naruto Shippuden az eredeti Naruto animációs tévésorozat folytatása. A történet középpontjában egy idősebb és kissé érettebb Uzumaki Naruto áll, aki meg akarja menteni barátját, Uchiha Sasukét a kígyószerű shinobi, Orochimaru szorításából. Naruto 2 és fél év után végre visszatér a falujába, Konohába, és nekilát, hogy megvalósítsa ambícióit, bár ez nem lesz könnyű, mivel felhalmozott néhány (veszélyesebbnél veszélyesebb) ellenséget, a shinobi szervezet; Akatsuki személyében. (Forrás: Anime News Network)",
+        "ita": "Naruto Shippuden si svolge due anni e mezzo dopo che Naruto parte per allenarsi con Jiraiya. Al suo ritorno, Naruto scopre che tutti lo hanno superato di grado, e lui è rimasto indietro. Tuttavia, con solo sei mesi per salvare Sasuke, Naruto dovrà affrontare nemici sempre più pericolosi. Quando il piano dell'Akatsuki si dispiega, e Naruto lentamente si perde nella Volpe a nove code, diventa chiaro che più pericoli che mai lo attendono!",
+        "jpn": "　人知を超えた力を持ち、忍界大戦の折には、各国、隠れ里が競ってそれを軍事利用しようと躍起になった尾獣——そのひとつ『三尾』を狙う大蛇丸が動き出した。\r\n　 ナルトが自来也のもと、風遁螺旋手裏剣にかわる新たな術、忍ガマとのコラボ忍術の修業に励む中、大蛇丸のアジト発見の報せを受けた木ノ葉隠れの里では、綱手の命令により結成された、カカシ、キバ、シノ、ヒナタの小隊がアジト探索へと乗り出す。\r\n　一方、大蛇丸のアジトでは、サスケの才能を目の当たりにし嫉妬心をあらわにする晶遁使い（しょうとんつかい）のくノ一・紅蓮（グレン）が、大蛇丸よりある計画を持ちかけられていた。その鍵となるのはカブトとともに三尾召還実験を行う少年・幽鬼丸（ユウキマル）である。幽鬼丸は特殊な能力を持ち、自分には帰れる場所がないと思い込んでいる変わった少年だ。\r\nその幽鬼丸とナルトが偶然に出会い心を通わせたのも束の間、幽鬼丸は新たな三尾召還実験のため、大蛇丸の命を受けた紅蓮とともに旅立つことになる。\r\nやがて仲間たちと合流する紅蓮。そこに敵を追跡中だったカカシたちが現れ、両者はついに戦いに突入。だが、初めて戦う相手と術にカカシたちは思いがけず苦戦することになるのである。\r\nそして同じ頃、すべての尾獣狩りを目論む暁も三尾の情報を得て、その捕獲のため不穏な動きを見せ始めていた。\r\nここに忍界大戦以来の一大事、尾獣を巡る、大蛇丸、暁、そして木ノ葉の争いが始まろうとしていた。",
+        "kor": "지라이야와 함께 수행을 떠난지 2년 반정도가 흐른 후, 나루토가 다시 마을로 돌아왔다. \r\n 나뭇잎마을에서 같이 수행하던 동기들도 부쩍 성장하였고, 모래마을의 가아라는 ‘카제카게’가 되기도 했다. \r\n 어둠의 조직 아카츠키는 비밀리에 ‘구미’ 를 모으는 작업의 일환으로 가아라 몸속의 ‘일미’를 노리고, 가아라를 구하기 위해 나루토는 사쿠라, 카카시, 그리고 마을 동료들과 함께 가아라를 데려간 아카츠키 일원 사소리, 데이다라의 뒤를 쫓는다.",
+        "por": "Naruto Shippuuden ocorre 2 anos e meio após Naruto ter ficado para treinar com Jiraiya. Após seu retorno, Naruto descobre que seus amigos shinobi's o superaram na classificação, e ele caiu para trás. No entanto, com apenas 6 meses para resgatar Sasuke, Naruto tem de enfrentar inimigos ainda mais perigosos. O plano da Akatsuki se revela lentamente e os perigos surgem mais do que nunca!",
+        "pt": "Naruto Shippuuden ocorre 2 anos e meio após Naruto ter ficado para treinar com Jiraiya. Após seu retorno, Naruto descobre que seus amigos shinobi's o superaram na classificação, e ele caiu para trás. No entanto, com apenas 6 meses para resgatar Sasuke, Naruto tem de enfrentar inimigos ainda mais perigosos. O plano da Akatsuki se revela lentamente e os perigos surgem mais do que nunca!",
+        "rus": "Пролетели два года. Бывшие новички пополнили ряды опытных шиноби. Главные герои не сидели на месте - каждый стал учеником одного из легендарных Саннин - трех великих ниндзя Конохи. Наруто продолжил обучение у мудрого, но эксцентричного Дзирайи, постепенно восходя на новую ступень боевого мастерства. Сакура выдвинулась в помощницы целительницы Цунадэ - нового вождя Деревни Листвы. Ну а Саскэ, чья гордыня привела к изгнанию из Конохи, вступил во временный союз со зловещим Орочимару.",
+        "spa": "Un renovado y poderoso Naruto aparece en escena despues de entrenar durante 2 años fuera de la aldea con su Maestro Jiraiya, al regresar a casa, une sus fuerzas con Sakura para combatir a una organización maligna e intentar traer de vuelta a casa a su mejor amigo Sasuke.",
+        "tur": "Naruto Shippuden, Naruto'nun Jiraiya ile antrenman yapmak için ayrılmasından iki buçuk yıl sonra geçiyor. Naruto döndükten sonra herkesin onu geride bıraktığını fark ediyor. Ancak Sasuke'yi kurtarmak için sadece altı ayı olan Naruto, giderek daha tehlikeli düşmanlarla karşı karşıya kalıyor.",
+        "ukr": "У світі Наруто непомітно промайнули два роки. Колишні новачки поповнили ряди досвідчених шинобі в ранзі тюнінів і джонінів. Головні герої не сиділи склавши руки - кожен став учнем одного з легендарних санінів - трьох великих ніндзя Конохи. Хлопець у помаранчевому продовжив навчання у мудрого, але ексцентричного Джирайі, поступово сходячи на новий щабель бойової майстерності. Сакура висунулася в помічниці та довіреної особи цілительки Тсунаде - нового вождя Селища Листя. Ну а Саске, чия гординя призвела до вигнання з Конохи, приєднався до тимчасового союзу зі зловісним Орочімару, причому кожен вважає, що лише використовує іншого до певного часу.",
+        "zho": "拥有超越人类智慧的力量，在忍界大战的时候，各国，隐藏的村落竞相利用其军事而跃起的尾兽——瞄准其中之一“三尾”的大蛇丸开始行动。火影忍者在自来也的指导下，与风遁螺旋手里剑的新术，忍者加玛的协作忍术的修行中，得到了大蛇丸的基地发现的报应的木叶隐的村落，根据纲手的命令结成的卡卡西，基瓦，西诺，希纳塔的小队开始探索基地。另一方面，在大蛇丸的基地，看到佐助的才能，露出嫉妒心的晶遁使的kuno一·红莲，被大蛇丸提出了某个计划。关键是与独角仙一起进行三尾召唤实验的少年幽鬼丸。幽鬼丸拥有特殊的能力，是一个深信自己没有归宿的奇怪少年。幽鬼丸和鸣人偶然相遇并心意相通的瞬间，幽鬼丸为了进行新的三尾召唤实验，与接受大蛇丸命令的红莲一起踏上了旅程。不久与伙伴们汇合的红莲。在那里追踪敌人的卡卡西们出现，两者终于进入战斗。但是，卡卡西们对第一次战斗的对手和术意外地陷入苦战。并且同一时期，打算全部的尾兽狩猎的晓也得到了三尾的信息，为了那个捕获开始显出不稳定的运动。这里是忍界大战以来的一件大事，围绕着尾兽，大蛇丸，晓，还有木叶的争斗即将开始。",
+        "zhtw": "主要是描述漩渦鳴人與自來也出外修行兩年半之後的故事。\r\n現在曉所說的三年期限已經到了，各成員們已開始行動，並陸續亮相，與主角們展開最激烈的戰鬥……"
+      },
+      "translations": {
+        "ara": "ناروتو شيبودن",
+        "ces": "Naruto Shippuuden",
+        "deu": "Naruto Shippuden",
+        "eng": "Naruto Shippuden",
+        "fra": "Naruto Shippuden",
+        "heb": "נארוטו שיפודן",
+        "hun": "Naruto Shippuden",
+        "ita": "Naruto Shippuden",
+        "jpn": "NARUTO－ナルト－ 疾風伝",
+        "kor": "나루토 질풍전",
+        "nld": "Naruto Shippûden",
+        "nor": "Naruto Shippuden",
+        "por": "Naruto Shippuuden",
+        "pt": "Naruto Shippuuden",
+        "rus": "Наруто: Ураганные хроники",
+        "spa": "Naruto Shippuden",
+        "tha": "นารูโตะ ตำนานวายุสลาตัน",
+        "tur": "Naruto: Shippuden",
+        "ukr": "Наруто: Ураганні хроніки",
+        "zho": "火影忍者疾風傳",
+        "zhtw": "火影忍者 疾風傳"
+      },
+      "network": "TV Tokyo",
+      "remote_ids": [
+        {
+          "id": "tt0988824",
+          "type": 2,
+          "sourceName": "IMDB"
+        },
+        {
+          "id": "31910",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/v4/series/79824/posters/622cbd72ddadb_t.jpg"
+    },
+    {
+      "objectID": "series-321285",
+      "aliases": [
+        "Boruto - Naruto Next Generations",
+        "BORUTO－NARUTO NEXT GENERATIONS－."
+      ],
+      "country": "jpn",
+      "id": "series-321285",
+      "image_url": "https://artworks.thetvdb.com/banners/v4/series/321285/posters/63c59fb4b207e.jpg",
+      "name": "BORUTO-ボルト- NARUTO NEXT GENERATIONS",
+      "first_air_time": "2017-04-05",
+      "overview": "うずまきボルト、参上だってばさ!!\r\n\r\n平和と共に近代化が進んだ木ノ葉隠れの里。高いビルが立ち並び、巨大モニターには映像が流れ、区画と区画を結ぶ雷車が里の中を走り抜ける。忍の里とはいえ一般の人が増え、忍の生き方も変わりつつあるそんな時代――\r\n\r\n里のリーダー、七代目火影・うずまきナルトの息子であるボルトは、忍者を育てる学校“忍者学校（アカデミー）”に入学する。周りの生徒達はボルトの事を“火影の息子”と偏見の目で見るのだが、ボルトは持ち前の破天荒な性格でそんなものは跳ね飛ばす！\r\n\r\nボルトは新しい仲間と出会い、そして勃発する謎の事件にどう挑むのか？\r\n皆の心の中を疾風の如く駆け抜けて行く“うずまきボルト”の物語が今、始まる!!",
+      "primary_language": "jpn",
+      "primary_type": "series",
+      "status": "Continuing",
+      "type": "series",
+      "tvdb_id": "321285",
+      "year": "2017",
+      "slug": "boruto-naruto-next-generations",
+      "overviews": {
+        "ara": "حياة الشينوبي بدأت تتغيّر. أوزوماكي بوروتو، ابن الهوكاغي السابع ناروتو قد التحق بأكاديمية النينجا ليتعلم طرق النينجا. والآن، بعد أن بدأت سلسلة الأحداث الغامضة تكشف عن ملامحها، قصّة بوروتو على وشك أن تبدأ!",
+        "ces": "Jedná se o spin-off kultovního seriálu Naruto. Naruto si splnil svůj sen a stal se nejlepším ninjou a zároveň Sedmým Hokage. Společně s Hinatou vytvořil svoji vlastní rodinu. A vypadá to, že jejich syn Boruto a dcera Himiwari by mohli pokračovat ve šlépějích svých rodičů, což se neobejde bez menších potíží a překážek.",
+        "deu": "Boruto ist die Fortsetzung der Anime-Serien \"Naruto\" und \"Naruto Shippuuden\". Im Mittelpunkt steht die nächste Shinobi-Generation, mit Narutos Sohn Boruto Uzumaki als Hauptcharakter, der seinem Vater viel Kummer beschert.",
+        "eng": "Son of Naruto Uzumaki, Boruto, follows his father's footsteps along with his friends to become great ninja. Throughout all their adventures, Boruto is determined to make his mark in the ninja world and live outside of his father's shadow.\r\n",
+        "fra": "L’intrépide Boruto Uzumaki a Naruto pour père. Sarada Uchiwa est dotée d’un potentiel extraordinaire : quoi de plus normal pour la fille de Sasuke et de Sakura ? Quant au flegmatique Mitsuki, qui a-t-il pour père ?\r\nTout trois vont devoir affronter les premières épreuves de l’adolescence. En l’absence de son père, accaparé par son rôle de chef, Boruto saura-t-il suivre le bon chemin ? Quel nouveau danger plane sur Konoha et le monde ninja ?",
+        "heb": "לילת \"בורוטו\" מתחילה בקפיצת זמן של בערך כ-20 שנה לאחר תום אירועי הסדרה המקורית. נארוטו, שהגשים את חלומו להיות ההוקאגה, הוא אב לשני ילדים; בורוטו והימאווארי. נארוטו, בתור יתום, שלא זכה לדמות אב, לא ממש יודע איך לתפקד כאבא ומעדיף במקום זאת להשקיע את עצמו בעבודת ניהול הכפר כתוצאה מכך, בורוטו לא אוהב את זה שאביו הוא ההוקאגה. בניגוד לדור של נארוטו שגדל בקשיים ותקופות מלחמה שאילצו אותם להתחזק, דורו של בורוטו גדל בתנאים טובים ובתקופה של שלום ושגשוג מה שמנע מהם את הדחף לנסות להתחזק ולהבין את ערכו של השינובי, מה שגורם להבדלים ברצונות ובפערי הכוחות בין הדור הישן לדור החדש.",
+        "ita": "Il Villaggio della Foglia è entrato in un'era di pace e modernità. Edifici alti fiancheggiano le strade, gli schermi giganti lampeggiano con le immagini e la Thunder Rail attraversa il villaggio, collegando ogni distretto. Sebbene sia ancora un villaggio ninja, il numero di civili è aumentato e la vita degli shinobi sta iniziando a cambiare.\r\n \r\nBoruto Uzumaki, figlio del settimo Hokage Naruto Uzumaki, si è iscritto all'Accademia Ninja per imparare le vie del ninja. Gli altri studenti sono pronti a liquidarlo come \"solo il figlio di Hokage\", ma il cuore e il carattere di Boruto scacciano via tutte le loro supposizioni.\r\n \r\nMentre una serie di eventi misteriosi inizia a svolgersi, tocca a Boruto e ai suoi nuovi amici gestirli. Come un vento fortissimo, Boruto si fa strada nei cuori di tutti; la sua storia sta per iniziare!",
+        "jpn": "うずまきボルト、参上だってばさ!!\r\n\r\n平和と共に近代化が進んだ木ノ葉隠れの里。高いビルが立ち並び、巨大モニターには映像が流れ、区画と区画を結ぶ雷車が里の中を走り抜ける。忍の里とはいえ一般の人が増え、忍の生き方も変わりつつあるそんな時代――\r\n\r\n里のリーダー、七代目火影・うずまきナルトの息子であるボルトは、忍者を育てる学校“忍者学校（アカデミー）”に入学する。周りの生徒達はボルトの事を“火影の息子”と偏見の目で見るのだが、ボルトは持ち前の破天荒な性格でそんなものは跳ね飛ばす！\r\n\r\nボルトは新しい仲間と出会い、そして勃発する謎の事件にどう挑むのか？\r\n皆の心の中を疾風の如く駆け抜けて行く“うずまきボルト”の物語が今、始まる!!",
+        "kor": "평화와 함께 근대화가 진행된 나뭇잎 마을.\r\n높은 빌딩이 늘어서고 거대 모니터에는 영상이 흐르며 구획과 구획을 잇는 전차가 마을을 달린다.\r\n닌자들의 마을이라고는 하지만 보통의 사람들이 늘어나 닌자들의 삶의 방식도 변하는 시대\r\n\r\n마을의 리더, 7대 호카게 우즈마키 나루토의 아들인 보루토는\r\n닌자를 육성하는 학교 “닌자 학교 (아카데미)”에 입학한다.\r\n주변의 학생들은 보루토를 “호카게의 아들”이라며 편견을 가진 눈으로 보지만,\r\n보루토는 전대미문의 천성으로 그런 것 따위 신경쓰지 않는다!\r\n\r\n보루토는 새로운 동료들과 만나고 발발하는 미지의 사건들에 어떻게 도전할 것 인가?\r\n모두의 마음 속을 질풍과 같이 뛰게 하는\r\n“우즈마키 보루토”의 이야기가 지금 시작된다!!",
+        "por": "Boruto Uzumaki, filho de Naruto Uzumaki, o Sétimo Hokage, se inscreveu na Academia Ninja para aprender a ser um verdadeiro ninja. Os outros estudantes o ignoram por ser \"apenas o filho do Hokage\", mas a paixão e a personalidade do Boruto vai acabar com todos esses preconceitos. Quando uma série de misteriosos eventos começa a se desenrolar, cabe a Boruto e seus novos amigos a investigá-los. Como um tornado, Boruto entra no coração de todos: sua história está prestes a começar!",
+        "pt": "Boruto Uzumaki, filho de Naruto Uzumaki, o Sétimo Hokage, se inscreveu na Academia Ninja para aprender a ser um verdadeiro ninja. Os outros estudantes o ignoram por ser \"apenas o filho do Hokage\", mas a paixão e a personalidade do Boruto vai acabar com todos esses preconceitos. Quando uma série de misteriosos eventos começa a se desenrolar, cabe a Boruto e seus novos amigos a investigá-los. Como um tornado, Boruto entra no coração de todos: sua história está prestes a começar!",
+        "rus": "Жизнь синоби постепенно меняется… Боруто Удзумаки, сын Седьмого Хокаге Наруто, поступил в Академию познать азы ниндзя. Случайные, казалось бы, события сливаются во что-то одно и большое, движутся шестерёнки, начинается история Боруто.",
+        "spa": "En Konoha han entrado en una era de paz y modernidad. Los altos edificios despuntan en las calles, las pantallas gigantes muestran imágenes de todo tipo y los medios de transporte conectan los vairos distritos. Pese a que sigue siendo una aldea ninja, el número de civiles ha aumentado y la vida de los ninja ha cambiado. Boruto Uzumaki es hijo del Séptimo Hokage, Naruto Uzumaki, y se ha unido a la Academia Ninja para aprender. Otros estudiantes lo menosprecian de inmediato y consideran que solo está ahí por ser \"hijo del Hokage\", pero pronto Boruto disipará todas esas dudas sobre él.",
+        "tur": "Naruto küçükken asla uslanmayan yaramaz bir ninjaydı. Ama köyündeki en güçlü ninja olup köydeki insanlara kendini kabul ettirmek istiyordu. Sonunda bu rüyasına ulaşmıştı ve yüzü Hokage dağındaki yerini almıştı. Ama bu hikaye onunla alakalı değil. Artık sahne, başını Naruto'nun oğlu Boruto'nun çektiği yeni nesil ninjalarındı.",
+        "zho": "第四次忍界大戰結束後已經過去好幾年，忍者世界也迎來新的時代。鳴人與雛田結為伉儷，並育有漩渦慕留人與漩渦向日葵。慕留人與佐助和小櫻的女兒宇智波紗羅妲、大蛇丸培養出的孩子巳月同屬木葉丸領導的忍者小隊。因為父親忙於火影有關的工作而忽視家庭，甚至連向日葵的生日會都沒能回來參加的緣故，慕留人十分討厭自己的父親鳴人。在佐助回到村子來與鳴人商討威脅大筒木輝夜的事情時，慕留人遇到了佐助，並為了「戰勝自己的老爸」拜其為師。但是，慕留人為了贏得父親的注意，在中忍考試中使用了被禁止使用的科學忍具，導致他與奈良鹿代的對戰被判為失去資格。慕留人為此責怪父親平日忙於工作，但卻被大筒木金式與大筒木桃式的突然襲擊打斷了。金式與桃式正是佐助此前叮嚀鳴人要提防的二人，他們此次前來是為了奪取鳴人體內的九尾來復活第四次忍界大戰遺留的神樹。鳴人為了保護中忍考試會場的眾人被金式與桃式捉走，而慕留人這時才醒悟過來，並隨佐助與剩下的五影一起去異空間營救鳴人。在異空間的交戰中，桃式因為術的弱點暴露而遭眾人的體術圍攻壓制住。於是他將金式吸收，讓力量暴增了數倍。與久違聯手的鳴人和佐助展開了一場激烈無比的肉搏戰。最終，在佐助發動佯攻時，慕留人與鳴人共同製造了一個巨大的螺旋丸，將桃式擊敗。\r\n桃式在臨死前將時間凝固，並告誡慕留人未來將會命運多舛。在桃式碰觸慕留人後，慕留人手上多了一個菱形的印記，自知前途未卜，但依舊決心前行。慕留人接到了護衛火之國大名的兒子天道的任務，花了很長時間教會了他使用手裏劍，兩人成為了好朋友，但不想被「貉」盯上，天道被綁架。慕留人放棄了原本的B級任",
+        "zhtw": "忍者五大國之一，「火之國」的「木葉忍者村」裡的一村之長的第七代火影．漩渦鳴人，是漩渦慕留人的父親。某個陰影悄悄靠近就讀忍者學校的慕留人…。"
+      },
+      "translations": {
+        "ara": "بوروتو: الأجيال القادمة من ناروتو",
+        "deu": "Boruto: Naruto Next Generations",
+        "eng": "Boruto: Naruto Next Generations",
+        "fra": "Boruto - Naruto Next Generations",
+        "heb": "בורוטו: נארוטו הדורות הבאים",
+        "ita": "Boruto: Naruto Next Generations",
+        "jpn": "BORUTO-ボルト- NARUTO NEXT GENERATIONS",
+        "kor": "BORUTO -보루토- NARUTO NEXT GENERATIONS",
+        "por": "Boruto: Naruto Next Generations",
+        "pt": "Boruto: Naruto Next Generations",
+        "rus": "Боруто: Следующее поколение Наруто",
+        "spa": "Boruto: Naruto Next Generations",
+        "tur": "Boruto: Naruto Next Generations",
+        "zho": "BORUTO-火影新世代-",
+        "zhtw": "慕留人－火影新世代－"
+      },
+      "network": "TV Tokyo",
+      "remote_ids": [
+        {
+          "id": "tt6342474",
+          "type": 2,
+          "sourceName": "IMDB"
+        },
+        {
+          "id": "https://www.tv-tokyo.co.jp/anime/boruto/",
+          "type": 4,
+          "sourceName": "Official Website"
+        },
+        {
+          "id": "70881",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        },
+        {
+          "id": "NARUTOtoBORUTO",
+          "type": 6,
+          "sourceName": "X (Twitter)"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/v4/series/321285/posters/63c59fb4b207e_t.jpg"
+    },
+    {
+      "objectID": "series-261343",
+      "country": "usa",
+      "id": "series-261343",
+      "image_url": "https://artworks.thetvdb.com/banners/posters/261343-1.jpg",
+      "name": "Naruto: The Abridged Comedy Fandub Spoof Series Show",
+      "first_air_time": "2009-03-31",
+      "overview": "Examine the humor and intricacies of celebrated show \"Naruto\" through parody.",
+      "primary_language": "eng",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "261343",
+      "year": "2009",
+      "slug": "naruto-the-abridged-comedy-fandub-spoof-series-show",
+      "overviews": {
+        "eng": "Examine the humor and intricacies of celebrated show \"Naruto\" through parody."
+      },
+      "translations": {
+        "eng": "Naruto: The Abridged Comedy Fandub Spoof Series Show"
+      },
+      "network": "YouTube",
+      "remote_ids": [
+        {
+          "id": "tt1578671",
+          "type": 2,
+          "sourceName": "IMDB"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/posters/261343-1_t.jpg"
+    },
+    {
+      "objectID": "series-257837",
+      "aliases": [
+        "Rock Lee und seine Ninja Kumpels",
+        "Naruto SD: Rock Lee no Seishun Full-Power Ninden",
+        "Ranked #0 Rock Lee no Seishun Full-Power Ninden",
+        "Rock Lee & His Ninja Pals",
+        "Naruto SD: Rock Lee & His Ninja Pals",
+        "Rock Lee : Les Péripéties d'un ninja en herbe",
+        "ロック・リーの青春フルパワー忍伝",
+        "Rock Lee & His Ninja Pals",
+        "Rock Lee & His Ninja Pals"
+      ],
+      "country": "jpn",
+      "id": "series-257837",
+      "image_url": "https://artworks.thetvdb.com/banners/posters/257837-1.jpg",
+      "name": "NARUTO-ナルト- SD ロック・リーの青春フルパワー忍伝",
+      "first_air_time": "2012-04-03",
+      "primary_language": "jpn",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "257837",
+      "year": "2012",
+      "slug": "rock-lee-and-his-ninja-pals",
+      "overviews": {
+        "deu": "Rock Lee, das grüne Biest von Konoha, hat kein einfaches Leben. Da er nur Taijutsu beherrscht, muss er härter an sich arbeiten als alle anderen, um seinen Traum, ein richtiger Ninja zu werden, zu verwirklichen. Nicht nur im Training gibt er dabei stets sein Bestes, auch seine Ninja-Missionen erfüllt er mit dergleichen heißblütigen Energie und Einstellung. Zusammen mit seinen Teamkameraden Neji und Tenten, sowie seinem über alles geliebten Sensei Guy erlebt er dabei die haarsträubendsten Abenteuer und gerät nicht selten genug in urkomische Situationen.",
+        "eng": "Small stories starring the characters of Naruto, mainly Rock Lee, with a super deformed version of humor.",
+        "fra": "Rock Lee, l’apprenti ninja aux sourcils broussailleux, n’a qu’un objectif : devenir un grand ninja … qui ignore le ninjutsu ! Mais il s’entraîne très dur au taijutsu sous la houlette de son maître Gaï, entouré de ses condisciples, TenTen et Neji ainsi que de ses camarades du village caché de Konoha. Suivez le quotidien délirant de celui qui se fait appeler “le resplendissant fauve de jade du village caché de Konoha” !",
+        "heb": "מסעותיו של רוק לי היא סדרת בת לאנימה המפורסמת \"נארוטו שיפודן\". האנימה מתמקדת ברוק-לי, ולאו דווקא בנארוטו. הסדרה מבוססת על מנגה בעלת אותו השם מ-2010, כאשר את קולות הדמויות מדובבים המדובבים של הסדרה \"נארוטו שיפודן\". כל פרק בסדרה \"מסעותיו של רוק לי\" מתחלק לשני פרקים קצרים (10 דק' כל פרק בערך) בעלי קשר מסויים אחד לשני.",
+        "kor": "꿈틀꿈틀 송충이 눈썹 록리의 닌자 되기 프로젝트! 여기는 나뭇잎 마을. \"나루토\"의 주인공으로 유명한 닌자 나루토도(!) 살고있는 닌자의 마을에서 벌어지는 이야기를 그린 애니메이션",
+        "por": "Bem-vindos à Vila Oculta da Folha, a Vila que, como todos sabemos, é lar de Naruto Uzumaki, a grande estrela do anime \"Naruto\". Todos os dias, inúmeros ninjas poderosos saem em missões e treinos para aperfeiçoar suas habilidades. Nosso personagem principal é um desses poderosos ninjas... mas não é o Naruto! Trata-se do ninja que não consegue usar Ninjutsu, Rock Lee!",
+        "pt": "Bem-vindos à Vila Oculta da Folha, a Vila que, como todos sabemos, é lar de Naruto Uzumaki, a grande estrela do anime \"Naruto\". Todos os dias, inúmeros ninjas poderosos saem em missões e treinos para aperfeiçoar suas habilidades. Nosso personagem principal é um desses poderosos ninjas... mas não é o Naruto! Trata-se do ninja que não consegue usar Ninjutsu, Rock Lee!",
+        "spa": "Pequeñas historias cortas protagonizadas por los personajes de NARUTO, principalmente por Rock Lee, con un estilo de humor en versión super deforme.",
+        "zho": "在火影忍者里登場的著名配角李洛克（洛克·李），是以國際功夫巨星李小龍為原型創作的人物。他既單純又熱血，一心想要成為一個優秀的忍者。但可惜的是，他身上既沒有無敵的主角光環，也沒有得天獨厚的忍術資質，幻術和忍術基本不會。但即使如此他也沒有放棄夢想，反而用比別人多上幾十倍的努力刻苦修煉體術，在經歷一次次地失敗之後，最終實現了理想，成為了一名優秀的忍者，被阿凱老師稱讚為「努力的天才」。小李本身並非顏值很高的偶像型角色，也不是強到逆天的BOSS級角色，但依舊憑藉那堅韌不拔的毅力，為自己贏來了大批的忠實粉絲。如今終於在《火影忍者》的官方同人漫畫裡做起了主角。\r\n\r\n本作看似講述了努力的天才李洛克和同伴一起的修煉生活，實際上被塑造成了一個逗比，每天進行無節操的賣萌賣腐搞怪。而基於「笨蛋是可以傳染的」理論，小李的同伴們也心照不宣地配合着他，共同打造輕鬆幽默的喜劇日常。"
+      },
+      "translations": {
+        "deu": "Naruto Spin off: Rock Lee und seine Ninja Kumpels",
+        "eng": "Naruto Spin-Off: Rock Lee & His Ninja Pals",
+        "fra": "Naruto SD-Rock Lee : Les Péripéties d'un ninja en herbe",
+        "heb": "נארוטו: מסעותיו של רוק לי",
+        "jpn": "NARUTO-ナルト- SD ロック・リーの青春フルパワー忍伝",
+        "kor": "나루토 SD 록리의 청춘 닌자전",
+        "por": "Rock Lee e Seus Amigos Ninja",
+        "pt": "Rock Lee e Seus Amigos Ninja",
+        "spa": "Naruto Spin-Off: Rock Lee & His Ninja Pals",
+        "zho": "火影忍者SD：李洛克的青春全力忍传"
+      },
+      "network": "TV Tokyo",
+      "remote_ids": [
+        {
+          "id": "tt2301807",
+          "type": 2,
+          "sourceName": "IMDB"
+        },
+        {
+          "id": "43168",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/posters/257837-1_t.jpg"
+    },
+    {
+      "objectID": "series-372713",
+      "country": "jpn",
+      "id": "series-372713",
+      "image_url": "https://artworks.thetvdb.com/banners/v4/series/372713/posters/650b39212228b.jpg",
+      "name": "NARUTO to BORUTO THE LIVE 2019",
+      "first_air_time": "2019-10-28",
+      "overview": "“NARUTO to BORUTO THE LIVE 2019”, a special event for the 20th anniversary of the first publication of “NARUTO” series in Weekly Shonen Jump!! Featuring live performances by artists performing the theme songs of both “NARUTO” and “BORUTO: NARUTO NEXT GENERATIONS”, anime cast members reading original story episodes, and more.",
+      "primary_language": "jpn",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "372713",
+      "year": "2019",
+      "slug": "naruto-to-boruto-the-live-2019",
+      "overviews": {
+        "jpn": "“NARUTO to BORUTO THE LIVE 2019”, a special event for the 20th anniversary of the first publication of “NARUTO” series in Weekly Shonen Jump!! Featuring live performances by artists performing the theme songs of both “NARUTO” and “BORUTO: NARUTO NEXT GENERATIONS”, anime cast members reading original story episodes, and more."
+      },
+      "translations": {
+        "jpn": "NARUTO to BORUTO THE LIVE 2019"
+      },
+      "thumbnail": "https://artworks.thetvdb.com/banners/v4/series/372713/posters/650b39212228b_t.jpg"
+    },
+    {
+      "objectID": "series-357895",
+      "country": "jpn",
+      "id": "series-357895",
+      "image_url": "https://artworks.thetvdb.com/banners/posters/5cac11efce408.jpg",
+      "name": "鳴門秘帖",
+      "first_air_time": "2018-04-20",
+      "overview": "剣を極める修行の果て、家を捨て、さすらう虚無僧となった法月弦之丞は、十年ぶりに舞い戻った江戸で、幕府転覆の密約を記した血判状『鳴門秘帖』を巡る争いへと巻き込まれていく。",
+      "primary_language": "jpn",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "357895",
+      "year": "2018",
+      "slug": "naruto-hichou",
+      "overviews": {
+        "eng": "Characters travel from Edo to Awa in search of the whereabouts of a secret document called Naruto Hichou. \r\nThe pinnacle of a drastically changing adventurous spy action road trip!",
+        "jpn": "剣を極める修行の果て、家を捨て、さすらう虚無僧となった法月弦之丞は、十年ぶりに舞い戻った江戸で、幕府転覆の密約を記した血判状『鳴門秘帖』を巡る争いへと巻き込まれていく。"
+      },
+      "translations": {
+        "eng": "Naruto Hichou",
+        "jpn": "鳴門秘帖"
+      },
+      "network": "NHK",
+      "remote_ids": [
+        {
+          "id": "https://www.nhk.jp/p/ts/PVN2LZ2191/",
+          "type": 4,
+          "sourceName": "Official Website"
+        },
+        {
+          "id": "86790",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/posters/5cac11efce408_t.jpg"
+    },
+    {
+      "objectID": "series-79061",
+      "aliases": [
+        "Narutaru",
+        "드래곤 드림"
+      ],
+      "country": "jpn",
+      "id": "series-79061",
+      "image_url": "https://artworks.thetvdb.com/banners/posters/79061-3.jpg",
+      "name": "Shadow Star Narutaru",
+      "first_air_time": "2003-07-07",
+      "overview": "Tamai Shiina, a cheerful girl, met a weird star-shaped creature during her visit to the island where her grandparents lived in the last summer of elementary school. \"Because the star is round,\" Shiina gave a name: \"Hohsimaru\" the round star  to that creature, which could fly to the sky. Starting with that, Shiina met other boys and girls who also befriended with Hoshimaru's friends. What exactly was the real shape of Hoshimaru's body? The world scale magnificent story begins.",
+      "primary_language": "eng",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "79061",
+      "year": "2003",
+      "slug": "shadow-star-narutaru",
+      "overviews": {
+        "deu": "Während ihrer Sommerferien im Haus ihrer Großeltern trifft Shiina Tamai, eine junge aufgeweckte Schülerin, ein merkwürdig aussehendes Wesen, das fliegen kann. Sie befreundet sich mit ihm und nennt es \"Hoshimaru\", der \"Runde Stern\". Dieses Wesen, auch wenn es harmlos aussieht, birgt viele Geheimnisse. Zu Hause angekommen, geschehen viele schreckliche Dinge und Shiina lernt neue Freunde kennen, die teilweise friedliche und teilweise kranke Ziele verfolgen. Sie lernt Akira kennen, ein sehr schüchternes Mädchen, mit der sie dem Geheimnis um Hoshimaru auf den Grund gehen will. Ihnen ist nicht bewusst, dass sie sich dabei in große Gefahr begeben.",
+        "eng": "Tamai Shiina, a cheerful girl, met a weird star-shaped creature during her visit to the island where her grandparents lived in the last summer of elementary school. \"Because the star is round,\" Shiina gave a name: \"Hohsimaru\" the round star  to that creature, which could fly to the sky. Starting with that, Shiina met other boys and girls who also befriended with Hoshimaru's friends. What exactly was the real shape of Hoshimaru's body? The world scale magnificent story begins.",
+        "fra": "Au cours des vacances d'été, chez ses grands parents, Chiina, une jeune jeune fille de douze ans rencontre par hasard une étrange créature en forme d'étoile, qu'elle décide de nommer Hoshimaru et qu'elle va ramener chez elle.\r\nElle rencontre par la suite une lycéenne timide du nom d'Akira Sakura qui possède comme Chiina, un petit \"dragon\", cependant, l'esprit d'Akira est connecté à sa créature...\r\n\r\nElle n'est pas la seule à en posséder un, certaines personnes les utiliserons à des fins malveillantes.",
+        "ita": "Shiina Tamai è una ragazzina come tanti altre. Finita la scuola, va in vacanza nell'isola in cui abitano i nonni, e in seguito a un'apnea forzata in mare, annega. Mentre le ricerche del suo corpo diventano sempre più disperate, Shiina si ritrova sulla terraferma senza sapere come ci è arrivata. Ma durante la notte le appare una piccola creatura mutaforma che, dopo qualche istante, ricorda di aver visto sul fondo del mare, scambiandola per una bizzarra stella marina. Fra i due si instaura un bizzarro e inspiegabile legame mentre nei cieli del Giappone iniziano ad apparire strani oggetti volanti di natura completamente ignota…",
+        "jpn": "主人公の玉衣シイナは小学6年生の活発な女の子。夏休みに祖父母が住む島へ行き、海で溺れかける。そこでシイナは、自由に体型を変形して空を飛ぶ不思議な生き物“竜の子”に助けられる。シイナはその星形の生き物を“ホシ丸”と名付け、行動を共にするようになる。東京に戻ったシイナは、同じように竜の子“エン・ソフ”を持つ女子中学生・佐倉明と出会い、友だちになる。その後、次々と竜の子を連れた少年少女が現れ、シイナたちは不思議な事件に巻き込まれていく…。",
+        "kor": "초등학교 6학년생인 타마이 시이나는 초등학교 마지막 여름방학에 조부모님이 살고 있는 섬에 놀러간다. 바닷가에서 놀다가 물에 빠진 시이나는 별모양을 한 이상한 생물 '호시마루'에게 도움을 받게된다. 호시마루는 소년소녀의 의식과 링크하여 다양한 능력을 발휘하는 '용의 아이' 중 하나였다. 시이나는 다른 용의 아이들을 가진 아이들(링크자)와의 만나며 용의 아이들이 가지고 있는 진실을 깨우치게된다.",
+        "por": "Durante suas férias de verão, na casa de seus avós, Tamai Shiina, uma estudante jovem e alegre, conhece uma estranha criatura. Eles se tornam amigos, e Shiina da a ele o nome de \"Hoshimaru: A estrela redonda\". Quando Shiina volta para casa após as férias, para voltar as aulas, ela começa a encontrar outras crianças que também conheceram e se tornaram amigos de criaturas como Hoshimaru. Mas ela logo descobre que nem todas as criaturas e seus \"mestres\" são amigáveis como Hoshimaru.",
+        "spa": "Shiina Tamai es una chica muy alegre. Un día encuentra una extraña criatura en forma de estrella durante su visita a la isla donde sus abuelos vivían en el último verano de su estancia en la escuela elemental. Shiina la llamó Hoshimaru, \"estrella redonda\", curiosamente esta criatura podía volar. \r\n\r\nShiina empieza a encontrarse con otros jóvenes que también están enlazados a criaturas similares a Hoshimaru, a las que llaman dragones. Pero esta no es una historia idílica llena de amistad: los traumas y oscuros secretos de la relación entre estos chicos y los dragones mostrarán a Shiina que la vida no va a poder ser siempre tan feliz."
+      },
+      "translations": {
+        "deu": "Narutaru: Mukuro Naru Hoshi Tama Taru Ko",
+        "eng": "Shadow Star Narutaru",
+        "fra": "Narutaru - Mukuro Naru Hoshi Tama Taru Ko",
+        "ita": "Narutaru",
+        "jpn": "なるたる -骸なる星 珠たる子-",
+        "kor": "나루타루 -육체가 되는 별, 영혼인 아이-",
+        "por": "Narutaru: Mukuro Naru Hoshi Tama Taru Ko",
+        "spa": "Narutaru"
+      },
+      "network": "Kids Station",
+      "remote_ids": [
+        {
+          "id": "tt1227046",
+          "type": 2,
+          "sourceName": "IMDB"
+        },
+        {
+          "id": "24667",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/posters/79061-3_t.jpg"
+    },
+    {
+      "objectID": "series-362596",
+      "country": "bra",
+      "id": "series-362596",
+      "image_url": "https://artworks.thetvdb.com/banners/posters/5cf6abf581a0a.jpg",
+      "name": "Naruhodo",
+      "first_air_time": "2016-08-21",
+      "overview": "O podcast pra quem tem fome de aprender. Ciência, senso comum, curiosidades e muito mais. Com o leigo curioso, Ken Fujioka, e o cientista PhD, Altay de Souza.",
+      "primary_language": "pt",
+      "primary_type": "series",
+      "status": "Continuing",
+      "type": "series",
+      "tvdb_id": "362596",
+      "year": "2016",
+      "slug": "naruhodo",
+      "overviews": {
+        "eng": "The podcast for those who are hungry to learn. Science, common sense, trivia and more. With curious layman, Ken Fujioka, and PhD scientist, Altay de Souza.",
+        "pt": "O podcast pra quem tem fome de aprender. Ciência, senso comum, curiosidades e muito mais. Com o leigo curioso, Ken Fujioka, e o cientista PhD, Altay de Souza."
+      },
+      "translations": {
+        "eng": "Naruhodo",
+        "pt": "Naruhodo"
+      },
+      "network": "Podcast (All Platforms)",
+      "remote_ids": [
+        {
+          "id": "https://www.b9.com.br/shows/naruhodo/",
+          "type": 4,
+          "sourceName": "Official Website"
+        },
+        {
+          "id": "naruhodopodcast",
+          "type": 6,
+          "sourceName": "Twitter"
+        },
+        {
+          "id": "tt16115352",
+          "type": 2,
+          "sourceName": "IMDB"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/posters/5cf6abf581a0a_t.jpg"
+    },
+    {
+      "objectID": "series-425567",
+      "country": "deu",
+      "id": "series-425567",
+      "image_url": "https://artworks.thetvdb.com/banners/images/missing/series.jpg",
+      "name": "Narumol und Josef - Unsere Geschichte geht weiter!",
+      "first_air_time": "2022-09-28",
+      "overview": "Farmer Josef and his lively wife Narumol would like to tie the knot again. According to Narumol's wish, the wedding should be held according to Thai tradition - but not in Thailand, but on their idyllic farm in Upper Bavaria. The four-part docu-soap accompanies the couple in their wedding preparations and takes the audience to Narumol's Asian homeland and to her Thai family. (text: RS)",
+      "primary_language": "eng",
+      "primary_type": "series",
+      "status": "Continuing",
+      "type": "series",
+      "tvdb_id": "425567",
+      "year": "2022",
+      "slug": "narumol-und-josef-unsere-geschichte-geht-weiter",
+      "overviews": {
+        "deu": "Bauer Josef und seine quirlige Frau Narumol möchten sich erneut das Ja-Wort geben. Nach dem Wunsch Narumols soll die Hochzeit nach thailändischer Tradition abgehalten werden – aber nicht in Thailand, sondern auf ihrem idyllischen Bauernhof in Oberbayern stattfinden.\r\nDie vierteilige Doku-Soap begleitet das Paar bei ihren Hochzeitsvorbereitungen und entführt das Publikum in Narumols asiatische Heimat und zu ihrer thailändischen Familie. (Text: RS)",
+        "eng": "Farmer Josef and his lively wife Narumol would like to tie the knot again. According to Narumol's wish, the wedding should be held according to Thai tradition - but not in Thailand, but on their idyllic farm in Upper Bavaria. The four-part docu-soap accompanies the couple in their wedding preparations and takes the audience to Narumol's Asian homeland and to her Thai family. (text: RS)"
+      },
+      "translations": {
+        "deu": "Narumol & Josef - Unsere Geschichte geht weiter!",
+        "eng": "Narumol und Josef - Unsere Geschichte geht weiter!"
+      },
+      "network": "RTL Zwei"
+    },
+    {
+      "objectID": "series-440653",
+      "country": "phl",
+      "id": "series-440653",
+      "image_url": "https://artworks.thetvdb.com/banners/v4/series/440653/posters/6523d75f88fa1.jpg",
+      "name": "Narito Ang Puso Ko (2003 Philippine Series)",
+      "first_air_time": "2003-06-09",
+      "overview": "Si Antonina ang nawawalang heredera ng San Victores Group of Companies, isang malaking kumpanya ng mga mamahaling hotel sa bansa. Ang kanyang lola na si Donya Dolores San Victores ay determinado siyang hanapin, ngunit siya'y pipigilan ng ibang miyembro ng pamilya na gustong kamkamin ang kayamanan niya. Lalaki si Antonina bilang Isabel, at isang araw makakaharap niya ang lahat ng miyembro ng tunay niyang angkan.",
+      "primary_language": "tgl",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "440653",
+      "year": "2003",
+      "slug": "narito-ang-puso-ko-2003-philippine-series",
+      "overviews": {
+        "eng": "Antonina is the missing heir of the San Victores clan, the owner of first-class hotel chains in the country. The family matriarch, Dolores San Victores is determined to find her, but certain members of the family try their best to prevent her from doing so. Antonina grew up as Isabel in a poor neighborhood. Once she meets her real family, does she have the guts to face all conflicts?",
+        "tgl": "Si Antonina ang nawawalang heredera ng San Victores Group of Companies, isang malaking kumpanya ng mga mamahaling hotel sa bansa. Ang kanyang lola na si Donya Dolores San Victores ay determinado siyang hanapin, ngunit siya'y pipigilan ng ibang miyembro ng pamilya na gustong kamkamin ang kayamanan niya. Lalaki si Antonina bilang Isabel, at isang araw makakaharap niya ang lahat ng miyembro ng tunay niyang angkan."
+      },
+      "translations": {
+        "eng": "Narito Ang Puso Ko (2003 Philippine Series)",
+        "tgl": "Narito Ang Puso Ko (2003 Philippine Series)"
+      },
+      "network": "GMA Network",
+      "remote_ids": [
+        {
+          "id": "18320",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        },
+        {
+          "id": "18320",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        },
+        {
+          "id": "tt0372081",
+          "type": 2,
+          "sourceName": "IMDB"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/v4/series/440653/posters/6523d75f88fa1_t.jpg"
+    },
+    {
+      "objectID": "series-239851",
+      "country": "usa",
+      "id": "series-239851",
+      "image_url": "https://artworks.thetvdb.com/banners/posters/239851-2.jpg",
+      "name": "Penn & Teller: Fool Us",
+      "first_air_time": "2011-06-18",
+      "overview": "Penn and Teller challenge magicians to perform in front of them and, if they can fool the famous duo, they'll win a 5-star trip to Las Vegas to perform as the opening act in Penn & Teller's world-famous show at the Rio Hotel & Casino.",
+      "primary_language": "eng",
+      "primary_type": "series",
+      "status": "Continuing",
+      "type": "series",
+      "tvdb_id": "239851",
+      "year": "2011",
+      "slug": "penn-and-teller-fool-us",
+      "overviews": {
+        "eng": "Penn and Teller challenge magicians to perform in front of them and, if they can fool the famous duo, they'll win a 5-star trip to Las Vegas to perform as the opening act in Penn & Teller's world-famous show at the Rio Hotel & Casino.",
+        "fin": "Maailmankuulu taikurikaksikko tuo omintakeista komiikkaa kilpailuun, jossa taitavat silmänkääntäjät kilpailevat pääpalkinnosta.",
+        "spa": "Fool nosotros desafía a los magos a actuar frente a Penn y Teller. Si pueden engañar a Penn y Teller, ganan un viaje de cinco estrellas a Las Vegas para actuar como el acto de apertura en el famoso show de Penn & Teller en el Rio Hotel & Casino.\r\n\r\nConocidos ilusionistas Penn y Teller arrojan el guante a los aspirantes a magos en el Reino Unido para realizar su truco más desconcertante, y engañar a Penn y Teller.\r\n\r\nLas leyendas de Las Vegas Penn & Teller no tienen conocimiento previo de los artistas o del truco planeado. Se sientan en la audiencia como todos los demás, observando cada movimiento que hacen los magos invitados. Y, si algún ilusionista se acerca y engaña a los profesionales, ganan un viaje de cinco estrellas a Las Vegas para actuar como el acto de apertura en el famoso show de Penn & Teller en Rio Hotel & Casino.\r\n\r\nCada mago se presentará para apuestas altas. Ya sea que se trate de una gran ilusión de escenario o un pequeño truco de prestidigitación, ya sea que use tigres o mondadientes, si son lo suficientemente buenos para engañar a Penn & Teller, entonces actuarán en Las Vegas con el dúo icónico."
+      },
+      "translations": {
+        "eng": "Penn & Teller: Fool Us",
+        "fin": "Penn & Teller: Naruta meitä!",
+        "spa": "Penn & Teller: Fool Us"
+      },
+      "network": "The CW",
+      "remote_ids": [
+        {
+          "id": "http://cwtv.com/shows/penn-teller-fool-us/",
+          "type": 4,
+          "sourceName": "Official Website"
+        },
+        {
+          "id": "PennandTellerFoolUs",
+          "type": 5,
+          "sourceName": "Facebook"
+        },
+        {
+          "id": "tt1811179",
+          "type": 2,
+          "sourceName": "IMDB"
+        },
+        {
+          "id": "SH01534472",
+          "type": 3,
+          "sourceName": "TMS (Zap2It)"
+        },
+        {
+          "id": "34607",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/posters/239851-2_t.jpg"
+    },
+    {
+      "objectID": "series-103571",
+      "aliases": [
+        "Tenshi ni Narumon",
+        "Tenshi ni Narumon!",
+        "Tenshi Ni Narumon"
+      ],
+      "country": "jpn",
+      "id": "series-103571",
+      "image_url": "https://artworks.thetvdb.com/banners/posters/103571-1.jpg",
+      "name": "天使になるもんっ!",
+      "first_air_time": "1999-04-07",
+      "primary_language": "jpn",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "103571",
+      "year": "1999",
+      "slug": "im-gonna-be-an-angel",
+      "overviews": {
+        "eng": "Also Known as \"Tenshi ni Narumon!\" in Japanese. Produce by Studio Pierrot. The anime was licensed for release in US by Synch-Point. // Plot: Yuusuke was just a normal kid going to high school. Then one day, the cute and behaloed Noelle fell, quite literally, into his life, naked as a baby and every bit as innocent. Before he can even fathom what's just happened, Yuusuke is inducted into a rather odd family of otherworldly beings straight out of The Munsters. Papa is a Frankenstein monster with a taste for calisthenics. Mama is a gorgeous lady with a penchant for \"round objects\" -- really! The eldest sister, Sara, is literally invisible; the brother, Gabriel, is a teenage vampire with an attitude problem; and the youngest sister, Ruka, loves inventing things. There's a disapproving Grandma, who's a witch to the nth degree, and her vulture familiar. All Yuusuke wanted was for the beautiful Natsumi to even notice his attention, but now he has an angel-in-training to follow him wherever he goes. And Noelle, too, has a guide on her path to being an angel.",
+        "fra": "C'est l'histoire de Yuusuke Kamoshita, qui est un garçon tout à fait ordinaire, menant une vie ordinaire. \r\n\r\nQuand, lorsqu'un beau jour, ce dernier, se baladant dans la forêt, voit tomber du ciel (et sur lui, qui plus est ! ), une fille. Celle-ci est entièrement nue. Yuusuke, lui demande alors, si elle est un ange. Elle lui répond qu'elle est en fait, une démone se prénommant Noelle. Cette dernière tombe complètement en amour pour notre héros. Et va décider, de ce fait, de devenir un ange, pour lui. \r\n\r\nMais Yuusuke n'est pas au bout de ses surprises !",
+        "spa": "También conocido como \"Tenshi ni Narumon!\" en japonés. Producida por Studio Pierrot. El anime fue licenciado para ser lanzado en los Estados Unidos por Synch-Point. // Argumento: Yuusuke era solo un niño normal que iba a la escuela secundaria. Entonces, un día, la linda y comedida Noelle cayó, literalmente, en su vida, desnuda como un bebé y tan inocente. Antes de que pueda siquiera comprender lo que acaba de suceder, Yuusuke es admitido en una familia bastante extraña de seres de otro mundo directamente de los Munsters. Papá es un monstruo de Frankenstein con gusto por la calistenia. Mamá es una hermosa dama con una inclinación por los \"objetos redondos\", ¡en serio! La hermana mayor, Sara, es literalmente invisible; el hermano Gabriel es un vampiro adolescente con un problema de actitud; Y a la hermana más joven, Ruka, le encanta inventar cosas. Hay una abuela desaprobadora, que es una bruja en el noveno grado, y su buitre familiar. Todo lo que Yuusuke quería era que la hermosa Natsumi notara su atención, pero ahora tiene un ángel en entrenamiento para seguirlo donde quiera que vaya. Y Noelle, también, tiene una guía en su camino hacia ser un ángel."
+      },
+      "translations": {
+        "eng": "I'm Gonna Be An Angel",
+        "fra": "Tenshi ni Narumon!",
+        "jpn": "天使になるもんっ!",
+        "kor": "천사가 될 거야!",
+        "spa": "¡Voy a ser un ángel!"
+      },
+      "network": "TV Tokyo",
+      "remote_ids": [
+        {
+          "id": "tt0207152",
+          "type": 2,
+          "sourceName": "IMDB"
+        },
+        {
+          "id": "37829",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/posters/103571-1_t.jpg"
+    },
+    {
+      "objectID": "series-425970",
+      "country": "jpn",
+      "id": "series-425970",
+      "image_url": "https://artworks.thetvdb.com/banners/v4/series/425970/posters/6354b262b83d9.jpg",
+      "name": "なるほどハイスクール",
+      "first_air_time": "2011-04-21",
+      "overview": "2011年4月21日から2012年3月8日まで日本テレビで放送された週刊バラエティ番組で、AKB48のメンバーが生徒役で出演し、お笑いタレントの田村淳さんがMCとして毎週ゲストを迎えていた。",
+      "primary_language": "jpn",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "425970",
+      "year": "2011",
+      "slug": "425970-",
+      "overviews": {
+        "eng": "This was a weekly variety program broadcasted on Nippon TV from April 21, 2011 to March 8, 2012, featuring AKB48's members appearing as students and the comedian Atsushi Tamura as MC, welcoming some guests every week.",
+        "jpn": "2011年4月21日から2012年3月8日まで日本テレビで放送された週刊バラエティ番組で、AKB48のメンバーが生徒役で出演し、お笑いタレントの田村淳さんがMCとして毎週ゲストを迎えていた。"
+      },
+      "translations": {
+        "eng": "Naruhodo High School",
+        "jpn": "なるほどハイスクール"
+      },
+      "thumbnail": "https://artworks.thetvdb.com/banners/v4/series/425970/posters/6354b262b83d9_t.jpg"
+    },
+    {
+      "objectID": "series-75982",
+      "aliases": [
+        "Magical Nyan Nyan Taruto"
+      ],
+      "country": "jpn",
+      "id": "series-75982",
+      "image_url": "https://artworks.thetvdb.com/banners/posters/75982-1.jpg",
+      "name": "Magical Meow Meow Taruto",
+      "first_air_time": "2001-07-05",
+      "overview": "A legend among cats which is called \"Ganache\", says a young cat named Taruto, finds out she's not so ordinary... she's a magical princess named Princess Kinka, who learns her magic in time to go back to Ganache. This is a lovable, cute anime story from Madhouse Studio(Card Captor Sakura,Trigun,etc.)",
+      "primary_language": "eng",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "75982",
+      "year": "2001",
+      "slug": "magical-meow-meow-taruto",
+      "overviews": {
+        "eng": "A legend among cats which is called \"Ganache\", says a young cat named Taruto, finds out she's not so ordinary... she's a magical princess named Princess Kinka, who learns her magic in time to go back to Ganache. This is a lovable, cute anime story from Madhouse Studio(Card Captor Sakura,Trigun,etc.)",
+        "jpn": "伝説の大地ガナーシュ。数千年もの間魔力による王政を司っていたキンカ族に対し、妖かしの術を操るビョウ族は反乱の兵を上げ、王家の殲滅を計る。キンカの族長マーター王は、王家再興を生まれて間もない姫に託し、密かに脱出させたという。絶大な魔力を持つというキンカの姫の消息を知る者は、誰もいない。"
+      },
+      "translations": {
+        "eng": "Magical Meow Meow Taruto",
+        "jpn": "魔法少女猫たると"
+      },
+      "network": "WOWOW",
+      "remote_ids": [
+        {
+          "id": "tt0430840",
+          "type": 2,
+          "sourceName": "IMDB"
+        },
+        {
+          "id": "2810",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/posters/75982-1_t.jpg"
+    },
+    {
+      "objectID": "series-265319",
+      "country": "jpn",
+      "id": "series-265319",
+      "image_url": "https://artworks.thetvdb.com/banners/posters/265319-1.jpg",
+      "name": "Sarutobi Sansei",
+      "first_air_time": "2012-10-12",
+      "overview": "In the early Edo period, an encounter with Oichi (Mizukawa Asami), the daughter of the chief retainer Umemiya Shuzen (Sakai Masaaki) of a small domain, prompts the dull Sarutobi Sasuke (Ito Atsushi), a budding ninja who was born in a ninja village deep in the mountains, to charge off for the capital. While Sarutobi attempts to protect Oichi from intrigue, Tokusaburo (Yanagiba Toshiro), a devious, mysterious merchant, appears before him. And then Sarutobi’s archnemesis, Hattori Hanzomon, the grandson of Hattori Hanzo.",
+      "primary_language": "eng",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "265319",
+      "year": "2012",
+      "slug": "sarutobi-sansei",
+      "overviews": {
+        "eng": "In the early Edo period, an encounter with Oichi (Mizukawa Asami), the daughter of the chief retainer Umemiya Shuzen (Sakai Masaaki) of a small domain, prompts the dull Sarutobi Sasuke (Ito Atsushi), a budding ninja who was born in a ninja village deep in the mountains, to charge off for the capital. While Sarutobi attempts to protect Oichi from intrigue, Tokusaburo (Yanagiba Toshiro), a devious, mysterious merchant, appears before him. And then Sarutobi’s archnemesis, Hattori Hanzomon, the grandson of Hattori Hanzo."
+      },
+      "translations": {
+        "eng": "Sarutobi Sansei"
+      },
+      "network": "NHK",
+      "remote_ids": [
+        {
+          "id": "tt2218798",
+          "type": 2,
+          "sourceName": "IMDB"
+        },
+        {
+          "id": "55648",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/posters/265319-1_t.jpg"
+    },
+    {
+      "objectID": "series-270034",
+      "aliases": [
+        "Sasuga no Sarutobi",
+        "Clever Sarutobi",
+        "Le collège des ninjas"
+      ],
+      "country": "jpn",
+      "id": "series-270034",
+      "image_url": "https://artworks.thetvdb.com/banners/posters/270034-1.jpg",
+      "name": "Amazing Sarutobi",
+      "first_air_time": "1982-10-17",
+      "overview": "Nikumaru, meaning meatball in Japanese, is a seventeen-year-old student at Ninja High School, a special school for the training of ninja. He is short and chubby, but he possesses a super technique known as the \"kamikaze\", where he stirs up a whirlwind with his feet. The series introduces his many adventures and pranks as Nikumaru meets with his rivals both in and out of school.",
+      "primary_language": "eng",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "270034",
+      "year": "1982",
+      "slug": "amazing-sarutobi",
+      "overviews": {
+        "eng": "Nikumaru, meaning meatball in Japanese, is a seventeen-year-old student at Ninja High School, a special school for the training of ninja. He is short and chubby, but he possesses a super technique known as the \"kamikaze\", where he stirs up a whirlwind with his feet. The series introduces his many adventures and pranks as Nikumaru meets with his rivals both in and out of school.",
+        "fra": "Nicolas Sarutobi est un jeune garçon qui rêve de devenir un grand espion international. C'est pour y parvenir qu'il s'est inscrit à l'Académie des Ninjas, une des écoles les plus réputées du Japon. Il est amoureux fou de Mandoline, la fille du directeur de l'école. Ensemble, ils défendent leur Académie qui est en guerre avec l'école voisine des Scorpions. Celle-ci forme également de futurs espions internationaux et ses élèves tentent par tous les moyens de saboter les installations de l'Académie des Ninjas..."
+      },
+      "translations": {
+        "eng": "Amazing Sarutobi",
+        "fra": "L'académie des ninjas",
+        "jpn": "さすがの猿飛"
+      },
+      "network": "Fuji TV",
+      "remote_ids": [
+        {
+          "id": "92989",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/posters/270034-1_t.jpg"
+    },
+    {
+      "objectID": "series-267008",
+      "country": "esp",
+      "id": "series-267008",
+      "image_url": "https://artworks.thetvdb.com/banners/images/missing/series.jpg",
+      "name": "Raruto",
+      "first_air_time": "2008-10-07",
+      "overview": "Zumomaki Raruto es un joven ninja que tiene como objetivo ser el \"Jefazo\" de la aldea oculta de Torroja, ser aclamado y tener un sueldazo. Raruto la serie es una parodia del anime Naruto.\r\n\r\n",
+      "primary_language": "spa",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "267008",
+      "year": "2008",
+      "slug": "267008-show",
+      "overviews": {
+        "eng": "Zumomaki Raruto is a young ninja whose goal is to be the \"Boss\" of the hidden village of Torroja, to be acclaimed and have a salary. The Raruto series is a parody of the anime Naruto.\r\n",
+        "spa": "Zumomaki Raruto es un joven ninja que tiene como objetivo ser el \"Jefazo\" de la aldea oculta de Torroja, ser aclamado y tener un sueldazo. Raruto la serie es una parodia del anime Naruto.\r\n\r\n"
+      },
+      "translations": {
+        "eng": "Raruto",
+        "spa": "Raruto"
+      },
+      "remote_ids": [
+        {
+          "id": "tt4135766",
+          "type": 2,
+          "sourceName": "IMDB"
+        },
+        {
+          "id": "117804",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        }
+      ]
+    },
+    {
+      "objectID": "series-256835",
+      "aliases": [
+        "Ninja, the Wonder Boy",
+        "ساسوكي"
+      ],
+      "country": "jpn",
+      "id": "series-256835",
+      "image_url": "https://artworks.thetvdb.com/banners/posters/256835-1.jpg",
+      "name": "まんが猿飛佐助",
+      "first_air_time": "1979-10-09",
+      "overview": "『まんが猿飛佐助』（まんがさるとびさすけ）は、1979年10月9日から1980年4月15日まで東京12チャンネルで放送されていたテレビアニメである。東京12チャンネルとナックの共同製作。全24話。放送時間は毎週火曜 19:30 - 20:00 （日本標準時）。",
+      "primary_language": "jpn",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "256835",
+      "year": "1979",
+      "slug": "manga-sarutobi-sasuke",
+      "overviews": {
+        "ara": "محارب النينجا ساروتوبي (ساسوكي) هو أحد \"أبطال سانادا العشرة\"، مجموعة المحاربين الأسطوريين الذين عملوا تحت إمرة الساموراي سانادا يوكيمورا خلال فترة المقاطعات المتحاربة في اليابان وساهموا في معارك قلعة أوساكا ويُظنّ بأنه مات في الحملة الصيفية لحصار أوساكا عام 1615.",
+        "eng": "Ninja the Wonder Boy started out life in 1979 on the Japanese Tokyo Channel 12 as Manga Sarutobi Sasuke. Set in Feudal Japan each week the brave but buffoonish young trainee ninja Sasuke would fight to defend his region and friends from the evil intentions of Master Ninja Hanzo and the rival Iga Clan.\r\n\r\nInspired by a novel by Kazuo Den which had already been animated into a TV series in 1968 titled Sasuke. The novel follows the same basic premise but in a far more serious and realistic tone, following the life of young Sasuke who is sent away by his father to learn the ways of the ninja and defend the country from the oppressive Shogunate. \r\n\r\nManga Sarutobi Sasuke's lead was a comedic take on a popular character of childrens literature made famous in the early 1900's. This character is believed to have been based on Kozuki Sasuke, a ninja legend from the Meiji era of Japanese history.",
+        "ita": "Sasuke si allena dal Grande Maestro Bianco per diventare un ninja, ma prima di diventarlo a pieno titolo dovrà affrontare pericolose missioni per sventare i piani di Hanzo combattendo contro i suoi sgherri. Nelle sue missioni Sasuke opera al servizio del suo signore Ieyasu ed è accompagnato dal monaco guerriero Iron Monk. La serie che si occupa di tematiche ninja ha un taglio spesso umoristico diverso dalle altre produzioni di genere di quel periodo.",
+        "jpn": "『まんが猿飛佐助』（まんがさるとびさすけ）は、1979年10月9日から1980年4月15日まで東京12チャンネルで放送されていたテレビアニメである。東京12チャンネルとナックの共同製作。全24話。放送時間は毎週火曜 19:30 - 20:00 （日本標準時）。"
+      },
+      "translations": {
+        "ara": "مغامرات ساسوكي",
+        "eng": "Manga Sarutobi Sasuke",
+        "ita": "Il piccolo guerriero",
+        "jpn": "まんが猿飛佐助"
+      },
+      "remote_ids": [
+        {
+          "id": "tt0199863",
+          "type": 2,
+          "sourceName": "IMDB"
+        },
+        {
+          "id": "45087",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        },
+        {
+          "id": "45087",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/posters/256835-1_t.jpg"
+    },
+    {
+      "objectID": "series-323089",
+      "aliases": [
+        "Ecchan the Ninja"
+      ],
+      "country": "jpn",
+      "id": "series-323089",
+      "image_url": "https://artworks.thetvdb.com/banners/series/323089/posters/5f26964980369.jpg",
+      "name": "さるとびエッちゃん",
+      "first_air_time": "1971-10-04",
+      "overview": "エッチャンは普通の小さな女の子のように見えますが、外見は欺くことができます。 彼女は偉大な忍者猿飛佐助の子孫であり、彼女自身の忍者スキルを持っています。 エッチャンはまた、あらゆる種類の並外れた偉業を成し遂げることができます。彼女は動物とコミュニケーションをとることができ、催眠術とテレパシーの能力を持ち、同年代の普通の女の子よりも強くて知性があります。 しかし、それにもかかわらず、エッチャンはまだ若い女の子であり、他の若い女の子と同じように、彼女は間違いを犯します。 しかし、彼女の友人の巫女、太平、そして彼女の犬のブクの助けを借りて、すべてが常に正しくなります。",
+      "primary_language": "jpn",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "323089",
+      "year": "1971",
+      "slug": "323089-show",
+      "overviews": {
+        "eng": "Ecchan appears to be a normal little girl, but appearances can be deceptive. She is descended from the great ninja Sasuke Sarutobi, and possesses ninja skills of her own. Ecchan is also capable of all sorts of extraordinary feats: she can communicate with animals, possesses hypnotic and telepathic abilities, and is stronger and more intelligent than normal girls of her age. But despite all this, Ecchan is still only a young girl, and like any young girl she makes mistakes. But with the help of her friends Miko, Taihei and her dog Buku, everything always turns out right.",
+        "ita": "Ecchan Sarutobi (Hela in Italia) sembra esser una normalissima bambina che frequenta la scuola elementare ma, in realtà, lei è l'ultima discendente del leggendario ninja Sarutobi Sasuke. È più forte ed intelligente delle comuni ragazze della sua età, capace com'è d'ogni sorta di prodezze e dotata di straordinari poteri che vanno dalla forza poderosa alla super velocità; maestra nell'arte del ninjutsu riesce inoltre a comunicare con gli animali e possiede le abilità ipnotiche e telepatiche. Queste straordinarie facoltà le derivano appunto dall'addestramento da ninja che ha ricevuto.\r\n\r\nMa nonostante tutto questo è e rimane pur sempre ancora solo una bambina dolce e gentile, e come tutte le bambine è destinata a commettere errori; con l'aiuto dei suoi amici ogni situazione riuscirà sempre a risolversi per il meglio.\r\n\r\nDopo aver perso la memoria, Hecchan viene accolta a casa di due anziani signori e della loro nipote, Miko (Miki in Italia). Comincia allora per le due e per i loro amici, Taihei/Takeshi il bullo e Buk (Bubu in Italia), un cane parlante, una serie di incredibili avventure in cui i super poteri di Hecchan torneranno spesso e volentieri utili.",
+        "jpn": "エッチャンは普通の小さな女の子のように見えますが、外見は欺くことができます。 彼女は偉大な忍者猿飛佐助の子孫であり、彼女自身の忍者スキルを持っています。 エッチャンはまた、あらゆる種類の並外れた偉業を成し遂げることができます。彼女は動物とコミュニケーションをとることができ、催眠術とテレパシーの能力を持ち、同年代の普通の女の子よりも強くて知性があります。 しかし、それにもかかわらず、エッチャンはまだ若い女の子であり、他の若い女の子と同じように、彼女は間違いを犯します。 しかし、彼女の友人の巫女、太平、そして彼女の犬のブクの助けを借りて、すべてが常に正しくなります。"
+      },
+      "translations": {
+        "eng": "Sarutobi Ecchan",
+        "ita": "Hela Supergirl",
+        "jav": "さるとびエッちゃん",
+        "jpn": "さるとびエッちゃん"
+      },
+      "remote_ids": [
+        {
+          "id": "tt0289018",
+          "type": 2,
+          "sourceName": "IMDB"
+        },
+        {
+          "id": "37872",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/series/323089/posters/5f26964980369_t.jpg"
+    },
+    {
+      "objectID": "series-79882",
+      "aliases": [
+        "Harukanaru Toki no Naka de - Hachiyou Shou",
+        "Harukanaru Toki no Naka de ~Hachiyou Shou~",
+        "HaruToki"
+      ],
+      "country": "jpn",
+      "id": "series-79882",
+      "image_url": "https://artworks.thetvdb.com/banners/posters/79882-2.jpg",
+      "name": "遙かなる時空の中で ～八葉抄～",
+      "first_air_time": "2004-10-05",
+      "overview": "Akane Motomiya and her friends Tenma and Shimon are pulled by a demon into another world, where Akane becomes the Priestess of the Dragon God. The people of this world tell her that she is the only one who can stop the demons from taking over; meanwhile, the demons want to use her power for their own ends. Luckily, Akane has the Hachiyou, eight men with powers of their own who are sworn to protect the Dragon Priestess.",
+      "primary_language": "jpn",
+      "primary_type": "series",
+      "status": "Ended",
+      "type": "series",
+      "tvdb_id": "79882",
+      "year": "2004",
+      "slug": "haruka-beyond-the-stream-of-time-a-tale-of-the-eight-guardians",
+      "overviews": {
+        "deu": "Die Schülerin Akane und ihre Klassenkameraden Tenma und Shimon werden durch einen Brunnen in eine fremde Welt gezogen, die dem Kyoto der Heian-Periode ähnelt. Diese Welt namens Kyo wird von den Oni bedroht - fremdartig aussehende Menschen mit übernatürlichen Fähigkeiten, die von den Menschen als Dämonen gefürchtet werden...\r\n\r\nEtwas stiehlt den Bewohnern der Stadt Kyo ihre Lebensenergie. Die Nachforschungen führen Akane zu einem Mädchen in einem verlassenen Haus, das von Hortensien umwuchert ist. Natürlich steckt Akram dahinter und bevor sie sich´s versieht, ist sie eine Gefangene- und auf die Hachiyou, die ihr natürlich zu Hilfe eilen, warten viele gefährliche Fallen und Gegner...\r\nBasierend auf der erfolgreichen Dating-/Adventure Game-Serie von Ruby Party, ist Harukanaru toki no naka de mittlerweile zu einer erfolgreichen Manga- und Anime-Serie geworden, die besonders Fans von Vision of Escaflowne oder 12 Kingdoms ansprechen wird. Der Manga von Tohko Mizuno erscheint derzeit unter dem Titel In A Distant Time bei Calsen.\r\n\r\nAkane ist die Ryuujin no Miko, die Priesterin von Kyou und nur sie hat die Fähigkeit Geister (Onryo) zur Ruhe zu betten. Allerdings hat sie gerade erst davon erfahren, dass sie diese Gabe besitzt. Akanes Aufgabe ist es Kyou schützen, doch muss sie wenn sie einen Geist versiegeln will, seine Schmerzen annehmen und das ist nicht einfach.\r\nIhr zur Seite stehen acht Bodyguards, die Haichiyou. Sie beschützen Akane. Als Akane das erste Mal ihre Fähigkeit einsetzt, gelingt es ihr nicht den Geist zu versiegeln. Einige ihrer Beschützer werden verletzt und sie macht sich grosse Vorwürfe.\r\n\r\nDann trifft sie einen jungen Mann, der sein Gedächtnis verloren hat. Sie will ihm helfen herauszufinden wer er ist und das Geheimnis zu lösen, das ihn umgibt. Der einzige Hinweis ist eine Maske, die er bei sich hatte als er erwacht ist. Aus diesem Grund versucht sie mehr über die Maske zu erfahren. Doch wird es ihr gelingen, das Geheimnis zu lüft",
+        "eng": "Akane Motomiya and her friends Tenma and Shimon are pulled by a demon into another world, where Akane becomes the Priestess of the Dragon God. The people of this world tell her that she is the only one who can stop the demons from taking over; meanwhile, the demons want to use her power for their own ends. Luckily, Akane has the Hachiyou, eight men with powers of their own who are sworn to protect the Dragon Priestess.",
+        "fra": "À une époque indéfinie, trois amis étudiants, Motomiya Akane, Tenma et Shimon mènent une vie paisible jusqu'au jour où soudainement ils sont projetés dans un monde parallèle, dont la principale ville est Kyou. Cette ville était protégée par quatre dieux. Malheureusement, les pouvoirs de ces quatre divinités ont été volés par un démon : Akuran.\r\nAkane est considérée comme la prêtresse pouvant sauver Kyou. Aidée par ses amis Tenma et Shimon, qui eux deviennent des Protecteurs de la Prêtresse, et par six autres Protecteurs (Hachiyou) elle devra affronter les forces du Mal pour sauver la ville et récupérer le pouvoir des quatre divinités.",
+        "kor": "네오로망스가 원작인 애니답게 성우진이 화려하고 작붕이 심하다.\r\n'자양화 꿈 이야기'와 '백룡의 무녀', 마이히토요는 애니박스에서 방영했다. 한국판 성우진의 경우 일부 레귤러에서 중복이 있기도 하지만 극장판에서는 몇몇 캐릭터의 성우가 변경되어 중복이 없어졌다.",
+        "rus": "Древний город охраняют божественные животные — Дракон с востока, Тигр с запада, Черепаха с севера и Феникс с юга. Пока их сила не иссякла, столица в безопасности, но, если город лишится своих магических стражей, только вмешательство новой жрицы нового могущественного бога сможет спасти людей и страну… И этой жрицей суждено стать скромной японской старшекласснице Аканэ.",
+        "zho": "身處現代日本的女高中生元宮茜，被召喚至和平安時代的京都相似的異世界「京」，成為被龍神之力所寄宿的「龍神神子」，被告知希望能和為幫助神子的八位男性「八葉」一起守護京，並從鬼之一族手上取回守護京的四神。\r\n從一開始的迷惑，到與「八葉」共同接受試煉，神子到底會如何成長呢？"
+      },
+      "translations": {
+        "deu": "In a Distant Time",
+        "eng": "Haruka: Beyond the Stream of Time – A Tale of the Eight Guardians",
+        "fra": "Haruka : Dans Une Époque Lointaine",
+        "jpn": "遙かなる時空の中で ～八葉抄～",
+        "kor": "머나먼 시공 속에서",
+        "rus": "В далекие времена",
+        "zho": "遙遠時空～八葉抄～"
+      },
+      "remote_ids": [
+        {
+          "id": "tt0988819",
+          "type": 2,
+          "sourceName": "IMDB"
+        },
+        {
+          "id": "2724",
+          "type": 12,
+          "sourceName": "TheMovieDB.com"
+        }
+      ],
+      "thumbnail": "https://artworks.thetvdb.com/banners/posters/79882-2_t.jpg"
+    }
+  ],
+  "links": {
+    "prev": null,
+    "self": "https://api4.thetvdb.com/v4/search?query=naruto&type=series&limit=50&page=0",
+    "next": null,
+    "total_items": 21,
+    "page_size": 50
+  }
+}
