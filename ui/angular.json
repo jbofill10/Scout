@@ -32,7 +32,8 @@
               }
             ],
             "styles": [
-              "src/styles.scss"
+              "src/styles.scss",
+              "primeng/resources/themes/md-dark-deeppurple/theme.css"
             ],
             "scripts": []
           },

@@ -3,7 +3,10 @@ import { BrowserModule } from '@angular/platform-browser';
 
 import { AppRoutingModule } from './app-routing.module';
 import { AppComponent } from './app.component';
-import { ToolbarModule } from './toolbar/toolbar.module';
+import { Toolbar } from './toolbar/toolbar.component';
+import { SearchComponent } from './search/search.component';
+import { ScheduleComponent } from './schedule/schedule.component';
+import { DashboardComponent } from './dashboard/dashboard.component';
 
 @NgModule({
     declarations: [
@@ -12,7 +15,10 @@ import { ToolbarModule } from './toolbar/toolbar.module';
     imports: [
         BrowserModule,
         AppRoutingModule,
-        ToolbarModule
+        SearchComponent,
+        ScheduleComponent,
+        DashboardComponent,
+        Toolbar
     ],
     providers: [],
     bootstrap: [AppComponent]
