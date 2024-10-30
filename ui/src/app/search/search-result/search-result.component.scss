@@ -1,0 +1,43 @@
+.search-result {
+    background-color: #000000;
+    height: 350px;
+    width: 200px;
+    overflow: hidden;
+}
+
+.result-wrapper {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+}
+
+.media-wrapper {
+    height: 300px;
+    width: 200px;
+    position: relative;
+    display: flex;
+}
+
+.result-image {
+    height: 100%;
+    width: 100%;
+    border-radius: 2px;
+}
+
+h2,
+p {
+    color: white;
+    margin: 0;
+}
+
+h2 {
+    top: 20px;
+    left: 10px;
+    font-size: 16px;
+}
+
+p {
+    top: 40px;
+    left: 10px;
+}

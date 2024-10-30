@@ -6,9 +6,9 @@ import { ScheduleComponent } from './schedule/schedule.component';
 import { DashboardComponent } from './dashboard/dashboard.component';
 
 export const routes: Routes = [
-    { path: '', component: DashboardComponent },          // Default route
-    { path: 'schedule', component: ScheduleComponent }, // Route for /schedule
-    { path: 'search', component: SearchComponent },    // Route for /search
+    { path: '', component: DashboardComponent },
+    { path: 'schedule', component: ScheduleComponent },
+    { path: 'search', component: SearchComponent },
     { path: '**', redirectTo: '' }
 ];
 

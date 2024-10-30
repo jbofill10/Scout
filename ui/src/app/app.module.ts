@@ -7,20 +7,25 @@ import { Toolbar } from './toolbar/toolbar.component';
 import { SearchComponent } from './search/search.component';
 import { ScheduleComponent } from './schedule/schedule.component';
 import { DashboardComponent } from './dashboard/dashboard.component';
+import { HttpClientModule, provideHttpClient, withInterceptorsFromDi } from '@angular/common/http';
+import { SearchResultComponent } from './search/search-result/search-result.component';
+import { ImageModalComponent } from './search/image-modal/image-modal.component';
 
 @NgModule({
     declarations: [
-        AppComponent
+        AppComponent,
     ],
     imports: [
         BrowserModule,
         AppRoutingModule,
         SearchComponent,
+        SearchResultComponent,
         ScheduleComponent,
         DashboardComponent,
         Toolbar
     ],
-    providers: [],
+    providers: [provideHttpClient(withInterceptorsFromDi()), // New way to provide HttpClient
+    ],
     bootstrap: [AppComponent]
 })
 export class AppModule { }

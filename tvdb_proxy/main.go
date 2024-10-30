@@ -54,7 +54,7 @@ func getSeries(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintln("Internal Server Error: Unable to query show", mediaName)})
 		return
 	}
-
+	logger.Println("response", response)
 	c.JSON(http.StatusOK, response)
 
 }
