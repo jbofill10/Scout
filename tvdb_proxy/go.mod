@@ -2,9 +2,12 @@ module tvdb_proxy
 
 go 1.23.0
 
+replace shared/media => ../shared/media
+
 require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/pelletier/go-toml v1.9.5
+	shared/media v0.0.0-00010101000000-000000000000
 )
 
 require (

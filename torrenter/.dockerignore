@@ -1,0 +1,11 @@
+*.sqlite
+*.db
+.git
+.gitignore
+README.md
+*.md
+.vscode
+.idea
+*.log
+mocks/
+*_test.go

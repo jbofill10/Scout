@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tvdb-proxy
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tvdb-proxy
+  template:
+    metadata:
+      labels:
+        app: tvdb-proxy
+    spec:
+      containers:
+      - name: tvdb-proxy
+        image: scout-tvdb-proxy:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 22000
+        env:
+        - name: BIND_ADDRESS
+          value: "0.0.0.0:22000"
+        # TVDB config from ConfigMap
+        - name: TVDB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: tvdb-proxy-config
+              key: tvdb-host
+        volumeMounts:
+        - name: secrets-volume
+          mountPath: /root/secrets
+      volumes:
+      - name: secrets-volume
+        secret:
+          secretName: tvdb-proxy-secrets

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tvdb-proxy-config
+  namespace: default
+data:
+  tvdb-host: "https://api4.thetvdb.com/v4"

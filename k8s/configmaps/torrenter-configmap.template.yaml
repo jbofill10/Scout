@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torrenter-config
+  namespace: default
+data:
+  # Replace <YOUR_LAN_IP> with your actual LAN IP (e.g., 192.168.0.111)
+  prowlarr-host: "http://<YOUR_LAN_IP>:9696"
+  qbitt-host: "http://qbitt:8080"
+  plex-host: "http://<YOUR_LAN_IP>:32400"
+  plex-movie-sections: "3"
+  plex-show-sections: "4"
+  ui-endpoint: "ws://webserver-service:22920/status"

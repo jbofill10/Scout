@@ -1,0 +1,10 @@
+*.sqlite
+*.db
+.git
+.gitignore
+README.md
+*.md
+.vscode
+.idea
+*.log
+sample_*.json

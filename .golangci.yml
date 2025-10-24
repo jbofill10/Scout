@@ -1,0 +1,5 @@
+linters-settings:
+  lll:
+    line-length: 120 # set your desired max line length
+    tab-width: 1
+    exclude-pattern: "^// Code generated .* DO NOT EDIT\\.$"

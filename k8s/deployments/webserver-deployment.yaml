@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webserver
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webserver
+  template:
+    metadata:
+      labels:
+        app: webserver
+    spec:
+      containers:
+      - name: webserver
+        image: scout-webserver:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 22920
+        env:
+        - name: TVDB_PROXY_HOST
+          value: "tvdb-proxy-service:22000"
+        - name: TORRENTER_HOST
+          value: "torrenter-service:22001"
+        - name: BIND_ADDRESS
+          value: "0.0.0.0:22920"
+        - name: DB_HOST
+          value: "postgres-service"
+        - name: DB_USER
+          value: "scoutuser"
+        - name: DB_PASSWORD
+          value: "scoutpass"
+        - name: DB_NAME
+          value: "scoutdb"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
