@@ -32,13 +32,10 @@ Scout is built as four microservices that work together:
 minikube start --cpus=4 --memory=8192
 
 # Deploy all services
-./deploy-minikube.sh
+./deploy.sh
 
-# Add to /etc/hosts
-echo "$(minikube ip) scout.local" | sudo tee -a /etc/hosts
-
-# Access the UI
-open http://scout.local
+# Access the UI (via ingress)
+# The deployment script will provide access instructions
 ```
 
 ### Development Workflow
@@ -80,7 +77,7 @@ go run *.go
 ```bash
 cd webserver
 go run *.go
-# Listens on 192.168.0.111:22920
+# Listens on 0.0.0.0:22920 (configurable via BIND_ADDRESS env var)
 ```
 
 ### 4. Start UI
@@ -131,9 +128,9 @@ Both actual configmaps and secrets are gitignored. Only templates are committed 
 ## 🔧 Tech Stack
 
 **Backend:**
-- Go 1.21+
+- Go 1.23+
 - Gin web framework
-- SQLite (scheduler and media databases)
+- PostgreSQL (shared database for all services)
 - TOML configuration
 
 **Frontend:**
@@ -162,15 +159,17 @@ Scout/
 ├── torrenter/          # Download processor
 ├── ui/                 # React frontend
 ├── shared/             # Shared Go types
-│   └── media/          # TVDB data structures
+│   ├── media/          # TVDB data structures
+│   └── status/         # Download status types
+├── sql/                # Database setup and migration scripts
 ├── k8s/                # Kubernetes manifests
-│   ├── configmaps/     # Service configurations
+│   ├── configmaps/     # Service configurations (gitignored, use templates)
 │   ├── secrets/        # Sensitive data (gitignored, use templates)
 │   ├── deployments/    # Pod definitions
 │   ├── services/       # Service discovery
 │   ├── pvcs/           # Persistent storage
 │   └── ingress/        # External access
-├── deploy-minikube.sh  # Automated deployment
+├── deploy.sh           # Automated deployment script
 └── dev.sh              # Development helpers
 ```
 
