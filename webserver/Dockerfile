@@ -13,10 +13,6 @@ COPY webserver/go.mod webserver/go.sum ./
 COPY shared/media /shared/media
 COPY shared/status /shared/status
 
-# Copy torrenter models for local replace
-COPY torrenter/models /torrenter/models
-
-
 # Download dependencies
 RUN go mod download
 
@@ -24,7 +20,7 @@ RUN go mod download
 COPY webserver/ .
 
 # Build the binary with cgo enabled (required by mattn/go-sqlite3)
-RUN CGO_ENABLED=1 GOOS=linux go build -ldflags "-s -w" -o webserver .
+RUN CGO_ENABLED=1 GOOS=linux go build -ldflags "-s -w" -o webserver ./cmd/webserver
 
 # Runtime stage
 

@@ -13,11 +13,54 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Parse command line arguments
+COMMAND=""
+SERVICE=""
 SKIP_CHECKS=false
 SETUP_MOUNTS=false
 
+show_help() {
+    echo "Usage: $0 [COMMAND] [SERVICE] [OPTIONS]"
+    echo ""
+    echo "Commands:"
+    echo "  deploy             Full deployment (default if no command specified)"
+    echo "  rebuild <service>  Rebuild and redeploy a specific service or 'all'"
+    echo ""
+    echo "Services:"
+    echo "  webserver, tvdb-proxy, torrenter, ui, all"
+    echo ""
+    echo "Options:"
+    echo "  --skip-checks    Skip pre-flight validation checks"
+    echo "  --setup-mounts   Set up minikube mount processes in background"
+    echo "  -h, --help       Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0                              # Full deployment with checks"
+    echo "  $0 --skip-checks                # Quick full redeploy"
+    echo "  $0 rebuild all --skip-checks    # Rebuild all services"
+    echo "  $0 rebuild webserver            # Rebuild only webserver"
+    echo "  $0 --setup-mounts               # Deploy and setup mounts"
+    exit 0
+}
+
+# Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        rebuild)
+            COMMAND="rebuild"
+            shift
+            if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+                SERVICE="$1"
+                shift
+            else
+                echo "Error: rebuild command requires a service name or 'all'"
+                echo "Usage: $0 rebuild <service|all> [OPTIONS]"
+                exit 1
+            fi
+            ;;
+        deploy)
+            COMMAND="deploy"
+            shift
+            ;;
         --skip-checks)
             SKIP_CHECKS=true
             shift
@@ -27,18 +70,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            echo "Usage: $0 [OPTIONS]"
-            echo ""
-            echo "Options:"
-            echo "  --skip-checks    Skip pre-flight validation checks"
-            echo "  --setup-mounts   Set up minikube mount processes in background"
-            echo "  -h, --help       Show this help message"
-            echo ""
-            echo "Examples:"
-            echo "  $0                        # Full deployment with checks"
-            echo "  $0 --skip-checks          # Quick redeploy"
-            echo "  $0 --setup-mounts         # Deploy and setup mounts"
-            exit 0
+            show_help
             ;;
         *)
             echo "Unknown option: $1"
@@ -47,6 +79,99 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Default to deploy if no command specified
+if [ -z "$COMMAND" ]; then
+    COMMAND="deploy"
+fi
+
+# ============================================================================
+# REBUILD FUNCTION
+# ============================================================================
+
+rebuild_service() {
+    local service=$1
+    echo -e "${YELLOW}Rebuilding $service...${NC}"
+
+    # Set docker env for minikube
+    eval $(minikube docker-env)
+
+    case $service in
+        webserver)
+            docker build -f ./webserver/Dockerfile -t scout-webserver:latest .
+            kubectl rollout restart deployment/webserver
+            ;;
+        tvdb-proxy)
+            docker build -f ./tvdb_proxy/Dockerfile -t scout-tvdb-proxy:latest .
+            kubectl rollout restart deployment/tvdb-proxy
+            ;;
+        torrenter)
+            docker build -f torrenter/Dockerfile -t scout-torrenter:latest .
+            kubectl rollout restart deployment/torrenter
+            ;;
+        ui)
+            docker build -f ui/Dockerfile -t scout-ui:latest ui/
+            kubectl rollout restart deployment/ui
+            ;;
+        all)
+            echo -e "${BLUE}Rebuilding all services...${NC}"
+            docker build -f ./webserver/Dockerfile -t scout-webserver:latest .
+            docker build -f ./tvdb_proxy/Dockerfile -t scout-tvdb-proxy:latest .
+            docker build -f ./torrenter/Dockerfile -t scout-torrenter:latest .
+            docker build -f ./ui/Dockerfile -t scout-ui:latest ./ui
+            echo -e "${BLUE}Restarting all deployments...${NC}"
+            kubectl rollout restart deployment/webserver
+            kubectl rollout restart deployment/tvdb-proxy
+            kubectl rollout restart deployment/torrenter
+            kubectl rollout restart deployment/ui
+            ;;
+        *)
+            echo -e "${RED}Unknown service: $service${NC}"
+            echo "Valid services: webserver, tvdb-proxy, torrenter, ui, all"
+            exit 1
+            ;;
+    esac
+
+    echo -e "${GREEN}✅ $service rebuilt and restarted${NC}"
+
+    if [ "$service" = "all" ]; then
+        echo "Waiting for all rollouts..."
+        kubectl rollout status deployment/webserver &
+        kubectl rollout status deployment/tvdb-proxy &
+        kubectl rollout status deployment/torrenter &
+        kubectl rollout status deployment/ui &
+        wait
+    else
+        echo "Waiting for rollout..."
+        kubectl rollout status deployment/$service
+    fi
+}
+
+# ============================================================================
+# HANDLE REBUILD COMMAND
+# ============================================================================
+
+if [ "$COMMAND" = "rebuild" ]; then
+    echo -e "${BLUE}🔄 Rebuilding service(s)...${NC}"
+    echo ""
+
+    # Check Minikube status
+    echo -e "${BLUE}Checking Minikube status...${NC}"
+    if ! minikube status &>/dev/null; then
+        echo -e "${RED}❌ Minikube is not running.${NC}"
+        echo "Start Minikube with: minikube start"
+        exit 1
+    fi
+    echo -e "${GREEN}✅ Minikube is running${NC}"
+    echo ""
+
+    rebuild_service "$SERVICE"
+
+    echo ""
+    echo -e "${GREEN}✅ Rebuild complete!${NC}"
+    echo ""
+    exit 0
+fi
 
 # ============================================================================
 # PRE-FLIGHT CHECKS

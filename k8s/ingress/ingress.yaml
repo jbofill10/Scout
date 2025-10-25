@@ -1,23 +1,20 @@
+# API Ingress - with rewrite rule to strip /api prefix
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: scout-ingress
+  name: scout-ingress-api
   namespace: default
   annotations:
-    # Strip /api prefix when forwarding to webserver
     nginx.ingress.kubernetes.io/rewrite-target: /$1
-    # Increase timeout for long-running requests
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
-    # Enable CORS if needed
     nginx.ingress.kubernetes.io/enable-cors: "true"
     nginx.ingress.kubernetes.io/cors-allow-origin: "*"
 spec:
   rules:
   - http:
       paths:
-      # API routes - strip /api prefix and forward to webserver
       - path: /api/(.*)
         pathType: ImplementationSpecific
         backend:
@@ -25,7 +22,21 @@ spec:
             name: webserver-service
             port:
               number: 22920
-      # UI routes - serve from UI service (must be last to act as catch-all)
+---
+# UI Ingress - no rewrite, serve assets as-is
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: scout-ingress-ui
+  namespace: default
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+spec:
+  rules:
+  - http:
+      paths:
       - path: /
         pathType: Prefix
         backend:

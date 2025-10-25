@@ -1,0 +1,257 @@
+package repository
+
+import (
+	"bytes"
+	"database/sql"
+	"encoding/json"
+	"log"
+	"testing"
+	"time"
+
+	tvdb "shared/media"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/stretchr/testify/suite"
+)
+
+type SchedulerRepoTestSuite struct {
+	suite.Suite
+	repo   *SchedulerRepo
+	db     *sql.DB
+	mock   sqlmock.Sqlmock
+	logger *log.Logger
+}
+
+func TestSchedulerRepoSuite(t *testing.T) {
+	suite.Run(t, new(SchedulerRepoTestSuite))
+}
+
+func (s *SchedulerRepoTestSuite) SetupTest() {
+	var err error
+	s.db, s.mock, err = sqlmock.New()
+	s.Require().NoError(err)
+
+	buf := new(bytes.Buffer)
+	s.logger = log.New(buf, "[TEST] ", log.LstdFlags|log.Lshortfile)
+
+	s.repo = &SchedulerRepo{
+		db:     s.db,
+		logger: s.logger,
+	}
+}
+
+func (s *SchedulerRepoTestSuite) TearDownTest() {
+	s.db.Close()
+}
+
+func (s *SchedulerRepoTestSuite) TestSchedule_Success() {
+	media := tvdb.Media{
+		Id:   "123",
+		Name: "Test Show",
+		Metadata: tvdb.TVDBSeriesMetadata{
+			Episodes: []tvdb.Episode{
+				{SeasonNumber: 1, Number: 1},
+			},
+		},
+	}
+
+	releaseTime := time.Now().AddDate(0, 0, 7)
+
+	mediaJSON, _ := json.Marshal(media)
+
+	s.mock.ExpectQuery(`INSERT INTO ScheduledDownloads`).
+		WithArgs(mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+
+	err := s.repo.Schedule(media, releaseTime)
+
+	s.NoError(err)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestSchedule_DuplicateContent() {
+	media := tvdb.Media{
+		Id:   "123",
+		Name: "Test Show",
+	}
+
+	releaseTime := time.Now().AddDate(0, 0, 7)
+
+	mediaJSON, _ := json.Marshal(media)
+
+	// ON CONFLICT DO NOTHING returns no rows
+	s.mock.ExpectQuery(`INSERT INTO ScheduledDownloads`).
+		WithArgs(mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, sqlmock.AnyArg()).
+		WillReturnError(sql.ErrNoRows)
+
+	err := s.repo.Schedule(media, releaseTime)
+
+	s.Equal(ErrDuplicateScheduled, err)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestSchedule_DatabaseError() {
+	media := tvdb.Media{
+		Id:   "123",
+		Name: "Test Show",
+	}
+
+	releaseTime := time.Now().AddDate(0, 0, 7)
+
+	mediaJSON, _ := json.Marshal(media)
+
+	s.mock.ExpectQuery(`INSERT INTO ScheduledDownloads`).
+		WithArgs(mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, sqlmock.AnyArg()).
+		WillReturnError(sql.ErrConnDone)
+
+	err := s.repo.Schedule(media, releaseTime)
+
+	s.Error(err)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestGetDueMedia_Success() {
+	media := tvdb.Media{
+		Id:   "123",
+		Name: "Test Show",
+		Metadata: tvdb.TVDBSeriesMetadata{
+			Episodes: []tvdb.Episode{
+				{SeasonNumber: 1, Number: 1},
+			},
+		},
+	}
+
+	mediaJSON, _ := json.Marshal(media)
+	today := time.Now().Format("2006-01-02")
+
+	rows := sqlmock.NewRows([]string{"id", "media"}).
+		AddRow(1, mediaJSON)
+
+	s.mock.ExpectQuery(`SELECT id, media FROM ScheduledDownloads`).
+		WithArgs(today).
+		WillReturnRows(rows)
+
+	s.mock.ExpectExec(`UPDATE ScheduledDownloads SET schedule_status`).
+		WithArgs(1).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	results, err := s.repo.GetDueMedia()
+
+	s.NoError(err)
+	s.Len(results, 1)
+	s.Equal("Test Show", results[0].Name)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestGetDueMedia_EmptyResults() {
+	today := time.Now().Format("2006-01-02")
+
+	rows := sqlmock.NewRows([]string{"id", "media"})
+
+	s.mock.ExpectQuery(`SELECT id, media FROM ScheduledDownloads`).
+		WithArgs(today).
+		WillReturnRows(rows)
+
+	results, err := s.repo.GetDueMedia()
+
+	s.NoError(err)
+	s.Empty(results)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestGetDueMedia_QueryError() {
+	today := time.Now().Format("2006-01-02")
+
+	s.mock.ExpectQuery(`SELECT id, media FROM ScheduledDownloads`).
+		WithArgs(today).
+		WillReturnError(sql.ErrConnDone)
+
+	results, err := s.repo.GetDueMedia()
+
+	s.Error(err)
+	s.Nil(results)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestGetDueMedia_InvalidJSON() {
+	today := time.Now().Format("2006-01-02")
+
+	rows := sqlmock.NewRows([]string{"id", "media"}).
+		AddRow(1, []byte("invalid json"))
+
+	s.mock.ExpectQuery(`SELECT id, media FROM ScheduledDownloads`).
+		WithArgs(today).
+		WillReturnRows(rows)
+
+	results, err := s.repo.GetDueMedia()
+
+	s.NoError(err)
+	s.Empty(results) // Invalid JSON should be skipped
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestGetDueMedia_MultipleResults() {
+	media1 := tvdb.Media{Id: "123", Name: "Show 1"}
+	media2 := tvdb.Media{Id: "456", Name: "Show 2"}
+
+	mediaJSON1, _ := json.Marshal(media1)
+	mediaJSON2, _ := json.Marshal(media2)
+	today := time.Now().Format("2006-01-02")
+
+	rows := sqlmock.NewRows([]string{"id", "media"}).
+		AddRow(1, mediaJSON1).
+		AddRow(2, mediaJSON2)
+
+	s.mock.ExpectQuery(`SELECT id, media FROM ScheduledDownloads`).
+		WithArgs(today).
+		WillReturnRows(rows)
+
+	s.mock.ExpectExec(`UPDATE ScheduledDownloads SET schedule_status`).
+		WithArgs(1).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	s.mock.ExpectExec(`UPDATE ScheduledDownloads SET schedule_status`).
+		WithArgs(2).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	results, err := s.repo.GetDueMedia()
+
+	s.NoError(err)
+	s.Len(results, 2)
+	s.Equal("Show 1", results[0].Name)
+	s.Equal("Show 2", results[1].Name)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestInsertDownloadHistory_Success() {
+	s.mock.ExpectExec(`INSERT INTO ShowDownloadHistory`).
+		WithArgs("Test Show", 1, 2, 0, "searching", "").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err := s.repo.InsertDownloadHistory("Test Show", 1, 2, 0, "searching", "")
+
+	s.NoError(err)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestInsertDownloadHistory_WithReason() {
+	s.mock.ExpectExec(`INSERT INTO ShowDownloadHistory`).
+		WithArgs("Test Show", 1, 2, 3, "failure", "Not found").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err := s.repo.InsertDownloadHistory("Test Show", 1, 2, 3, "failure", "Not found")
+
+	s.NoError(err)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestInsertDownloadHistory_DatabaseError() {
+	s.mock.ExpectExec(`INSERT INTO ShowDownloadHistory`).
+		WithArgs("Test Show", 1, 2, 0, "searching", "").
+		WillReturnError(sql.ErrConnDone)
+
+	err := s.repo.InsertDownloadHistory("Test Show", 1, 2, 0, "searching", "")
+
+	s.Error(err)
+	s.NoError(s.mock.ExpectationsWereMet())
+}

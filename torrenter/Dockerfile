@@ -6,24 +6,21 @@ WORKDIR /app
 # Install build dependencies required for cgo and sqlite
 RUN apk add --no-cache build-base sqlite-dev pkgconfig
 
-# Copy go mod files
+# Copy go mod files first
 COPY torrenter/go.mod torrenter/go.sum ./
 
 # Copy shared module for local replace
 COPY shared/media /shared/media
 
-# Copy models module for local replace
-COPY torrenter/models ./models
-
-# Download dependencies
+# Download dependencies first (before copying source)
 RUN go mod download
 
-# Copy source code
+# Copy all source code at once
 COPY torrenter/ .
 
 # Build the binary with cgo enabled (required by mattn/go-sqlite3)
 # Keep it dynamically linked to the sqlite library provided in the runtime image
-RUN CGO_ENABLED=1 GOOS=linux go build -ldflags "-s -w" -o torrenter .
+RUN CGO_ENABLED=1 GOOS=linux go build -ldflags "-s -w" -o torrenter ./cmd/torrenter
 
 # Runtime stage
 

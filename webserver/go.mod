@@ -6,8 +6,6 @@ replace shared/media => ../shared/media
 
 replace shared/status => ../shared/status
 
-replace torrenter/models => ../torrenter/models
-
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/gin-gonic/gin v1.10.1

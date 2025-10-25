@@ -4,8 +4,6 @@ go 1.23.0
 
 replace shared/media => ../shared/media
 
-replace torrenter/models => ./models
-
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/gin-gonic/gin v1.10.1
@@ -14,7 +12,6 @@ require (
 	github.com/superturkey650/go-qbittorrent v0.0.0-20250509144237-d119a59ccf27
 	golift.io/starr v1.2.1
 	shared/media v0.0.0-00010101000000-000000000000
-	torrenter/models v0.0.0-00010101000000-000000000000
 )
 
 require (
@@ -51,7 +48,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-require (
-	github.com/pelletier/go-toml v1.9.5
-	golang.org/x/net v0.38.0 // indirect
-)
+require golang.org/x/net v0.38.0 // indirect

@@ -24,8 +24,8 @@ cp k8s/configmaps/torrenter-configmap.template.yaml k8s/configmaps/torrenter-con
 ```
 
 Update the following values:
-- `prowlarr-host`: Replace `<YOUR_LAN_IP>` with your LAN IP (e.g., `http://192.168.0.111:9696`)
-- `plex-host`: Replace `<YOUR_LAN_IP>` with your LAN IP (e.g., `http://192.168.0.111:32400`)
+- `prowlarr-host`: Replace `<YOUR_LAN_IP>` with your LAN IP (e.g., `http://<YOUR_LAN_IP>:9696`)
+- `plex-host`: Replace `<YOUR_LAN_IP>` with your LAN IP (e.g., `http://<YOUR_LAN_IP>:32400`)
 - `plex-movie-sections`: Your Plex movie library section ID (check Plex settings)
 - `plex-show-sections`: Your Plex TV show library section ID (check Plex settings)
 

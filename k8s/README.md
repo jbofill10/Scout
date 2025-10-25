@@ -48,7 +48,7 @@ For LAN access from any device:
 ./deploy-complete.sh
 
 # This will set up Ingress and offer to start port forwarding
-# Access from any LAN device: http://192.168.0.111:8080
+# Access from any LAN device: http://<YOUR_LAN_IP>:8080
 ```
 
 See [`INGRESS_SETUP.md`](./INGRESS_SETUP.md) for complete documentation.

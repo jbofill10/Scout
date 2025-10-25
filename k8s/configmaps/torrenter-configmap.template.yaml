@@ -4,7 +4,7 @@ metadata:
   name: torrenter-config
   namespace: default
 data:
-  # Replace <YOUR_LAN_IP> with your actual LAN IP (e.g., 192.168.0.111)
+  # Replace <YOUR_LAN_IP> with your actual LAN IP (e.g., 192.168.1.100)
   prowlarr-host: "http://<YOUR_LAN_IP>:9696"
   qbitt-host: "http://qbitt:8080"
   plex-host: "http://<YOUR_LAN_IP>:32400"

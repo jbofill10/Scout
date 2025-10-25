@@ -18,3 +18,6 @@ k8s/configmaps/*.yaml
 # Local development configs
 config.toml
 api.toml
+
+# Systemd service files (may contain local IPs)
+*.service

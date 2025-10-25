@@ -7,9 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"torrenter/handlers"
-	"torrenter/interactors"
-	"torrenter/mocks"
+	"torrenter/internal/handlers"
+	"torrenter/internal/interactors"
+	"torrenter/internal/repository/mocks"
+	servicemocks "torrenter/internal/service/mocks"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/suite"
@@ -20,8 +21,8 @@ type TorrenterInteractorTestSuite struct {
 	downloadHandler *handlers.DownloadHandler
 	mediaHandler    *handlers.MediaHandler
 	repo            *mocks.Repository
-	qbitt           *mocks.TorrentService
-	mp              *mocks.MediaProcessor
+	qbitt           *servicemocks.TorrentService
+	mp              *servicemocks.MediaProcessor
 	logger          *log.Logger
 }
 
@@ -34,8 +35,8 @@ func (s *TorrenterInteractorTestSuite) SetupTest() {
 	buf := new(bytes.Buffer)
 	s.logger = log.New(buf, "[TEST] ", log.LstdFlags|log.Lshortfile)
 	s.repo = mocks.NewRepository(s.T())
-	s.mp = mocks.NewMediaProcessor(s.T())
-	s.qbitt = mocks.NewTorrentService(s.T())
+	s.mp = servicemocks.NewMediaProcessor(s.T())
+	s.qbitt = servicemocks.NewTorrentService(s.T())
 
 	// Initialize interactors
 	downloadInteractor := interactors.NewDownloadInteractor(s.qbitt, s.mp, s.repo, s.logger)

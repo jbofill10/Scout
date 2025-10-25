@@ -62,21 +62,21 @@ Each service can run independently for development:
 ### 1. Start tvdb_proxy
 ```bash
 cd tvdb_proxy
-go run *.go
+go run main.go
 # Listens on localhost:22000
 ```
 
 ### 2. Start torrenter
 ```bash
 cd torrenter
-go run *.go
+go run cmd/torrenter/main.go
 # Listens on localhost:22001
 ```
 
 ### 3. Start webserver
 ```bash
 cd webserver
-go run *.go
+go run cmd/webserver/main.go
 # Listens on 0.0.0.0:22920 (configurable via BIND_ADDRESS env var)
 ```
 
@@ -87,6 +87,11 @@ npm install
 npm run dev
 # Listens on localhost:5173
 ```
+
+**Configuration Note:** Services will look for configuration in this order:
+1. Environment variables (highest priority)
+2. Kubernetes secrets at `/root/secrets/` (if running in K8s)
+3. Local TOML files (tvdb_proxy only, for local development)
 
 ## 📋 Configuration
 
@@ -154,23 +159,47 @@ Both actual configmaps and secrets are gitignored. Only templates are committed 
 
 ```
 Scout/
-├── webserver/          # Central coordinator service
-├── tvdb_proxy/         # TVDB API proxy
-├── torrenter/          # Download processor
-├── ui/                 # React frontend
-├── shared/             # Shared Go types
-│   ├── media/          # TVDB data structures
-│   └── status/         # Download status types
-├── sql/                # Database setup and migration scripts
-├── k8s/                # Kubernetes manifests
-│   ├── configmaps/     # Service configurations (gitignored, use templates)
-│   ├── secrets/        # Sensitive data (gitignored, use templates)
-│   ├── deployments/    # Pod definitions
-│   ├── services/       # Service discovery
-│   ├── pvcs/           # Persistent storage
-│   └── ingress/        # External access
-├── deploy.sh           # Automated deployment script
-└── dev.sh              # Development helpers
+├── webserver/                    # Central coordinator service (Go)
+│   ├── cmd/webserver/            # Entry point
+│   │   └── main.go
+│   └── internal/                 # Private packages
+│       ├── handlers/             # HTTP handlers
+│       ├── interactors/          # Business logic
+│       ├── clients/              # Service clients
+│       ├── repository/           # Database layer
+│       ├── scheduler/            # Episode scheduler
+│       └── config/               # Configuration
+├── torrenter/                    # Download processor (Go)
+│   ├── cmd/torrenter/            # Entry point
+│   │   └── main.go
+│   └── internal/                 # Private packages
+│       ├── handlers/             # HTTP handlers
+│       ├── interactors/          # Business logic
+│       ├── service/              # Domain services (torrent, plex, media processor)
+│       ├── repository/           # Database layer
+│       ├── models/               # Data structures
+│       └── config/               # Configuration
+├── tvdb_proxy/                   # TVDB API proxy (Go)
+│   └── main.go                   # Single file service
+├── ui/                           # React frontend
+│   ├── src/
+│   │   ├── components/           # React components
+│   │   ├── App.tsx
+│   │   └── main.tsx
+│   └── package.json
+├── shared/                       # Shared Go modules
+│   ├── media/                    # TVDB data structures
+│   └── status/                   # Download status types
+├── sql/                          # Database setup and migration scripts
+├── k8s/                          # Kubernetes manifests
+│   ├── configmaps/               # Service configurations (gitignored, use templates)
+│   ├── secrets/                  # Sensitive data (gitignored, use templates)
+│   ├── deployments/              # Pod definitions
+│   ├── services/                 # Service discovery
+│   ├── pvcs/                     # Persistent storage
+│   └── ingress/                  # External access
+├── deploy.sh                     # Automated deployment script
+└── dev.sh                        # Development helpers
 ```
 
 ## 🎯 Features
@@ -208,9 +237,13 @@ The repository includes:
 ## 🤝 Contributing
 
 1. Make changes to a service
-2. Test locally: `go run *.go` or `npm run dev`
+2. Test locally:
+   - Go services: `go run cmd/<service>/main.go` (or `go run main.go` for tvdb_proxy)
+   - UI: `npm run dev`
 3. Test in K8s: `./dev.sh rebuild <service>`
 4. Check logs: `./dev.sh logs <service>`
+5. Run tests: `go test ./...` (in service directory)
+6. Run linter: `golangci-lint run` (in service directory)
 
 ## 📝 License
 
