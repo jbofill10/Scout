@@ -5,13 +5,13 @@ import (
 	"os"
 
 	tvdb "shared/media"
+	"shared/telemetry"
 	"webserver/internal/clients"
 	"webserver/internal/config"
 	"webserver/internal/handlers"
 	"webserver/internal/interactors"
 	"webserver/internal/repository"
 	"webserver/internal/scheduler"
-	"webserver/internal/telemetry"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"

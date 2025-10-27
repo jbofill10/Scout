@@ -11,9 +11,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"tvdb_proxy/internal/telemetry"
 
 	tvdb "shared/media"
+	"shared/telemetry"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pelletier/go-toml"

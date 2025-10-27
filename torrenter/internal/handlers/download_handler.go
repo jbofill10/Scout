@@ -3,11 +3,11 @@ package handlers
 import (
 	"log/slog"
 	"net/http"
-	tvdb "shared/media"
-	"torrenter/internal/interactors"
-	"torrenter/internal/telemetry"
 
 	"github.com/gin-gonic/gin"
+	tvdb "shared/media"
+	"shared/telemetry"
+	"torrenter/internal/interactors"
 )
 
 type DownloadHandler struct {

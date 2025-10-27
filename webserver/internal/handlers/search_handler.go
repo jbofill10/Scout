@@ -2,10 +2,10 @@ package handlers
 
 import (
 	"log/slog"
-	"webserver/internal/interactors"
-	"webserver/internal/telemetry"
 
 	"github.com/gin-gonic/gin"
+	"shared/telemetry"
+	"webserver/internal/interactors"
 )
 
 type SearchHandler struct {

@@ -9,9 +9,10 @@ RUN apk add --no-cache build-base sqlite-dev pkgconfig
 # Copy go mod files
 COPY webserver/go.mod webserver/go.sum ./
 
-# Copy shared module for local replace
+# Copy shared modules for local replace
 COPY shared/media /shared/media
 COPY shared/status /shared/status
+COPY shared/telemetry /shared/telemetry
 
 # Download dependencies
 RUN go mod download

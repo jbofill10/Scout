@@ -155,17 +155,17 @@ func (_m *Repository) GetPreferredUploaders(mediaType string, isAnime bool) ([]s
 	return r0, r1
 }
 
-// InsertDownloadHistory provides a mock function with given fields: mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason
-func (_m *Repository) InsertDownloadHistory(mediaTitle string, season int, episode int, absoluteEpisode int, torrentHash string, status string, reason string) error {
-	ret := _m.Called(mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason)
+// InsertDownloadHistory provides a mock function with given fields: mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason, traceID, spanID
+func (_m *Repository) InsertDownloadHistory(mediaTitle string, season int, episode int, absoluteEpisode int, torrentHash string, status string, reason string, traceID string, spanID string) error {
+	ret := _m.Called(mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason, traceID, spanID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for InsertDownloadHistory")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string, int, int, int, string, string, string) error); ok {
-		r0 = rf(mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason)
+	if rf, ok := ret.Get(0).(func(string, int, int, int, string, string, string, string, string) error); ok {
+		r0 = rf(mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason, traceID, spanID)
 	} else {
 		r0 = ret.Error(0)
 	}

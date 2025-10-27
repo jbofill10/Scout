@@ -88,3 +88,16 @@ func WithTraceContext(ctx context.Context, args ...any) []any {
 
 	return args
 }
+
+// GetTraceSpanIDs extracts trace ID and span ID from the context
+// Returns empty strings if context has no valid span
+func GetTraceSpanIDs(ctx context.Context) (traceID, spanID string) {
+	span := trace.SpanFromContext(ctx)
+	spanCtx := span.SpanContext()
+
+	if spanCtx.IsValid() {
+		return spanCtx.TraceID().String(), spanCtx.SpanID().String()
+	}
+
+	return "", ""
+}

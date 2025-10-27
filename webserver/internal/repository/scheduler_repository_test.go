@@ -60,10 +60,10 @@ func (s *SchedulerRepoTestSuite) TestSchedule_Success() {
 	mediaJSON, _ := json.Marshal(media)
 
 	s.mock.ExpectQuery(`INSERT INTO ScheduledDownloads`).
-		WithArgs(mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, sqlmock.AnyArg()).
+		WithArgs(mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 
-	err := s.repo.Schedule(media, releaseTime)
+	err := s.repo.Schedule(media, releaseTime, "test-trace-id", "test-span-id")
 
 	s.NoError(err)
 	s.NoError(s.mock.ExpectationsWereMet())
@@ -81,10 +81,10 @@ func (s *SchedulerRepoTestSuite) TestSchedule_DuplicateContent() {
 
 	// ON CONFLICT DO NOTHING returns no rows
 	s.mock.ExpectQuery(`INSERT INTO ScheduledDownloads`).
-		WithArgs(mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, sqlmock.AnyArg()).
+		WithArgs(mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(sql.ErrNoRows)
 
-	err := s.repo.Schedule(media, releaseTime)
+	err := s.repo.Schedule(media, releaseTime, "test-trace-id", "test-span-id")
 
 	s.Equal(ErrDuplicateScheduled, err)
 	s.NoError(s.mock.ExpectationsWereMet())
@@ -101,10 +101,10 @@ func (s *SchedulerRepoTestSuite) TestSchedule_DatabaseError() {
 	mediaJSON, _ := json.Marshal(media)
 
 	s.mock.ExpectQuery(`INSERT INTO ScheduledDownloads`).
-		WithArgs(mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, sqlmock.AnyArg()).
+		WithArgs(mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
 
-	err := s.repo.Schedule(media, releaseTime)
+	err := s.repo.Schedule(media, releaseTime, "test-trace-id", "test-span-id")
 
 	s.Error(err)
 	s.NoError(s.mock.ExpectationsWereMet())
@@ -225,10 +225,10 @@ func (s *SchedulerRepoTestSuite) TestGetDueMedia_MultipleResults() {
 
 func (s *SchedulerRepoTestSuite) TestInsertDownloadHistory_Success() {
 	s.mock.ExpectExec(`INSERT INTO ShowDownloadHistory`).
-		WithArgs("Test Show", 1, 2, 0, "searching", "").
+		WithArgs("Test Show", 1, 2, 0, "searching", "", "test-trace-id", "test-span-id").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	err := s.repo.InsertDownloadHistory("Test Show", 1, 2, 0, "searching", "")
+	err := s.repo.InsertDownloadHistory("Test Show", 1, 2, 0, "searching", "", "test-trace-id", "test-span-id")
 
 	s.NoError(err)
 	s.NoError(s.mock.ExpectationsWereMet())
@@ -236,10 +236,10 @@ func (s *SchedulerRepoTestSuite) TestInsertDownloadHistory_Success() {
 
 func (s *SchedulerRepoTestSuite) TestInsertDownloadHistory_WithReason() {
 	s.mock.ExpectExec(`INSERT INTO ShowDownloadHistory`).
-		WithArgs("Test Show", 1, 2, 3, "failure", "Not found").
+		WithArgs("Test Show", 1, 2, 3, "failure", "Not found", "test-trace-id", "test-span-id").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	err := s.repo.InsertDownloadHistory("Test Show", 1, 2, 3, "failure", "Not found")
+	err := s.repo.InsertDownloadHistory("Test Show", 1, 2, 3, "failure", "Not found", "test-trace-id", "test-span-id")
 
 	s.NoError(err)
 	s.NoError(s.mock.ExpectationsWereMet())
@@ -247,10 +247,10 @@ func (s *SchedulerRepoTestSuite) TestInsertDownloadHistory_WithReason() {
 
 func (s *SchedulerRepoTestSuite) TestInsertDownloadHistory_DatabaseError() {
 	s.mock.ExpectExec(`INSERT INTO ShowDownloadHistory`).
-		WithArgs("Test Show", 1, 2, 0, "searching", "").
+		WithArgs("Test Show", 1, 2, 0, "searching", "", "test-trace-id", "test-span-id").
 		WillReturnError(sql.ErrConnDone)
 
-	err := s.repo.InsertDownloadHistory("Test Show", 1, 2, 0, "searching", "")
+	err := s.repo.InsertDownloadHistory("Test Show", 1, 2, 0, "searching", "", "test-trace-id", "test-span-id")
 
 	s.Error(err)
 	s.NoError(s.mock.ExpectationsWereMet())

@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	tvdb "shared/media"
 	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	tvdb "shared/media"
+	"shared/telemetry"
 	"torrenter/internal/models"
-	"torrenter/internal/telemetry"
 
 	"github.com/superturkey650/go-qbittorrent/qbt"
 	"golift.io/starr"
@@ -104,7 +105,8 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 
 				if len(possibleTorrents) == 0 {
 					q.logger.InfoContext(ctx, "no matching torrents found", "query", ss.Query)
-					err := q.repo.InsertDownloadHistory(req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, "", "failure", "no matching torrents found")
+					traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
+					err := q.repo.InsertDownloadHistory(req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, "", "failure", "no matching torrents found", traceID, spanID)
 					if err != nil {
 						q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
 					}
@@ -118,14 +120,16 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 			if match == nil {
 				q.logger.WarnContext(ctx, "No suitable torrent found", "show", req.Name)
 				ss := strategies[0]
-				err := q.repo.InsertDownloadHistory(req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, "", "failure", "no suitable torrent found")
+				traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
+				err := q.repo.InsertDownloadHistory(req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, "", "failure", "no suitable torrent found", traceID, spanID)
 				if err != nil {
 					q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
 				}
 				continue
 			}
 			ss := match.Strategy
-			err := q.repo.InsertDownloadHistory(req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, match.Torrent.InfoHash, "downloading", "")
+			traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
+			err := q.repo.InsertDownloadHistory(req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, match.Torrent.InfoHash, "downloading", "", traceID, spanID)
 			if err != nil {
 				q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
 			}

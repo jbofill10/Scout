@@ -6,8 +6,9 @@ WORKDIR /app
 # Copy go mod files
 COPY tvdb_proxy/go.mod tvdb_proxy/go.sum ./
 
-# Copy shared module for local replace
+# Copy shared modules for local replace
 COPY shared/media /shared/media
+COPY shared/telemetry /shared/telemetry
 
 # Download dependencies
 RUN go mod download

@@ -6,6 +6,8 @@ replace shared/media => ../shared/media
 
 replace shared/status => ../shared/status
 
+replace shared/telemetry => ../shared/telemetry
+
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/gin-gonic/gin v1.10.1
@@ -19,9 +21,11 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.22.0
 	go.opentelemetry.io/otel/sdk v1.38.0
 	go.opentelemetry.io/otel/sdk/log v0.14.0
+	go.opentelemetry.io/otel/trace v1.38.0
 	google.golang.org/grpc v1.75.0
 	shared/media v0.0.0-00010101000000-000000000000
 	shared/status v0.0.0-00010101000000-000000000000
+	shared/telemetry v0.0.0-00010101000000-000000000000
 )
 
 require (
@@ -58,7 +62,6 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.22.0 // indirect
 	go.opentelemetry.io/otel/log v0.14.0 // indirect
 	go.opentelemetry.io/otel/metric v1.38.0 // indirect
-	go.opentelemetry.io/otel/trace v1.38.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.7.1 // indirect
 	golang.org/x/arch v0.8.0 // indirect
 	golang.org/x/crypto v0.41.0 // indirect

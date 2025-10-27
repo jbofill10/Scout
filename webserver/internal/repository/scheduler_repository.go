@@ -23,9 +23,9 @@ const (
 
 // SchedulerRepository defines DB operations for scheduled shows
 type SchedulerRepository interface {
-	Schedule(media tvdb.Media, releaseTime time.Time) error
+	Schedule(media tvdb.Media, releaseTime time.Time, scheduledTraceID, scheduledSpanID string) error
 	GetDueMedia() ([]tvdb.Media, error)
-	InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, status, reason string) error
+	InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, status, reason, traceID, spanID string) error
 }
 
 type SchedulerRepo struct {
@@ -47,7 +47,7 @@ func NewSchedulerRepo(logger *slog.Logger, connStr string) (*SchedulerRepo, erro
 	return repo, nil
 }
 
-func (r *SchedulerRepo) Schedule(media tvdb.Media, releaseTime time.Time) error {
+func (r *SchedulerRepo) Schedule(media tvdb.Media, releaseTime time.Time, scheduledTraceID, scheduledSpanID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -61,12 +61,12 @@ func (r *SchedulerRepo) Schedule(media tvdb.Media, releaseTime time.Time) error 
 	h := sha256.Sum256(mediaJSON)
 	contentHash := hex.EncodeToString(h[:])
 
-	stmt := `INSERT INTO ScheduledDownloads (media, release_time, schedule_status, content_hash)
-			 VALUES ($1, $2, $3, $4)
+	stmt := `INSERT INTO ScheduledDownloads (media, release_time, schedule_status, content_hash, scheduled_trace_id, scheduled_span_id)
+			 VALUES ($1, $2, $3, $4, $5, $6)
 			 ON CONFLICT (content_hash) DO NOTHING RETURNING id`
 
 	var insertedId int
-	err = r.db.QueryRow(stmt, mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, contentHash).Scan(&insertedId)
+	err = r.db.QueryRow(stmt, mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, contentHash, scheduledTraceID, scheduledSpanID).Scan(&insertedId)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			// ON CONFLICT DO NOTHING caused no insert; treat as duplicate
@@ -120,13 +120,13 @@ func (r *SchedulerRepo) GetDueMedia() ([]tvdb.Media, error) {
 	return results, nil
 }
 
-func (r *SchedulerRepo) InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, status, reason string) error {
+func (r *SchedulerRepo) InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, status, reason, traceID, spanID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	_, err := r.db.Exec(`
-		INSERT INTO ShowDownloadHistory (mediaTitle, season, episode, absoluteEpisode, status, reason)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, mediaTitle, season, episode, absoluteEpisode, status, reason)
+		INSERT INTO ShowDownloadHistory (mediaTitle, season, episode, absoluteEpisode, status, reason, trace_id, span_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, mediaTitle, season, episode, absoluteEpisode, status, reason, traceID, spanID)
 	if err != nil {
 		return fmt.Errorf("failed to insert download history: %w", err)
 	}

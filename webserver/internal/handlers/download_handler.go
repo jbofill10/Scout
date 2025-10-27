@@ -2,11 +2,11 @@ package handlers
 
 import (
 	"log/slog"
-	tvdb "shared/media"
-	"webserver/internal/interactors"
-	"webserver/internal/telemetry"
 
 	"github.com/gin-gonic/gin"
+	tvdb "shared/media"
+	"shared/telemetry"
+	"webserver/internal/interactors"
 )
 
 type DownloadHandler struct {

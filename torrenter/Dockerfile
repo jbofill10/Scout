@@ -9,8 +9,9 @@ RUN apk add --no-cache build-base sqlite-dev pkgconfig
 # Copy go mod files first
 COPY torrenter/go.mod torrenter/go.sum ./
 
-# Copy shared module for local replace
+# Copy shared modules for local replace
 COPY shared/media /shared/media
+COPY shared/telemetry /shared/telemetry
 
 # Download dependencies first (before copying source)
 RUN go mod download

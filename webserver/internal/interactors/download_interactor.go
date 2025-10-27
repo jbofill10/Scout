@@ -2,15 +2,22 @@ package interactors
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	tvdb "shared/media"
 	status "shared/status"
+	"shared/telemetry"
 	"webserver/internal/clients"
 	"webserver/internal/repository"
 	"webserver/internal/scheduler"
 )
+
+var tracer = otel.Tracer("webserver")
 
 type DownloadInteractor struct {
 	scheduler       *scheduler.Scheduler
@@ -44,17 +51,31 @@ func (i *DownloadInteractor) WatchForDueMedia() {
 	i.scheduler.Start(i.mediaQueue)
 	go func() {
 		for media := range i.mediaQueue {
-			i.logger.Info("Processing due media", "media", media.Name)
+			// Create a new trace for this scheduled download execution
+			// Note: This is a new trace, not tied to the original scheduling request
+			// However, the scheduled_trace_id in the database can be used to correlate back
+			ctx, span := tracer.Start(context.Background(), "scheduled_download",
+				trace.WithAttributes(
+					attribute.String("media.name", media.Name),
+					attribute.String("media.id", media.Id),
+					attribute.Int("episode.count", len(media.Metadata.Episodes)),
+				),
+			)
+			defer span.End()
+
+			i.logger.InfoContext(ctx, "Processing due media", "media", media.Name)
+
+			// Get trace/span IDs for this execution
+			traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
 
 			// Media is already complete and ready for Download()
-			// Use background context since this is not tied to an HTTP request
-			err := i.torrenterClient.Download(context.Background(), media)
+			err := i.torrenterClient.Download(ctx, media)
 			if err != nil {
-				i.logger.Error("Failed to download media", "error", err)
+				i.logger.ErrorContext(ctx, "Failed to download media", "error", err)
 				// Log failure for each episode in the media
 				for _, ep := range media.Metadata.Episodes {
 					_ = i.repo.InsertDownloadHistory(media.Name, ep.SeasonNumber, ep.Number, ep.AbsoluteNumber,
-						status.Failure, "[Scheduled Download Error]: "+err.Error())
+						status.Failure, "[Scheduled Download Error]: "+err.Error(), traceID, spanID)
 				}
 			}
 		}
@@ -77,28 +98,45 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 	absoluteNumber := 1
 
 	for _, episode := range req.Metadata.Episodes {
+		// Create a child span for each episode
+		episodeCtx, episodeSpan := tracer.Start(ctx, fmt.Sprintf("episode_S%dE%d", episode.SeasonNumber, episode.Number),
+			trace.WithAttributes(
+				attribute.String("media.name", req.Name),
+				attribute.Int("episode.season", episode.SeasonNumber),
+				attribute.Int("episode.number", episode.Number),
+				attribute.String("episode.aired", episode.Aired),
+			),
+		)
+
 		episodeAired, err := time.Parse("2006-01-02", episode.Aired)
 		if err != nil {
-			i.logger.WarnContext(ctx, "Failed to parse episode aired date", "error", err)
+			i.logger.WarnContext(episodeCtx, "Failed to parse episode aired date", "error", err)
+			episodeSpan.End()
 			continue
 		}
 
 		if isAnime {
 			episode.AbsoluteNumber = absoluteNumber
 			absoluteNumber++
+			episodeSpan.SetAttributes(attribute.Int("episode.absolute", episode.AbsoluteNumber))
 		}
+
+		// Get trace/span IDs for this episode
+		traceID, spanID := telemetry.GetTraceSpanIDs(episodeCtx)
 
 		// Has the episode aired yet?
 		if today.After(episodeAired) {
 			// Episode has aired - add to immediate download batch
+			episodeSpan.SetAttributes(attribute.String("episode.status", "downloading"))
 			mediaToDownload = append(mediaToDownload, episode)
 			err = i.repo.InsertDownloadHistory(req.Name, episode.SeasonNumber, episode.Number, episode.AbsoluteNumber,
-				status.Searching, "")
+				status.Searching, "", traceID, spanID)
 			if err != nil {
-				i.logger.ErrorContext(ctx, "Failed to insert download history", "episode", episode.Number, "error", err)
+				i.logger.ErrorContext(episodeCtx, "Failed to insert download history", "episode", episode.Number, "error", err)
 			}
 		} else {
 			// Episode hasn't aired - schedule it for future download
+			episodeSpan.SetAttributes(attribute.String("episode.status", "scheduled"))
 			scheduledMedia := tvdb.Media{
 				Id:           req.Id,
 				Name:         req.Name,
@@ -114,24 +152,28 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 			}
 			scheduledMedia.Metadata.Episodes = []tvdb.Episode{episode}
 
-			err := i.repo.Schedule(scheduledMedia, episodeAired)
+			err := i.repo.Schedule(scheduledMedia, episodeAired, traceID, spanID)
 			if err != nil {
 				// Check if it's a duplicate (already scheduled)
 				if err == repository.ErrDuplicateScheduled {
-					i.logger.InfoContext(ctx, "Episode already scheduled, skipping", "season", episode.SeasonNumber, "episode", episode.Number)
+					i.logger.InfoContext(episodeCtx, "Episode already scheduled, skipping", "season", episode.SeasonNumber, "episode", episode.Number)
+					episodeSpan.End()
 					continue
 				}
 				// Other scheduling error - log failure
-				i.logger.ErrorContext(ctx, "Failed to schedule episode", "error", err)
+				episodeSpan.SetAttributes(attribute.String("error", err.Error()))
+				i.logger.ErrorContext(episodeCtx, "Failed to schedule episode", "error", err)
 				err = i.repo.InsertDownloadHistory(req.Name, episode.SeasonNumber, episode.Number, episode.AbsoluteNumber,
-					status.Failure, "[Scheduling Error]: "+err.Error())
+					status.Failure, "[Scheduling Error]: "+err.Error(), traceID, spanID)
 				if err != nil {
-					i.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
+					i.logger.ErrorContext(episodeCtx, "Failed to insert download history", "error", err)
 				}
 			} else {
-				i.logger.InfoContext(ctx, "Scheduled episode", "season", episode.SeasonNumber, "episode", episode.Number, "air_date", episodeAired.Format("2006-01-02"))
+				i.logger.InfoContext(episodeCtx, "Scheduled episode", "season", episode.SeasonNumber, "episode", episode.Number, "air_date", episodeAired.Format("2006-01-02"))
 			}
 		}
+
+		episodeSpan.End()
 	}
 
 	// Only send download request if there are aired episodes

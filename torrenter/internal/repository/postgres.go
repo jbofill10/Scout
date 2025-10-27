@@ -19,7 +19,7 @@ type Repository interface {
 	EpisodeExistsByTvdbId(tvdbId string, season, episode int) (bool, error)
 	EpisodeExists(showTitle string, season, episode int) (bool, error)
 	MediaExists(id string) (bool, error)
-	InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
+	InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason, traceID, spanID string) error
 	UpdateDownloadHistoryStatus(torrentHash, status, reason string) error
 	GetPreferredUploaders(mediaType string, isAnime bool) ([]string, error)
 }
@@ -269,11 +269,11 @@ func (r *Repo) UpsertShows(lib *models.PlexShowLibraryData) {
 	}
 }
 
-func (r *Repo) InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error {
+func (r *Repo) InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason, traceID, spanID string) error {
 	_, err := r.db.Exec(`
-		INSERT INTO DownloadHistory (mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason)
+		INSERT INTO DownloadHistory (mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason, trace_id, span_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason, traceID, spanID)
 	if err != nil {
 		return fmt.Errorf("failed to insert download history: %w", err)
 	}

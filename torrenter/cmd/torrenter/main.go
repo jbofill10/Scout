@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+
+	"shared/telemetry"
 	"torrenter/internal/config"
 	"torrenter/internal/handlers"
 	"torrenter/internal/interactors"
 	"torrenter/internal/repository"
 	"torrenter/internal/service"
-	"torrenter/internal/telemetry"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"

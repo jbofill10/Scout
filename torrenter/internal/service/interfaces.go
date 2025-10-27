@@ -27,7 +27,7 @@ type Repository interface {
 	EpisodeExistsByTvdbId(tvdbId string, season, episode int) (bool, error)
 	EpisodeExists(showTitle string, season, episode int) (bool, error)
 	MediaExists(id string) (bool, error)
-	InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
+	InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason, traceID, spanID string) error
 	UpdateDownloadHistoryStatus(torrentHash, status, reason string) error
 	GetPreferredUploaders(mediaType string, isAnime bool) ([]string, error)
 }
