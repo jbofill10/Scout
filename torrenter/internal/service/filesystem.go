@@ -1,32 +1,32 @@
 package service
 
 import (
-	"log"
+	"log/slog"
 	"os"
 )
 
 type FsSvc struct {
-	Logger *log.Logger
+	Logger *slog.Logger
 }
 
-func NewFsSvc(logger *log.Logger) FileSystem {
+func NewFsSvc(logger *slog.Logger) FileSystem {
 	return &FsSvc{Logger: logger}
 }
 
 func (fs *FsSvc) HardLink(sourcePath, destPath string) error {
-	fs.Logger.Printf("Creating hard link from %s to %s", sourcePath, destPath)
+	fs.Logger.Info("Creating hard link", "source", sourcePath, "dest", destPath)
 	err := os.Link(sourcePath, destPath)
 	if err != nil {
-		fs.Logger.Printf("Failed to create hard link: %v", err)
+		fs.Logger.Error("Failed to create hard link", "error", err)
 	}
 	return err
 }
 
 func (fs *FsSvc) MkDir(path string) error {
-	fs.Logger.Printf("Creating directory at %s", path)
+	fs.Logger.Info("Creating directory", "path", path)
 	err := os.MkdirAll(path, 0755)
 	if err != nil {
-		fs.Logger.Printf("Failed to create directory: %v", err)
+		fs.Logger.Error("Failed to create directory", "error", err)
 	}
 	return err
 }

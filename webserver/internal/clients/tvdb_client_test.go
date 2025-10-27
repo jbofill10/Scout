@@ -2,6 +2,7 @@ package clients
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -52,7 +53,7 @@ func (s *TVDBProxyClientTestSuite) TestSearch_Success() {
 
 	client := NewTVDBProxyClient(server.URL[7:]) // Remove http://
 
-	results, err := client.Search("series", "test")
+	results, err := client.Search(context.Background(), "series", "test")
 
 	s.NoError(err)
 	s.Len(results, 2)
@@ -69,7 +70,7 @@ func (s *TVDBProxyClientTestSuite) TestSearch_EmptyResults() {
 
 	client := NewTVDBProxyClient(server.URL[7:])
 
-	results, err := client.Search("series", "nonexistent")
+	results, err := client.Search(context.Background(), "series", "nonexistent")
 
 	s.NoError(err)
 	s.Empty(results)
@@ -83,7 +84,7 @@ func (s *TVDBProxyClientTestSuite) TestSearch_HTTPError() {
 
 	client := NewTVDBProxyClient(server.URL[7:])
 
-	results, err := client.Search("series", "test")
+	results, err := client.Search(context.Background(), "series", "test")
 
 	// JSON decoder returns EOF on empty body
 	s.Error(err)
@@ -99,7 +100,7 @@ func (s *TVDBProxyClientTestSuite) TestSearch_InvalidJSON() {
 
 	client := NewTVDBProxyClient(server.URL[7:])
 
-	results, err := client.Search("series", "test")
+	results, err := client.Search(context.Background(), "series", "test")
 
 	s.Error(err)
 	s.Nil(results)
@@ -109,7 +110,7 @@ func (s *TVDBProxyClientTestSuite) TestSearch_NetworkError() {
 	// Use invalid host to trigger network error
 	client := NewTVDBProxyClient("invalid-host:9999")
 
-	results, err := client.Search("series", "test")
+	results, err := client.Search(context.Background(), "series", "test")
 
 	s.Error(err)
 	s.Nil(results)
@@ -136,7 +137,7 @@ func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_Success() {
 
 	client := NewTVDBProxyClient(server.URL[7:])
 
-	info, err := client.GetExtendedInfo("123")
+	info, err := client.GetExtendedInfo(context.Background(), "123")
 
 	s.NoError(err)
 	s.Equal("test-show", info.Data.Slug)
@@ -152,7 +153,7 @@ func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_HTTPError() {
 
 	client := NewTVDBProxyClient(server.URL[7:])
 
-	info, err := client.GetExtendedInfo("999")
+	info, err := client.GetExtendedInfo(context.Background(), "999")
 
 	// JSON decoder returns EOF on empty body
 	s.Error(err)
@@ -168,7 +169,7 @@ func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_InvalidJSON() {
 
 	client := NewTVDBProxyClient(server.URL[7:])
 
-	info, err := client.GetExtendedInfo("123")
+	info, err := client.GetExtendedInfo(context.Background(), "123")
 
 	s.Error(err)
 	s.Equal(tvdb.TVDBSeriesExtendedResponse{}, info)
@@ -177,7 +178,7 @@ func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_InvalidJSON() {
 func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_NetworkError() {
 	client := NewTVDBProxyClient("invalid-host:9999")
 
-	info, err := client.GetExtendedInfo("123")
+	info, err := client.GetExtendedInfo(context.Background(), "123")
 
 	s.Error(err)
 	s.Equal(tvdb.TVDBSeriesExtendedResponse{}, info)
@@ -202,7 +203,7 @@ func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_DifferentMediaIDs() {
 			defer server.Close()
 
 			client := NewTVDBProxyClient(server.URL[7:])
-			_, err := client.GetExtendedInfo(tc.mediaID)
+			_, err := client.GetExtendedInfo(context.Background(), tc.mediaID)
 
 			s.NoError(err)
 		})

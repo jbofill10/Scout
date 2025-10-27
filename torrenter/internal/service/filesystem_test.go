@@ -2,7 +2,7 @@ package service
 
 import (
 	"bytes"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,7 +13,7 @@ import (
 type FsSvcTestSuite struct {
 	suite.Suite
 	fs     *FsSvc
-	logger *log.Logger
+	logger *slog.Logger
 	tmpDir string
 }
 
@@ -23,7 +23,7 @@ func TestFsSvcSuite(t *testing.T) {
 
 func (s *FsSvcTestSuite) SetupTest() {
 	buf := new(bytes.Buffer)
-	s.logger = log.New(buf, "[TEST] ", log.LstdFlags|log.Lshortfile)
+	s.logger = slog.New(slog.NewTextHandler(buf, nil))
 	s.fs = &FsSvc{Logger: s.logger}
 
 	// Create temp directory for testing

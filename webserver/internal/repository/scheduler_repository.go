@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -30,7 +30,7 @@ type SchedulerRepository interface {
 
 type SchedulerRepo struct {
 	db     *sql.DB
-	logger *log.Logger
+	logger *slog.Logger
 	mu     sync.Mutex
 }
 
@@ -38,7 +38,7 @@ type SchedulerRepo struct {
 // already exists in the ScheduledDownloads table (content_hash collision).
 var ErrDuplicateScheduled = fmt.Errorf("media already scheduled")
 
-func NewSchedulerRepo(logger *log.Logger, connStr string) (*SchedulerRepo, error) {
+func NewSchedulerRepo(logger *slog.Logger, connStr string) (*SchedulerRepo, error) {
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, err
@@ -91,7 +91,7 @@ func (r *SchedulerRepo) GetDueMedia() ([]tvdb.Media, error) {
 	}
 	defer func() {
 		if err := rows.Close(); err != nil {
-			r.logger.Printf("failed to close rows: %v", err)
+			r.logger.Error("Failed to close rows", "error", err)
 		}
 	}()
 
@@ -105,7 +105,7 @@ func (r *SchedulerRepo) GetDueMedia() ([]tvdb.Media, error) {
 		}
 		var media tvdb.Media
 		if err := json.Unmarshal(mediaJSON, &media); err != nil {
-			r.logger.Printf("failed to unmarshal media for id %d: %v", id, err)
+			r.logger.Error("Failed to unmarshal media", "id", id, "error", err)
 			continue
 		}
 		results = append(results, media)

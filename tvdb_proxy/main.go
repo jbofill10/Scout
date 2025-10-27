@@ -1,20 +1,24 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"sort"
 	"strings"
 	"sync"
+	"tvdb_proxy/internal/telemetry"
 
 	tvdb "shared/media"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pelletier/go-toml"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 type TvDbConfig struct {
@@ -25,17 +29,42 @@ type TvDbConfig struct {
 
 var tvDbConfig TvDbConfig
 
-var logger *log.Logger
+var logger *slog.Logger
 
 func main() {
+	// Initialize OpenTelemetry
+	otlpEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	if otlpEndpoint == "" {
+		otlpEndpoint = "otel-collector-service:4317"
+	}
 
-	logger = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+	// Initialize tracing
+	tracerCleanup, err := telemetry.InitTracer("tvdb-proxy", "1.0.0", otlpEndpoint)
+	if err != nil {
+		slog.Warn("Failed to initialize tracer", "error", err)
+	} else {
+		defer tracerCleanup()
+		slog.Info("OpenTelemetry tracing initialized")
+	}
+
+	// Initialize logging with trace correlation
+	var loggerCleanup func()
+	logger, loggerCleanup, err = telemetry.InitLogger("tvdb-proxy", "1.0.0", otlpEndpoint)
+	if err != nil {
+		slog.Warn("Failed to initialize logger", "error", err)
+		logger = slog.Default()
+	} else {
+		defer loggerCleanup()
+		logger.Info("OpenTelemetry logging initialized")
+	}
 
 	if err := loadConfig(); err != nil {
-		logger.Fatalf("Failed to load config: %v", err)
+		logger.Error("Failed to load config", "error", err)
+		os.Exit(1)
 	}
 
 	router := gin.Default()
+	router.Use(otelgin.Middleware("tvdb-proxy"))
 
 	router.GET("/series", getSeries)
 	router.GET("/series/:id/extended", getExtendedInformation)
@@ -44,13 +73,17 @@ func main() {
 	if addr == "" {
 		addr = "localhost:22000"
 	}
-	logger.Printf("Starting server on %s", addr)
+	logger.Info("Starting tvdb-proxy", "address", addr)
 	if err := router.Run(addr); err != nil {
-		logger.Fatalf("Failed to run server: %v", err)
+		logger.Error("Server failed", "error", err)
+		os.Exit(1)
 	}
 }
 
 func getSeries(c *gin.Context) {
+	// Extract context for trace propagation
+	ctx := c.Request.Context()
+
 	mediaName := c.Query("mediaName")
 	mediaType := c.Query("mediaType")
 
@@ -63,42 +96,42 @@ func getSeries(c *gin.Context) {
 		return
 	}
 
-	response, err := queryShow(mediaName, mediaType)
+	response, err := queryShow(ctx, mediaName, mediaType)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintln("Internal Server Error: Unable to query show", mediaName)})
 		return
 	}
-	logger.Println("response", response)
+	logger.InfoContext(ctx, "response", telemetry.WithTraceContext(ctx, "value", response)...)
 	c.JSON(http.StatusOK, response)
 
 }
 
 // Queries TVDB for media
-func queryShow(showName, mediaType string) ([]tvdb.Media, error) {
+func queryShow(ctx context.Context, showName, mediaType string) ([]tvdb.Media, error) {
 
 	results := []tvdb.Media{}
 
 	uriQuery := fmt.Sprintf("/search?query=%s&type=%s", showName, mediaType)
 
 	var searchResponse = &tvdb.TVDBSearchResponse{}
-	result, err := tvDbGet(uriQuery)
+	result, err := tvDbGet(ctx, uriQuery)
 
 	if err != nil {
-		logger.Println("Unable to get show information:", err)
+		logger.InfoContext(ctx, "Unable to get show information", telemetry.WithTraceContext(ctx, "value", err)...)
 	}
 
-	logger.Println("TVDB response:", string(result))
+	logger.InfoContext(ctx, "TVDB response", telemetry.WithTraceContext(ctx, "data", string(result))...)
 
 	// Attempt to marshal response
 	if err := json.Unmarshal(result, &searchResponse); err != nil {
-		logger.Println("Unable to unmarshal json response", err)
+		logger.InfoContext(ctx, "Unable to unmarshal json response", "value", err)
 		return nil, err
 	}
 
 	ch := make(chan struct{}, 20)
 	var wg sync.WaitGroup
-	logger.Println(len(searchResponse.Data))
+	logger.InfoContext(ctx, "Search results count", "count", len(searchResponse.Data))
 	for _, item := range searchResponse.Data {
 		wg.Add(1)
 		mediaData := tvdb.Media{
@@ -112,13 +145,13 @@ func queryShow(showName, mediaType string) ([]tvdb.Media, error) {
 			Year:         item.Year,
 		}
 		ch <- struct{}{}
-		logger.Println("Processing series data...")
+		logger.InfoContext(ctx, "Processing series data...")
 
-		go func() {
+		go func(ctx context.Context, mediaData tvdb.Media) {
 			defer wg.Done()
-			seriesResponse, err := querySeriesMetadata(mediaData.Id)
+			seriesResponse, err := querySeriesMetadata(ctx, mediaData.Id)
 			if err != nil {
-				logger.Println("Unable to process media", err)
+				logger.InfoContext(ctx, "Unable to process media", "value", err)
 				return
 			}
 
@@ -131,7 +164,7 @@ func queryShow(showName, mediaType string) ([]tvdb.Media, error) {
 
 			results = append(results, mediaData)
 			<-ch
-		}()
+		}(ctx, mediaData)
 
 	}
 
@@ -151,7 +184,7 @@ func loadConfig() error {
 	conf, err := toml.LoadFile("api.toml")
 	if err == nil {
 		if err := conf.Unmarshal(&tvDbConfig); err != nil {
-			logger.Fatalf("Error unmarshalling config: %v", err)
+			logger.Error("Error unmarshalling config", "error", err); os.Exit(1)
 		}
 	}
 
@@ -176,66 +209,71 @@ func loadConfig() error {
 
 	// Validate required fields
 	if tvDbConfig.Host == "" {
-		logger.Fatal("TVDB_HOST is required")
+		logger.Error("TVDB_HOST is required")
+		os.Exit(1)
 	}
 	if tvDbConfig.ApiKey == "" {
-		logger.Fatal("TVDB_API_KEY is required")
+		logger.Error("TVDB_API_KEY is required")
+		os.Exit(1)
 	}
 	if tvDbConfig.Token == "" {
-		logger.Fatal("TVDB_TOKEN is required")
+		logger.Error("TVDB_TOKEN is required")
+		os.Exit(1)
 	}
 
 	return nil
 }
 
-func tvDbGet(uri string) ([]byte, error) {
+func tvDbGet(ctx context.Context, uri string) ([]byte, error) {
 	// Create a new HTTP request
-	logger.Println("config: ", tvDbConfig.Host)
-	req, err := http.NewRequest("GET", tvDbConfig.Host+uri, nil)
+	logger.InfoContext(ctx, "Config", "host", tvDbConfig.Host)
+	req, err := http.NewRequestWithContext(ctx, "GET", tvDbConfig.Host+uri, nil)
 	if err != nil {
-		logger.Println("Error making request")
+		logger.InfoContext(ctx, "Error making request")
 		return nil, err
 	}
 
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", tvDbConfig.Token))
 
-	client := &http.Client{}
+	client := &http.Client{
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Println("Error making request to TVDB")
+		logger.InfoContext(ctx, "Error making request to TVDB")
 		return nil, err
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			logger.Println("Error closing response body:", err)
+			logger.InfoContext(ctx, "Error closing response body", "value", err)
 		}
 	}()
 
 	// Read and print the response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logger.Println("Error reading response body:", err)
+		logger.InfoContext(ctx, "Error reading response body", "value", err)
 		return nil, err
 	}
 
 	return body, nil
 }
 
-func querySeriesMetadata(seriesId string) (tvdb.TVDBSeriesResponse, error) {
+func querySeriesMetadata(ctx context.Context, seriesId string) (tvdb.TVDBSeriesResponse, error) {
 
 	queryUri := fmt.Sprintf("/series/%s/episodes/official/eng", seriesId)
 	var seriesResponse = tvdb.TVDBSeriesResponse{}
-	res, err := tvDbGet(queryUri)
+	res, err := tvDbGet(ctx, queryUri)
 
 	if err != nil {
-		logger.Println("Unable to get show information:", err)
+		logger.InfoContext(ctx, "Unable to get show information", "value", err)
 		return seriesResponse, err
 	}
 
 	if err := json.Unmarshal(res, &seriesResponse); err != nil {
-		logger.Println("Unable to unmarshal json response", err)
+		logger.InfoContext(ctx, "Unable to unmarshal json response", "value", err)
 		return seriesResponse, err
 	}
 
@@ -248,7 +286,10 @@ func getExtendedInformation(c *gin.Context) {
 	fmt.Printf("Fetching extended information for media ID: %s\n", mediaId)
 	url := tvDbConfig.Host + fmt.Sprintf("/series/%s/extended", mediaId)
 
-	req, err := http.NewRequest("GET", url, nil)
+	// Extract context for trace propagation
+	ctx := c.Request.Context()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Internal Server Error: Unable to create request for media ID %s", mediaId)})
 		return
@@ -257,17 +298,19 @@ func getExtendedInformation(c *gin.Context) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", tvDbConfig.Token))
 
-	client := &http.Client{}
+	client := &http.Client{
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Println("Error making request to TVDB")
+		logger.InfoContext(ctx, "Error making request to TVDB")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Internal Server Error: Unable to get extended information for media ID %s", mediaId)})
 		return
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); cerr != nil {
-			logger.Printf("warning: failed to close response body: %v", cerr)
+			logger.ErrorContext(ctx, "warning: failed to close response body", "error", cerr)
 		}
 	}()
 
@@ -277,7 +320,7 @@ func getExtendedInformation(c *gin.Context) {
 	var debugBody string
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logger.Printf("Failed to read response body for media ID %s: %v", mediaId, err)
+		logger.ErrorContext(ctx, "Failed to read response body for media ID", "value", mediaId, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Internal Server Error: Unable to read extended information for media ID %s", mediaId)})
 		return
 	}
@@ -286,7 +329,7 @@ func getExtendedInformation(c *gin.Context) {
 	if err := json.Unmarshal(bodyBytes, &info); err != nil {
 		// Try to unmarshal into a string for debugging
 		_ = json.Unmarshal(bodyBytes, &debugBody)
-		logger.Printf("Failed to decode response for media ID %s. Raw body as string: %s", mediaId, debugBody)
+		logger.ErrorContext(ctx, "Failed to decode response", "media_id", mediaId, "body", debugBody)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Internal Server Error: Unable to decode extended information for media ID %s", mediaId)})
 		return
 	}

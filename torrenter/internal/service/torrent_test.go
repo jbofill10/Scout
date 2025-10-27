@@ -2,7 +2,7 @@ package service
 
 import (
 	"bytes"
-	"log"
+	"log/slog"
 	tvdb "shared/media"
 	"testing"
 	"torrenter/internal/models"
@@ -15,7 +15,7 @@ import (
 type QbittHandlerTestSuite struct {
 	suite.Suite
 	handler *QbittHandler
-	logger  *log.Logger
+	logger  *slog.Logger
 }
 
 func TestQbittHandlerSuite(t *testing.T) {
@@ -24,7 +24,7 @@ func TestQbittHandlerSuite(t *testing.T) {
 
 func (s *QbittHandlerTestSuite) SetupTest() {
 	buf := new(bytes.Buffer)
-	s.logger = log.New(buf, "[TEST] ", log.LstdFlags|log.Lshortfile)
+	s.logger = slog.New(slog.NewTextHandler(buf, nil))
 	// For isCorrectTorrent, we don't need the full handler, but since it's a method, we need an instance
 	// We'll create a minimal handler with just logger
 	s.handler = &QbittHandler{logger: s.logger}

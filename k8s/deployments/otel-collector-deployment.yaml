@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      containers:
+      - name: otel-collector
+        image: otel/opentelemetry-collector-contrib:0.94.0
+        args:
+        - "--config=/conf/otel-collector-config.yaml"
+        ports:
+        - containerPort: 4317  # OTLP gRPC
+          name: otlp-grpc
+        - containerPort: 4318  # OTLP HTTP
+          name: otlp-http
+        volumeMounts:
+        - name: otel-collector-config
+          mountPath: /conf
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: otel-collector-config
+        configMap:
+          name: otel-collector-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector-service
+  namespace: default
+spec:
+  selector:
+    app: otel-collector
+  ports:
+  - name: otlp-grpc
+    protocol: TCP
+    port: 4317
+    targetPort: 4317
+  - name: otlp-http
+    protocol: TCP
+    port: 4318
+    targetPort: 4318
+  type: ClusterIP

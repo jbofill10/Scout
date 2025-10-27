@@ -1,7 +1,7 @@
 package scheduler
 
 import (
-	"log"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -23,7 +23,7 @@ func (m *MockSchedulerRepository) GetDueMedia() ([]tvdb.Media, error) {
 }
 
 func TestNewScheduler(t *testing.T) {
-	logger := log.New(os.Stdout, "", log.LstdFlags)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mockRepo := new(MockSchedulerRepository)
 
 	scheduler := NewScheduler(mockRepo, logger)
@@ -109,7 +109,7 @@ func TestScheduler_Start(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logger := log.New(os.Stdout, "", log.LstdFlags)
+			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 			mockRepo := new(MockSchedulerRepository)
 			scheduler := NewScheduler(mockRepo, logger)
 
@@ -136,7 +136,7 @@ func TestScheduler_Start(t *testing.T) {
 }
 
 func TestScheduler_Start_MultipleFutureMedia(t *testing.T) {
-	logger := log.New(os.Stdout, "", log.LstdFlags)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mockRepo := new(MockSchedulerRepository)
 	scheduler := NewScheduler(mockRepo, logger)
 
@@ -175,7 +175,7 @@ func TestScheduler_Start_MultipleFutureMedia(t *testing.T) {
 }
 
 func TestScheduler_Start_MixedDueAndFutureMedia(t *testing.T) {
-	logger := log.New(os.Stdout, "", log.LstdFlags)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mockRepo := new(MockSchedulerRepository)
 	scheduler := NewScheduler(mockRepo, logger)
 

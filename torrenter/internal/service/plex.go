@@ -4,8 +4,9 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
 
 	"torrenter/internal/models"
 )
@@ -19,10 +20,10 @@ var (
 type PlexHandler struct {
 	cfg    *models.PlexCfg
 	repo   Repository
-	logger *log.Logger
+	logger *slog.Logger
 }
 
-func NewPlexHandler(repo Repository, logger *log.Logger, cfg *models.PlexCfg) *PlexHandler {
+func NewPlexHandler(repo Repository, logger *slog.Logger, cfg *models.PlexCfg) *PlexHandler {
 	return &PlexHandler{
 		cfg:    cfg,
 		repo:   repo,
@@ -34,29 +35,33 @@ func (p *PlexHandler) getLibraries() models.PlexLibrariesResponse {
 	url := p.cfg.Host + mediaSectionBase
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		log.Fatal(err)
+		p.logger.Error("Failed to create request for Plex libraries", "error", err)
+		os.Exit(1)
 	}
 	req.Header.Set("X-Plex-Token", p.cfg.Key)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		p.logger.Error("Failed to fetch Plex libraries", "error", err)
+		os.Exit(1)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatal(err)
+		p.logger.Error("Failed to read Plex libraries response", "error", err)
+		os.Exit(1)
 	}
 
 	var libraryRes models.PlexLibrariesResponse
 	err = xml.Unmarshal(bodyBytes, &libraryRes)
 	if err != nil {
-		log.Fatal(err)
+		p.logger.Error("Failed to unmarshal Plex libraries response", "error", err)
+		os.Exit(1)
 	}
 
-	p.logger.Printf("Content: %+v", libraryRes)
+	p.logger.Debug("Content", "data", libraryRes)
 
 	return libraryRes
 }
@@ -72,7 +77,7 @@ func (p *PlexHandler) SyncPlexLibrary() {
 		p.repo.UpsertShows(shows)
 	}
 
-	p.logger.Println("Plex Library Sync Complete...")
+	p.logger.Info("Plex Library Sync Complete...")
 }
 
 // getTvdbIdForShow fetches detailed metadata for a show and extracts the TVDB ID from GUIDs
@@ -87,7 +92,7 @@ func (p *PlexHandler) getTvdbIdForShow(ratingKey string) string {
 	var container MetadataContainer
 	err := p.fetchAndUnmarshal(url, &container)
 	if err != nil {
-		p.logger.Printf("Error fetching metadata for show %s: %v", ratingKey, err)
+		p.logger.Error("Error fetching metadata for show", "value", ratingKey, "error", err)
 		return ""
 	}
 
@@ -106,20 +111,20 @@ func (p *PlexHandler) getTvdbIdForShow(ratingKey string) string {
 }
 
 func (p *PlexHandler) getMovies() models.PlexMovieLibraryData {
-	p.logger.Println("Starting plex movie media sync...")
+	p.logger.Info("Starting plex movie media sync...")
 	movies := models.PlexMovieLibraryData{}
 
 	section, err := p.repo.GetLibraryByType(libraryTypeMovie)
 
 	if err != nil {
-		p.logger.Printf("Error getting movie sections: %v", err)
+		p.logger.Error("Error getting movie sections", "error", err)
 		return movies
 	}
 
 	url := p.cfg.Host + mediaSectionBase + "/" + fmt.Sprint(section) + "/all"
 	err = p.fetchAndUnmarshal(url, &movies)
 	if err != nil {
-		p.logger.Printf("Error fetching movies: %v", err)
+		p.logger.Error("Error fetching movies", "error", err)
 		return movies
 	}
 
@@ -150,7 +155,7 @@ func (p *PlexHandler) fetchAndUnmarshal(url string, v interface{}) error {
 func (p *PlexHandler) getShows() *models.PlexShowLibraryData {
 	showSection, err := p.repo.GetLibraryByType(libraryTypeShow)
 	if err != nil {
-		p.logger.Printf("Error getting show section: %v", err)
+		p.logger.Error("Error getting show section", "error", err)
 		return nil
 	}
 
@@ -158,7 +163,7 @@ func (p *PlexHandler) getShows() *models.PlexShowLibraryData {
 	var showsResp models.PlexShowsResponse
 	err = p.fetchAndUnmarshal(url, &showsResp)
 	if err != nil {
-		p.logger.Printf("Error fetching shows: %v", err)
+		p.logger.Error("Error fetching shows", "error", err)
 		return nil
 	}
 
@@ -184,7 +189,7 @@ func (p *PlexHandler) getShows() *models.PlexShowLibraryData {
 		var seasonsResp models.PlexSeasonsResponse
 		err = p.fetchAndUnmarshal(url2, &seasonsResp)
 		if err != nil {
-			p.logger.Printf("Error fetching seasons for show %s: %v", show.Title, err)
+			p.logger.Error("Error fetching seasons for show", "field", show.Title, "error", err)
 			continue
 		}
 
@@ -201,7 +206,7 @@ func (p *PlexHandler) getShows() *models.PlexShowLibraryData {
 			var episodesResp models.PlexEpisodesResponse
 			err = p.fetchAndUnmarshal(url3, &episodesResp)
 			if err != nil {
-				p.logger.Printf("Error fetching episodes for season %s: %v", season.Title, err)
+				p.logger.Error("Error fetching episodes for season", "field", season.Title, "error", err)
 				continue
 			}
 

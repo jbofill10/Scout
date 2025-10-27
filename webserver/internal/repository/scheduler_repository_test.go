@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -19,7 +19,7 @@ type SchedulerRepoTestSuite struct {
 	repo   *SchedulerRepo
 	db     *sql.DB
 	mock   sqlmock.Sqlmock
-	logger *log.Logger
+	logger *slog.Logger
 }
 
 func TestSchedulerRepoSuite(t *testing.T) {
@@ -32,7 +32,7 @@ func (s *SchedulerRepoTestSuite) SetupTest() {
 	s.Require().NoError(err)
 
 	buf := new(bytes.Buffer)
-	s.logger = log.New(buf, "[TEST] ", log.LstdFlags|log.Lshortfile)
+	s.logger = slog.New(slog.NewTextHandler(buf, nil))
 
 	s.repo = &SchedulerRepo{
 		db:     s.db,

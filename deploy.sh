@@ -26,7 +26,7 @@ show_help() {
     echo "  rebuild <service>  Rebuild and redeploy a specific service or 'all'"
     echo ""
     echo "Services:"
-    echo "  webserver, tvdb-proxy, torrenter, ui, all"
+    echo "  webserver, tvdb-proxy, torrenter, ui, otel-collector, all"
     echo ""
     echo "Options:"
     echo "  --skip-checks    Skip pre-flight validation checks"
@@ -99,19 +99,43 @@ rebuild_service() {
     case $service in
         webserver)
             docker build -f ./webserver/Dockerfile -t scout-webserver:latest .
-            kubectl rollout restart deployment/webserver
+            if kubectl get deployment webserver &>/dev/null; then
+                kubectl rollout restart deployment/webserver
+            else
+                echo -e "${YELLOW}Warning: webserver deployment not found, skipping restart${NC}"
+            fi
             ;;
         tvdb-proxy)
             docker build -f ./tvdb_proxy/Dockerfile -t scout-tvdb-proxy:latest .
-            kubectl rollout restart deployment/tvdb-proxy
+            if kubectl get deployment tvdb-proxy &>/dev/null; then
+                kubectl rollout restart deployment/tvdb-proxy
+            else
+                echo -e "${YELLOW}Warning: tvdb-proxy deployment not found, skipping restart${NC}"
+            fi
             ;;
         torrenter)
             docker build -f torrenter/Dockerfile -t scout-torrenter:latest .
-            kubectl rollout restart deployment/torrenter
+            if kubectl get deployment torrenter &>/dev/null; then
+                kubectl rollout restart deployment/torrenter
+            else
+                echo -e "${YELLOW}Warning: torrenter deployment not found, skipping restart${NC}"
+            fi
             ;;
         ui)
             docker build -f ui/Dockerfile -t scout-ui:latest ui/
-            kubectl rollout restart deployment/ui
+            if kubectl get deployment ui &>/dev/null; then
+                kubectl rollout restart deployment/ui
+            else
+                echo -e "${YELLOW}Warning: ui deployment not found, skipping restart${NC}"
+            fi
+            ;;
+        otel-collector)
+            echo -e "${BLUE}OTel Collector uses public image, restarting deployment...${NC}"
+            if kubectl get deployment otel-collector &>/dev/null; then
+                kubectl rollout restart deployment/otel-collector
+            else
+                echo -e "${YELLOW}Warning: otel-collector deployment not found. Run './deploy.sh' to create it first.${NC}"
+            fi
             ;;
         all)
             echo -e "${BLUE}Rebuilding all services...${NC}"
@@ -120,14 +144,15 @@ rebuild_service() {
             docker build -f ./torrenter/Dockerfile -t scout-torrenter:latest .
             docker build -f ./ui/Dockerfile -t scout-ui:latest ./ui
             echo -e "${BLUE}Restarting all deployments...${NC}"
-            kubectl rollout restart deployment/webserver
-            kubectl rollout restart deployment/tvdb-proxy
-            kubectl rollout restart deployment/torrenter
-            kubectl rollout restart deployment/ui
+            kubectl get deployment webserver &>/dev/null && kubectl rollout restart deployment/webserver
+            kubectl get deployment tvdb-proxy &>/dev/null && kubectl rollout restart deployment/tvdb-proxy
+            kubectl get deployment torrenter &>/dev/null && kubectl rollout restart deployment/torrenter
+            kubectl get deployment ui &>/dev/null && kubectl rollout restart deployment/ui
+            kubectl get deployment otel-collector &>/dev/null && kubectl rollout restart deployment/otel-collector
             ;;
         *)
             echo -e "${RED}Unknown service: $service${NC}"
-            echo "Valid services: webserver, tvdb-proxy, torrenter, ui, all"
+            echo "Valid services: webserver, tvdb-proxy, torrenter, ui, otel-collector, all"
             exit 1
             ;;
     esac
@@ -140,6 +165,7 @@ rebuild_service() {
         kubectl rollout status deployment/tvdb-proxy &
         kubectl rollout status deployment/torrenter &
         kubectl rollout status deployment/ui &
+        kubectl rollout status deployment/otel-collector &
         wait
     else
         echo "Waiting for rollout..."
@@ -234,24 +260,35 @@ if [ "$SKIP_CHECKS" = false ]; then
         ((ERRORS++))
     fi
 
-    # Check Secret files
+    # Check Secret files (excluding templates)
     echo ""
-    echo -e "${BLUE}Kubernetes Secrets:${NC}"
+    echo -e "${BLUE}Kubernetes Secrets (excluding templates):${NC}"
 
     echo -n "  k8s/secrets/tvdb-proxy-secrets.yaml... "
     if [ -f "k8s/secrets/tvdb-proxy-secrets.yaml" ]; then
         echo -e "${GREEN}✓${NC}"
     else
-        echo -e "${RED}✗${NC}"
-        ((ERRORS++))
+        echo -e "${YELLOW}⚠${NC}"
+        echo -e "${YELLOW}    Note: Use tvdb-proxy-secrets.template.yaml as a reference${NC}"
+        ((WARNINGS++))
     fi
 
     echo -n "  k8s/secrets/torrenter-secrets.yaml... "
     if [ -f "k8s/secrets/torrenter-secrets.yaml" ]; then
         echo -e "${GREEN}✓${NC}"
     else
-        echo -e "${RED}✗${NC}"
-        ((ERRORS++))
+        echo -e "${YELLOW}⚠${NC}"
+        echo -e "${YELLOW}    Note: Use torrenter-secrets.template.yaml as a reference${NC}"
+        ((WARNINGS++))
+    fi
+
+    echo -n "  k8s/secrets/postgres-secret.yaml... "
+    if [ -f "k8s/secrets/postgres-secret.yaml" ]; then
+        echo -e "${GREEN}✓${NC}"
+    else
+        echo -e "${YELLOW}⚠${NC}"
+        echo -e "${YELLOW}    Note: Use postgres-secret.template.yaml as a reference${NC}"
+        ((WARNINGS++))
     fi
 
     # Check Dockerfiles
@@ -390,7 +427,16 @@ apply_if_exists() {
 }
 
 apply_if_exists k8s/configmaps/
-apply_if_exists k8s/secrets/
+
+# Apply secrets excluding template files
+echo "  - Applying k8s/secrets/ (excluding templates)"
+if [ -d "k8s/secrets/" ]; then
+    for secret_file in k8s/secrets/*.yaml; do
+        if [[ ! "$secret_file" =~ \.template\.yaml$ ]]; then
+            kubectl apply -f "$secret_file"
+        fi
+    done
+fi
 apply_if_exists k8s/pvcs/
 apply_if_exists k8s/services/
 apply_if_exists k8s/services/qbittorrent-external.yaml
@@ -408,7 +454,7 @@ fi
 # ============================================================================
 
 echo -e "${YELLOW}⏳ Waiting for deployments to be ready...${NC}"
-for d in webserver tvdb-proxy torrenter ui; do
+for d in webserver tvdb-proxy torrenter ui otel-collector; do
     if kubectl get deployment "$d" &>/dev/null; then
         kubectl wait --for=condition=available --timeout=60s deployment/"$d" || echo -e "${RED}Warning: ${d} not ready${NC}"
     fi

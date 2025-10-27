@@ -3,7 +3,7 @@ package service
 import (
 	"bytes"
 	"errors"
-	"log"
+	"log/slog"
 	"testing"
 	"torrenter/internal/models"
 	"torrenter/internal/repository/mocks"
@@ -17,7 +17,7 @@ type testSuite struct {
 	svc    *MediaProcessSvc
 	repo   *mocks.Repository
 	fs     *servicemocks.FileSystem
-	logger *log.Logger
+	logger *slog.Logger
 }
 
 func TestMediaProcessorSuite(t *testing.T) {
@@ -29,7 +29,7 @@ func (ts *testSuite) SetupTest() {
 
 	// Use a better logger for testing: log to buffer, show date/time, and short file info
 	buf := new(bytes.Buffer)
-	ts.logger = log.New(buf, "[TEST] ", log.LstdFlags|log.Lshortfile)
+	ts.logger = slog.New(slog.NewTextHandler(buf, nil))
 	ts.fs = servicemocks.NewFileSystem(ts.T())
 
 	ts.svc = &MediaProcessSvc{Logger: ts.logger, repo: ts.repo, fs: ts.fs}

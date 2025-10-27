@@ -3,7 +3,7 @@ package repository
 import (
 	"bytes"
 	"database/sql"
-	"log"
+	"log/slog"
 	"testing"
 	"torrenter/internal/models"
 
@@ -16,7 +16,7 @@ type RepoTestSuite struct {
 	repo   *Repo
 	db     *sql.DB
 	mock   sqlmock.Sqlmock
-	logger *log.Logger
+	logger *slog.Logger
 }
 
 func TestRepoSuite(t *testing.T) {
@@ -29,7 +29,7 @@ func (s *RepoTestSuite) SetupTest() {
 	s.Require().NoError(err)
 
 	buf := new(bytes.Buffer)
-	s.logger = log.New(buf, "[TEST] ", log.LstdFlags|log.Lshortfile)
+	s.logger = slog.New(slog.NewTextHandler(buf, nil))
 
 	s.repo = &Repo{
 		db:     s.db,

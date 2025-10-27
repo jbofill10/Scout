@@ -1,13 +1,14 @@
 package service
 
 import (
+	"context"
 	tvdb "shared/media"
 	"torrenter/internal/models"
 )
 
 // TorrentService handles torrent search and download operations
 type TorrentService interface {
-	HandleDownload(req *tvdb.Media, done chan<- models.TorrentCompleteEvent) error
+	HandleDownload(ctx context.Context, req *tvdb.Media, done chan<- models.TorrentCompleteEvent) error
 }
 
 // MediaProcessor handles post-download processing

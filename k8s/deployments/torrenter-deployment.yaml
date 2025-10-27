@@ -61,6 +61,10 @@ spec:
             configMapKeyRef:
               name: torrenter-config
               key: ui-endpoint
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "otel-collector-service:4317"
+        - name: OTEL_SERVICE_NAME
+          value: "torrenter"
         volumeMounts:
         - name: secrets-volume
           mountPath: /root/secrets

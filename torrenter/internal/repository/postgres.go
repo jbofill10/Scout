@@ -3,7 +3,7 @@ package repository
 import (
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"torrenter/internal/models"
 
 	_ "github.com/lib/pq"
@@ -26,10 +26,10 @@ type Repository interface {
 
 type Repo struct {
 	db     *sql.DB
-	logger *log.Logger
+	logger *slog.Logger
 }
 
-func NewRepo(logger *log.Logger, connStr string) (*Repo, error) {
+func NewRepo(logger *slog.Logger, connStr string) (*Repo, error) {
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, err
@@ -41,10 +41,10 @@ func NewRepo(logger *log.Logger, connStr string) (*Repo, error) {
 func (r *Repo) UpsertLibraries(libs models.PlexLibrariesResponse) {
 	for _, dir := range libs.Directories {
 		for _, loc := range dir.Locations {
-			r.logger.Printf("Upserting %+v", loc)
+			r.logger.Debug("Upserting library", "location", loc)
 			_, err := r.db.Exec(`INSERT INTO Libraries (id, type, path, section) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO UPDATE SET type=excluded.type, path=excluded.path, section=excluded.section`, loc.ID, dir.Type, loc.Path, dir.Key)
 			if err != nil {
-				r.logger.Printf("Failed to upsert library: %v", err)
+				r.logger.Error("Failed to upsert library", "error", err)
 			}
 		}
 	}
@@ -60,11 +60,11 @@ func (r *Repo) SetPreferredLibrary(id int, libType string) error {
 	defer func() {
 		if err != nil {
 			if rbErr := tx.Rollback(); rbErr != nil {
-				r.logger.Printf("transaction rollback failed: %v", rbErr)
+				r.logger.Error("Transaction rollback failed", "error", rbErr)
 			}
 		} else {
 			if cmErr := tx.Commit(); cmErr != nil {
-				r.logger.Printf("transaction commit failed: %v", cmErr)
+				r.logger.Error("Transaction commit failed", "error", cmErr)
 			}
 		}
 	}()
@@ -143,7 +143,7 @@ func (r *Repo) GetAllLibrarySections() []models.PlexLibrary {
 	var libs []models.PlexLibrary
 	rows, err := r.db.Query("SELECT id, section, type, path, preferred FROM Libraries")
 	if err != nil {
-		r.logger.Printf("Failed to query library sections: %v", err)
+		r.logger.Error("Failed to query library sections", "error", err)
 		return libs
 	}
 	defer rows.Close()
@@ -152,14 +152,14 @@ func (r *Repo) GetAllLibrarySections() []models.PlexLibrary {
 		var lib models.PlexLibrary
 		err := rows.Scan(&lib.Id, &lib.Section, &lib.Type, &lib.Path, &lib.Preferred)
 		if err != nil {
-			r.logger.Printf("Failed to scan library section: %v", err)
+			r.logger.Error("Failed to scan library section", "error", err)
 			continue
 		}
 		libs = append(libs, lib)
 	}
 
 	if err = rows.Err(); err != nil {
-		r.logger.Printf("Error iterating over rows: %v", err)
+		r.logger.Error("Error iterating over rows", "error", err)
 	}
 
 	return libs
@@ -189,7 +189,7 @@ func (r *Repo) UpsertMovies(movies models.PlexMovieLibraryData) {
 				art = EXCLUDED.art
 		`, movie.Id, movie.Title, movie.Year, movie.Thumb, movie.Art)
 		if err != nil {
-			r.logger.Printf("Failed to upsert movie %s: %v", movie.Title, err)
+			r.logger.Error("Failed to upsert movie", "title", movie.Title, "error", err)
 			continue
 		}
 
@@ -200,7 +200,7 @@ func (r *Repo) UpsertMovies(movies models.PlexMovieLibraryData) {
 					VALUES ($1, $2, $3)
 				`, movie.Id, meta.VideoResolution, part.File)
 				if err != nil {
-					r.logger.Printf("Failed to insert movie media for movie %s: %v", movie.Title, err)
+					r.logger.Error("Failed to insert movie media", "title", movie.Title, "error", err)
 				}
 			}
 		}
@@ -219,7 +219,7 @@ func (r *Repo) UpsertShows(lib *models.PlexShowLibraryData) {
 				tvdb_id = EXCLUDED.tvdb_id
 		`, show.Id, show.Title, show.ShowMeta, show.Thumb, show.TvdbId)
 		if err != nil {
-			r.logger.Printf("Failed to upsert show %s: %v", show.Title, err)
+			r.logger.Error("Failed to upsert show", "title", show.Title, "error", err)
 			continue
 		}
 
@@ -233,7 +233,7 @@ func (r *Repo) UpsertShows(lib *models.PlexShowLibraryData) {
 					season_number = EXCLUDED.season_number
 			`, season.Id, show.Id, season.SeasonMeta, season.SeasonNumber)
 			if err != nil {
-				r.logger.Printf("Failed to upsert season %d: %v", season.SeasonNumber, err)
+				r.logger.Error("Failed to upsert season", "season", season.SeasonNumber, "error", err)
 				continue
 			}
 
@@ -247,7 +247,7 @@ func (r *Repo) UpsertShows(lib *models.PlexShowLibraryData) {
 						episode_number = EXCLUDED.episode_number
 				`, episode.Id, season.Id, episode.EpisodeMeta, episode.EpisodeNumber)
 				if err != nil {
-					r.logger.Printf("Failed to upsert episode %d: %v", episode.EpisodeNumber, err)
+					r.logger.Error("Failed to upsert episode", "episode", episode.EpisodeNumber, "error", err)
 					continue
 				}
 
@@ -261,7 +261,7 @@ func (r *Repo) UpsertShows(lib *models.PlexShowLibraryData) {
 							file_path = EXCLUDED.file_path
 					`, media.Id, episode.Id, media.VideoResolution, media.File)
 					if err != nil {
-						r.logger.Printf("Failed to insert plex media for episode %s: %v\n%v", episode.Id, err, media)
+						r.logger.Error("Failed to insert plex media for episode", "episode_id", episode.Id, "error", err, "media", media)
 					}
 				}
 			}
@@ -301,7 +301,7 @@ func (r *Repo) GetPreferredUploaders(mediaType string, isAnime bool) ([]string, 
 	for rows.Next() {
 		var uploader string
 		if err := rows.Scan(&uploader); err != nil {
-			r.logger.Printf("Error scanning uploader: %v", err)
+			r.logger.Error("Error scanning uploader", "error", err)
 			continue
 		}
 		preferred = append(preferred, uploader)

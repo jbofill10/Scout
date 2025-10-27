@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	tvdb "shared/media"
 	"slices"
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 	"torrenter/internal/models"
+	"torrenter/internal/telemetry"
 
 	"github.com/superturkey650/go-qbittorrent/qbt"
 	"golift.io/starr"
@@ -26,7 +27,7 @@ type QbittHandler struct {
 	c      *qbt.Client
 	p      *prowlarr.Prowlarr
 	repo   Repository
-	logger *log.Logger
+	logger *slog.Logger
 }
 
 // Indexer IDs
@@ -35,14 +36,14 @@ var (
 	ONE337x_ID = int64(5) // General
 )
 
-func NewQbittHandler(qCfg *models.QbittCfg, pCfg *models.ProwlarrCfg, repo Repository, logger *log.Logger) (*QbittHandler, error) {
-	logger.Println(qCfg.Host, qCfg.Password, qCfg.User)
+func NewQbittHandler(qCfg *models.QbittCfg, pCfg *models.ProwlarrCfg, repo Repository, logger *slog.Logger) (*QbittHandler, error) {
+	logger.Debug("QBittorrent config", "host", qCfg.Host, "user", qCfg.User)
 	qb := qbt.NewClient(qCfg.Host)
 	if err := qb.Login(qCfg.User, qCfg.Password); err != nil {
 		return nil, fmt.Errorf("failed to login to qBittorrent: %w", err)
 	}
 
-	logger.Println("Connected to QBittorrent successfully")
+	logger.Info("Connected to QBittorrent successfully")
 
 	p := prowlarr.New(starr.New(pCfg.Key, pCfg.Host, 60*time.Hour))
 	return &QbittHandler{
@@ -54,7 +55,7 @@ func NewQbittHandler(qCfg *models.QbittCfg, pCfg *models.ProwlarrCfg, repo Repos
 }
 
 func (q *QbittHandler) searchProwlarr(query, category string, isAnime bool) ([]*prowlarr.Search, error) {
-	q.logger.Printf("Searching Prowlarr for %s (%s)", query, category)
+	q.logger.Info("Searching Prowlarr", "query", query, "category", category)
 
 	resp, err := q.p.SearchContext(context.Background(), prowlarr.SearchInput{
 		Query:      query,
@@ -62,19 +63,19 @@ func (q *QbittHandler) searchProwlarr(query, category string, isAnime bool) ([]*
 	})
 
 	if err != nil {
-		q.logger.Printf("Error searching Prowlarr: %v", err)
+		q.logger.Error("Error searching Prowlarr", "error", err)
 		return nil, err
 	}
 
 	return resp, nil
 }
 
-func (q *QbittHandler) HandleDownload(req *tvdb.Media, done chan<- models.TorrentCompleteEvent) error {
+func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done chan<- models.TorrentCompleteEvent) error {
 
 	searchStrategies := [][]*models.SearchStrategy{}
 	if req.Category == "series" {
 		for _, episode := range req.Metadata.Episodes {
-			q.logger.Printf("Processing episode: %s S%dE%d", req.Name, episode.SeasonNumber, episode.Number)
+			q.logger.InfoContext(ctx, "Processing episode", telemetry.WithTraceContext(ctx, "name", req.Name, "season", episode.SeasonNumber, "episode", episode.Number)...)
 
 			searchStrategies = append(searchStrategies, q.createSearchStrategy(req, &episode))
 		}
@@ -82,14 +83,14 @@ func (q *QbittHandler) HandleDownload(req *tvdb.Media, done chan<- models.Torren
 		for _, strategies := range searchStrategies {
 			bestMatches := []*models.TorrentMatch{}
 			for _, ss := range strategies {
-				q.logger.Println("Search Query: ", ss.Query)
+				q.logger.InfoContext(ctx, "Search Query", telemetry.WithTraceContext(ctx, "query", ss.Query)...)
 				pResp, err := q.searchProwlarr(ss.Query, req.Category, req.Anime)
 				if err != nil {
 					return fmt.Errorf("failed to search Prowlarr: %w", err)
 				}
 
 				if len(pResp) == 0 {
-					q.logger.Printf("no results found for torrent: %s", ss.Query)
+					q.logger.InfoContext(ctx, "no results found", "query", ss.Query)
 					// TODO: Store in DB
 					continue
 				}
@@ -102,10 +103,10 @@ func (q *QbittHandler) HandleDownload(req *tvdb.Media, done chan<- models.Torren
 				}
 
 				if len(possibleTorrents) == 0 {
-					q.logger.Printf("no matching torrents found for torrent: %s", ss.Query)
+					q.logger.InfoContext(ctx, "no matching torrents found", "query", ss.Query)
 					err := q.repo.InsertDownloadHistory(req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, "", "failure", "no matching torrents found")
 					if err != nil {
-						q.logger.Printf("Failed to insert download history: %v", err)
+						q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
 					}
 				} else {
 					bestMatches = append(bestMatches, possibleTorrents...)
@@ -115,23 +116,23 @@ func (q *QbittHandler) HandleDownload(req *tvdb.Media, done chan<- models.Torren
 			q.sortTorrentsByQuality(bestMatches)
 			match := q.pickBestTorrent(bestMatches, req.Category, req.Anime)
 			if match == nil {
-				q.logger.Printf("No suitable torrent found for show: %s", req.Name)
+				q.logger.WarnContext(ctx, "No suitable torrent found", "show", req.Name)
 				ss := strategies[0]
 				err := q.repo.InsertDownloadHistory(req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, "", "failure", "no suitable torrent found")
 				if err != nil {
-					q.logger.Printf("Failed to insert download history: %v", err)
+					q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
 				}
 				continue
 			}
 			ss := match.Strategy
 			err := q.repo.InsertDownloadHistory(req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, match.Torrent.InfoHash, "downloading", "")
 			if err != nil {
-				q.logger.Printf("Failed to insert download history: %v", err)
+				q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
 			}
 			q.downloadTorrent(match.Torrent)
 
 			// watch torrent to complete
-			go func() {
+			go func(ctx context.Context) {
 				ranRecheck := false
 				retries := 1
 				for {
@@ -143,16 +144,16 @@ func (q *QbittHandler) HandleDownload(req *tvdb.Media, done chan<- models.Torren
 
 					torrents, err := q.c.Torrents(filter)
 					if err != nil {
-						q.logger.Printf("Error fetching torrents: %v", err)
+						q.logger.ErrorContext(ctx, "Error fetching torrents", "error", err)
 						retries++
 						time.Sleep(6 * time.Second)
 						if retries > 6 {
-							q.logger.Printf("Max retries reached, stopping watch for torrent: %s", match.Torrent.Title)
+							q.logger.WarnContext(ctx, "Max retries reached, stopping watch", "torrent", match.Torrent.Title)
 							return
 						}
 					}
 					if len(torrents) == 0 {
-						q.logger.Printf("Torrent not found, continuing watch for: %s", match.Torrent.Title)
+						q.logger.InfoContext(ctx, "Torrent not found, continuing watch", "torrent", match.Torrent.Title)
 						continue
 					}
 					torrent := torrents[0]
@@ -164,7 +165,7 @@ func (q *QbittHandler) HandleDownload(req *tvdb.Media, done chan<- models.Torren
 							continue
 						}
 
-						q.logger.Printf("Torrent %s completed", match.Torrent.Title)
+						q.logger.InfoContext(ctx, "Torrent completed", "title", match.Torrent.Title)
 						done <- models.TorrentCompleteEvent{
 							SavePath: torrent.SavePath,
 							Req:      match.Strategy,
@@ -172,10 +173,10 @@ func (q *QbittHandler) HandleDownload(req *tvdb.Media, done chan<- models.Torren
 						}
 						break
 					} else {
-						q.logger.Printf("Torrent %s is still downloading (%.3f%%)", match.Torrent.Title, torrent.Progress*100)
+						q.logger.InfoContext(ctx, "Torrent downloading", "title", match.Torrent.Title, "progress", torrent.Progress*100)
 					}
 				}
-			}()
+			}(ctx)
 
 		}
 	}
@@ -268,13 +269,13 @@ func (q *QbittHandler) isCorrectTorrent(torrent *prowlarr.Search, strategy *mode
 }
 
 func (q *QbittHandler) downloadTorrent(torrent *prowlarr.Search) error {
-	q.logger.Printf("Downloading torrent: %s", torrent.FileName)
+	q.logger.Info("Downloading torrent", "filename", torrent.FileName)
 
 	torrentSavePath := baseSavePath + "/" + torrent.Title
-	q.logger.Printf("Torrent save path: %s", torrentSavePath)
+	q.logger.Info("Torrent save path", "path", torrentSavePath)
 
 	if err := os.Mkdir(torrentSavePath, 0777); err != nil && !os.IsExist(err) {
-		q.logger.Printf("Error creating directory %s: %v", torrentSavePath, err)
+		q.logger.Error("Error creating directory", "value", torrentSavePath, "error", err)
 		return err
 	}
 	dlOpts := qbt.DownloadOptions{
@@ -283,7 +284,7 @@ func (q *QbittHandler) downloadTorrent(torrent *prowlarr.Search) error {
 	}
 
 	if err := q.c.DownloadLinks([]string{torrent.GUID}, dlOpts); err != nil {
-		q.logger.Printf("Error downloading torrent: %v", err)
+		q.logger.Error("Error downloading torrent", "error", err)
 		return err
 	}
 
@@ -319,7 +320,7 @@ func (q *QbittHandler) pickBestTorrent(matches []*models.TorrentMatch, mediaType
 	// TODO: Discard torrents with low seeds, etc.
 	preferred, err := q.repo.GetPreferredUploaders(mediaType, isAnime)
 	if err != nil {
-		q.logger.Printf("Error querying uploader preferences: %v", err)
+		q.logger.Error("Error querying uploader preferences", "error", err)
 		return matches[0]
 	}
 

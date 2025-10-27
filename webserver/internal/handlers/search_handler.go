@@ -1,18 +1,19 @@
 package handlers
 
 import (
-	"log"
+	"log/slog"
 	"webserver/internal/interactors"
+	"webserver/internal/telemetry"
 
 	"github.com/gin-gonic/gin"
 )
 
 type SearchHandler struct {
 	interactor *interactors.SearchInteractor
-	logger     *log.Logger
+	logger     *slog.Logger
 }
 
-func NewSearchHandler(interactor *interactors.SearchInteractor, logger *log.Logger) *SearchHandler {
+func NewSearchHandler(interactor *interactors.SearchInteractor, logger *slog.Logger) *SearchHandler {
 	return &SearchHandler{
 		interactor: interactor,
 		logger:     logger,
@@ -22,15 +23,19 @@ func NewSearchHandler(interactor *interactors.SearchInteractor, logger *log.Logg
 func (h *SearchHandler) HandleSearch(c *gin.Context) {
 	query := c.Query("query")
 	mediaType := c.Query("media_type")
-	h.logger.Printf("SearchRequest: query=%s, media_type=%s", query, mediaType)
 
-	searchResults, err := h.interactor.Search(mediaType, query)
+	// Extract context for trace propagation and logging
+	ctx := c.Request.Context()
+
+	h.logger.InfoContext(ctx, "Search request", telemetry.WithTraceContext(ctx, "query", query, "media_type", mediaType)...)
+
+	searchResults, err := h.interactor.Search(ctx, mediaType, query)
 	if err != nil {
-		h.logger.Printf("Failed to search via TVDB client: %v", err)
+		h.logger.ErrorContext(ctx, "Failed to search via TVDB client", telemetry.WithTraceContext(ctx, "error", err)...)
 		c.JSON(500, gin.H{"error": "Failed to search media"})
 		return
 	}
 
-	h.logger.Printf("Returning %d search results", len(searchResults))
+	h.logger.InfoContext(ctx, "Returning search results", telemetry.WithTraceContext(ctx, "count", len(searchResults))...)
 	c.JSON(200, searchResults)
 }

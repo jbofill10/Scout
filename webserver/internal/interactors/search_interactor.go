@@ -1,6 +1,7 @@
 package interactors
 
 import (
+	"context"
 	tvdb "shared/media"
 	"webserver/internal/clients"
 )
@@ -15,6 +16,6 @@ func NewSearchInteractor(tvdbClient *clients.TVDBProxyClient) *SearchInteractor 
 	}
 }
 
-func (i *SearchInteractor) Search(mediaType, query string) ([]tvdb.Media, error) {
-	return i.tvdbClient.Search(mediaType, query)
+func (i *SearchInteractor) Search(ctx context.Context, mediaType, query string) ([]tvdb.Media, error) {
+	return i.tvdbClient.Search(ctx, mediaType, query)
 }

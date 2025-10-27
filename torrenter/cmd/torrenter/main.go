@@ -2,23 +2,49 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"torrenter/internal/config"
 	"torrenter/internal/handlers"
 	"torrenter/internal/interactors"
 	"torrenter/internal/repository"
 	"torrenter/internal/service"
+	"torrenter/internal/telemetry"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
 func main() {
-	logger := log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+	// Initialize OpenTelemetry
+	otlpEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	if otlpEndpoint == "" {
+		otlpEndpoint = "otel-collector-service:4317"
+	}
+
+	// Initialize tracing
+	tracerCleanup, err := telemetry.InitTracer("torrenter", "1.0.0", otlpEndpoint)
+	if err != nil {
+		slog.Warn("Failed to initialize tracer", "error", err)
+	} else {
+		defer tracerCleanup()
+		slog.Info("OpenTelemetry tracing initialized")
+	}
+
+	// Initialize logging with trace correlation
+	logger, loggerCleanup, err := telemetry.InitLogger("torrenter", "1.0.0", otlpEndpoint)
+	if err != nil {
+		slog.Warn("Failed to initialize logger", "error", err)
+		logger = slog.Default()
+	} else {
+		defer loggerCleanup()
+		logger.Info("OpenTelemetry logging initialized")
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
-		logger.Fatal(err)
+		logger.Error("Failed to load config", "error", err)
+		os.Exit(1)
 	}
 
 	// Database connection
@@ -30,12 +56,14 @@ func main() {
 
 	repo, err := repository.NewRepo(logger, connStr)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Error("Failed to create repo", "error", err)
+		os.Exit(1)
 	}
 
 	qbitt, err := service.NewQbittHandler(&cfg.Qbitt, &cfg.Prowlarr, repo, logger)
 	if err != nil {
-		logger.Fatal("Failed to create qBittorrent handler: ", err)
+		logger.Error("Failed to create qBittorrent handler", "error", err)
+		os.Exit(1)
 	}
 
 	fs := service.NewFsSvc(logger)
@@ -52,6 +80,7 @@ func main() {
 
 	// Setup routes
 	r := gin.Default()
+	r.Use(otelgin.Middleware("torrenter"))
 	r.POST("/download", downloadHandler.DownloadTorrent)
 	r.GET("/media/:hash", mediaHandler.MediaExists)
 
@@ -62,8 +91,9 @@ func main() {
 	if addr == "" {
 		addr = "localhost:22001"
 	}
-	logger.Printf("Starting server on %s", addr)
+	logger.Info("Starting torrenter", "address", addr)
 	if err := r.Run(addr); err != nil {
-		logger.Fatal(err)
+		logger.Error("Server failed", "error", err)
+		os.Exit(1)
 	}
 }

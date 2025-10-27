@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,7 +23,7 @@ type TorrenterInteractorTestSuite struct {
 	repo            *mocks.Repository
 	qbitt           *servicemocks.TorrentService
 	mp              *servicemocks.MediaProcessor
-	logger          *log.Logger
+	logger          *slog.Logger
 }
 
 func TestTorrenterInteractorSuite(t *testing.T) {
@@ -33,7 +33,7 @@ func TestTorrenterInteractorSuite(t *testing.T) {
 func (s *TorrenterInteractorTestSuite) SetupTest() {
 	gin.SetMode(gin.TestMode)
 	buf := new(bytes.Buffer)
-	s.logger = log.New(buf, "[TEST] ", log.LstdFlags|log.Lshortfile)
+	s.logger = slog.New(slog.NewTextHandler(buf, nil))
 	s.repo = mocks.NewRepository(s.T())
 	s.mp = servicemocks.NewMediaProcessor(s.T())
 	s.qbitt = servicemocks.NewTorrentService(s.T())
@@ -63,6 +63,7 @@ func (s *TorrenterInteractorTestSuite) TestMediaExists_Exists() {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/media/abc123", nil)
 	c.Params = gin.Params{{Key: "hash", Value: "abc123"}}
 
 	s.mediaHandler.MediaExists(c)
@@ -75,6 +76,7 @@ func (s *TorrenterInteractorTestSuite) TestMediaExists_NotFound() {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/media/nonexistent", nil)
 	c.Params = gin.Params{{Key: "hash", Value: "nonexistent"}}
 
 	s.mediaHandler.MediaExists(c)
@@ -87,6 +89,7 @@ func (s *TorrenterInteractorTestSuite) TestMediaExists_Error() {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/media/error123", nil)
 	c.Params = gin.Params{{Key: "hash", Value: "error123"}}
 
 	s.mediaHandler.MediaExists(c)

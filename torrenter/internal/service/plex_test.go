@@ -3,7 +3,7 @@ package service
 import (
 	"bytes"
 	"encoding/xml"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,7 +17,7 @@ type PlexHandlerTestSuite struct {
 	suite.Suite
 	handler *PlexHandler
 	repo    *mocks.Repository
-	logger  *log.Logger
+	logger  *slog.Logger
 	cfg     *models.PlexCfg
 }
 
@@ -27,7 +27,7 @@ func TestPlexHandlerSuite(t *testing.T) {
 
 func (s *PlexHandlerTestSuite) SetupTest() {
 	buf := new(bytes.Buffer)
-	s.logger = log.New(buf, "[TEST] ", log.LstdFlags|log.Lshortfile)
+	s.logger = slog.New(slog.NewTextHandler(buf, nil))
 	s.repo = mocks.NewRepository(s.T())
 
 	s.cfg = &models.PlexCfg{

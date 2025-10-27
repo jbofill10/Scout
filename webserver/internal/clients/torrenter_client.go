@@ -2,34 +2,49 @@ package clients
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	tvdb "shared/media"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 type TorrenterClient struct {
-	Host string
+	Host   string
+	Client *http.Client
 }
 
 func NewTorrenterClient(host string) *TorrenterClient {
-	return &TorrenterClient{Host: host}
+	return &TorrenterClient{
+		Host: host,
+		Client: &http.Client{
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+		},
+	}
 }
 
-func (c *TorrenterClient) Download(req tvdb.Media) error {
+func (c *TorrenterClient) Download(ctx context.Context, req tvdb.Media) error {
 	url := fmt.Sprintf("http://%s/download", c.Host)
-	fmt.Printf("Sending download request to %s with media: %+v\n", url, req)
+	slog.InfoContext(ctx, "Sending download request", "url", url, "media", req.Name)
 	buf := new(bytes.Buffer)
 	if err := json.NewEncoder(buf).Encode(req); err != nil {
 		return err
 	}
-	resp, err := http.Post(url, "application/json", buf)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, buf)
+	if err != nil {
+		return err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.Client.Do(httpReq)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); cerr != nil {
-			fmt.Printf("warning: failed to close response body: %v\n", cerr)
+			slog.WarnContext(ctx, "Failed to close response body", "error", cerr)
 		}
 	}()
 	if resp.StatusCode != http.StatusOK {
@@ -38,15 +53,19 @@ func (c *TorrenterClient) Download(req tvdb.Media) error {
 	return nil
 }
 
-func (c *TorrenterClient) MediaExists(hash string) (bool, error) {
+func (c *TorrenterClient) MediaExists(ctx context.Context, hash string) (bool, error) {
 	url := fmt.Sprintf("http://%s/media/%s", c.Host, hash)
-	resp, err := http.Get(url)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := c.Client.Do(req)
 	if err != nil {
 		return false, err
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); cerr != nil {
-			fmt.Printf("warning: failed to close response body: %v\n", cerr)
+			slog.WarnContext(ctx, "Failed to close response body", "error", cerr)
 		}
 	}()
 	if resp.StatusCode == http.StatusOK {
@@ -62,19 +81,24 @@ func (c *TorrenterClient) MediaExists(hash string) (bool, error) {
 // tvdb.Media to the torrenter's /media/exists endpoint and expects a JSON
 // response with `exists` and optional `in_progress` maps keyed by a unique
 // identifier (we use the Media.Hash field if present).
-func (c *TorrenterClient) MediaExistsBatch(items []tvdb.Media) (map[string]bool, map[string]bool, error) {
+func (c *TorrenterClient) MediaExistsBatch(ctx context.Context, items []tvdb.Media) (map[string]bool, map[string]bool, error) {
 	url := fmt.Sprintf("http://%s/media/exists", c.Host)
 	buf := new(bytes.Buffer)
 	if err := json.NewEncoder(buf).Encode(items); err != nil {
 		return nil, nil, err
 	}
-	resp, err := http.Post(url, "application/json", buf)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, buf)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.Client.Do(req)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); cerr != nil {
-			fmt.Printf("warning: failed to close response body: %v\n", cerr)
+			slog.WarnContext(ctx, "Failed to close response body", "error", cerr)
 		}
 	}()
 	if resp.StatusCode != http.StatusOK {

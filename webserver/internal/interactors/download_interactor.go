@@ -1,7 +1,8 @@
 package interactors
 
 import (
-	"log"
+	"context"
+	"log/slog"
 	"time"
 
 	tvdb "shared/media"
@@ -14,7 +15,7 @@ import (
 type DownloadInteractor struct {
 	scheduler       *scheduler.Scheduler
 	repo            repository.SchedulerRepository
-	logger          *log.Logger
+	logger          *slog.Logger
 	mediaQueue      chan tvdb.Media
 	tvdbClient      *clients.TVDBProxyClient
 	torrenterClient *clients.TorrenterClient
@@ -24,7 +25,7 @@ func NewDownloadInteractor(
 	repo repository.SchedulerRepository,
 	sched *scheduler.Scheduler,
 	mediaQueue chan tvdb.Media,
-	logger *log.Logger,
+	logger *slog.Logger,
 	tvdbClient *clients.TVDBProxyClient,
 	torrenterClient *clients.TorrenterClient,
 ) *DownloadInteractor {
@@ -43,12 +44,13 @@ func (i *DownloadInteractor) WatchForDueMedia() {
 	i.scheduler.Start(i.mediaQueue)
 	go func() {
 		for media := range i.mediaQueue {
-			i.logger.Printf("Processing due media: %s", media.Name)
+			i.logger.Info("Processing due media", "media", media.Name)
 
 			// Media is already complete and ready for Download()
-			err := i.torrenterClient.Download(media)
+			// Use background context since this is not tied to an HTTP request
+			err := i.torrenterClient.Download(context.Background(), media)
 			if err != nil {
-				i.logger.Printf("Failed to download media: %v", err)
+				i.logger.Error("Failed to download media", "error", err)
 				// Log failure for each episode in the media
 				for _, ep := range media.Metadata.Episodes {
 					_ = i.repo.InsertDownloadHistory(media.Name, ep.SeasonNumber, ep.Number, ep.AbsoluteNumber,
@@ -60,24 +62,24 @@ func (i *DownloadInteractor) WatchForDueMedia() {
 }
 
 // DownloadShow handles the download request for a TV show
-func (i *DownloadInteractor) DownloadShow(req tvdb.Media) error {
-	extendedInfo, err := i.getExtendedInformation(req.Id)
+func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) error {
+	extendedInfo, err := i.getExtendedInformation(ctx, req.Id)
 	if err != nil {
-		i.logger.Printf("Failed to get extended information: %v", err)
+		i.logger.ErrorContext(ctx, "Failed to get extended information", "error", err)
 		return err
 	}
 
 	isAnime := isMediaAnime(extendedInfo)
 
 	today := time.Now()
-	i.logger.Printf("Download request for: %+v", req)
+	i.logger.InfoContext(ctx, "Download request", "media", req)
 	mediaToDownload := []tvdb.Episode{}
 	absoluteNumber := 1
 
 	for _, episode := range req.Metadata.Episodes {
 		episodeAired, err := time.Parse("2006-01-02", episode.Aired)
 		if err != nil {
-			i.logger.Printf("Failed to parse episode aired date: %v", err)
+			i.logger.WarnContext(ctx, "Failed to parse episode aired date", "error", err)
 			continue
 		}
 
@@ -93,7 +95,7 @@ func (i *DownloadInteractor) DownloadShow(req tvdb.Media) error {
 			err = i.repo.InsertDownloadHistory(req.Name, episode.SeasonNumber, episode.Number, episode.AbsoluteNumber,
 				status.Searching, "")
 			if err != nil {
-				i.logger.Printf("Failed to insert download history for episode %d: %v", episode.Number, err)
+				i.logger.ErrorContext(ctx, "Failed to insert download history", "episode", episode.Number, "error", err)
 			}
 		} else {
 			// Episode hasn't aired - schedule it for future download
@@ -116,18 +118,18 @@ func (i *DownloadInteractor) DownloadShow(req tvdb.Media) error {
 			if err != nil {
 				// Check if it's a duplicate (already scheduled)
 				if err == repository.ErrDuplicateScheduled {
-					i.logger.Printf("Episode S%02dE%02d already scheduled, skipping", episode.SeasonNumber, episode.Number)
+					i.logger.InfoContext(ctx, "Episode already scheduled, skipping", "season", episode.SeasonNumber, "episode", episode.Number)
 					continue
 				}
 				// Other scheduling error - log failure
-				i.logger.Printf("Failed to schedule episode: %v", err)
+				i.logger.ErrorContext(ctx, "Failed to schedule episode", "error", err)
 				err = i.repo.InsertDownloadHistory(req.Name, episode.SeasonNumber, episode.Number, episode.AbsoluteNumber,
 					status.Failure, "[Scheduling Error]: "+err.Error())
 				if err != nil {
-					i.logger.Printf("Failed to insert download history: %v", err)
+					i.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
 				}
 			} else {
-				i.logger.Printf("Scheduled S%02dE%02d for %s", episode.SeasonNumber, episode.Number, episodeAired.Format("2006-01-02"))
+				i.logger.InfoContext(ctx, "Scheduled episode", "season", episode.SeasonNumber, "episode", episode.Number, "air_date", episodeAired.Format("2006-01-02"))
 			}
 		}
 	}
@@ -145,24 +147,24 @@ func (i *DownloadInteractor) DownloadShow(req tvdb.Media) error {
 		}
 		downloadPayload.Metadata.Episodes = mediaToDownload
 
-		err = i.torrenterClient.Download(downloadPayload)
+		err = i.torrenterClient.Download(ctx, downloadPayload)
 		if err != nil {
-			i.logger.Printf("Failed to download show: %v", err)
+			i.logger.ErrorContext(ctx, "Failed to download show", "error", err)
 			return err
 		}
-		i.logger.Printf("Sent %d aired episodes to torrenter for download", len(mediaToDownload))
+		i.logger.InfoContext(ctx, "Sent aired episodes to torrenter", "count", len(mediaToDownload))
 	} else {
-		i.logger.Printf("No aired episodes to download immediately")
+		i.logger.InfoContext(ctx, "No aired episodes to download immediately")
 	}
 
 	return nil
 }
 
-func (i *DownloadInteractor) getExtendedInformation(mediaId string) (tvdb.TVDBSeriesExtendedResponse, error) {
-	i.logger.Printf("Requesting extended info for mediaId: %s", mediaId)
-	seriesInfo, err := i.tvdbClient.GetExtendedInfo(mediaId)
+func (i *DownloadInteractor) getExtendedInformation(ctx context.Context, mediaId string) (tvdb.TVDBSeriesExtendedResponse, error) {
+	i.logger.DebugContext(ctx, "Requesting extended info", "media_id", mediaId)
+	seriesInfo, err := i.tvdbClient.GetExtendedInfo(ctx, mediaId)
 	if err != nil {
-		i.logger.Printf("Failed to get extended info from TVDBProxyClient: %v", err)
+		i.logger.ErrorContext(ctx, "Failed to get extended info from TVDBProxyClient", "error", err)
 		return tvdb.TVDBSeriesExtendedResponse{}, err
 	}
 	return seriesInfo, nil

@@ -2,6 +2,7 @@ package clients
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -57,7 +58,7 @@ func (s *TorrenterClientTestSuite) TestDownload_Success() {
 		},
 	}
 
-	err := client.Download(req)
+	err := client.Download(context.Background(), req)
 
 	s.NoError(err)
 	s.True(requestReceived)
@@ -73,7 +74,7 @@ func (s *TorrenterClientTestSuite) TestDownload_Non200Status() {
 
 	req := tvdb.Media{Name: "Test Show"}
 
-	err := client.Download(req)
+	err := client.Download(context.Background(), req)
 
 	s.Error(err)
 	s.Contains(err.Error(), "torrenter returned status 500")
@@ -84,7 +85,7 @@ func (s *TorrenterClientTestSuite) TestDownload_NetworkError() {
 
 	req := tvdb.Media{Name: "Test Show"}
 
-	err := client.Download(req)
+	err := client.Download(context.Background(), req)
 
 	s.Error(err)
 }
@@ -109,7 +110,7 @@ func (s *TorrenterClientTestSuite) TestDownload_InvalidJSONEncoding() {
 		},
 	}
 
-	err := client.Download(req)
+	err := client.Download(context.Background(), req)
 	s.NoError(err)
 }
 
@@ -124,7 +125,7 @@ func (s *TorrenterClientTestSuite) TestMediaExists_Exists() {
 
 	client := NewTorrenterClient(server.URL[7:])
 
-	exists, err := client.MediaExists("abc123")
+	exists, err := client.MediaExists(context.Background(), "abc123")
 
 	s.NoError(err)
 	s.True(exists)
@@ -138,7 +139,7 @@ func (s *TorrenterClientTestSuite) TestMediaExists_NotFound() {
 
 	client := NewTorrenterClient(server.URL[7:])
 
-	exists, err := client.MediaExists("nonexistent")
+	exists, err := client.MediaExists(context.Background(), "nonexistent")
 
 	s.NoError(err)
 	s.False(exists)
@@ -152,7 +153,7 @@ func (s *TorrenterClientTestSuite) TestMediaExists_UnexpectedStatus() {
 
 	client := NewTorrenterClient(server.URL[7:])
 
-	exists, err := client.MediaExists("test123")
+	exists, err := client.MediaExists(context.Background(), "test123")
 
 	s.Error(err)
 	s.False(exists)
@@ -162,7 +163,7 @@ func (s *TorrenterClientTestSuite) TestMediaExists_UnexpectedStatus() {
 func (s *TorrenterClientTestSuite) TestMediaExists_NetworkError() {
 	client := NewTorrenterClient("invalid-host:9999")
 
-	exists, err := client.MediaExists("test123")
+	exists, err := client.MediaExists(context.Background(), "test123")
 
 	s.Error(err)
 	s.False(exists)
@@ -203,7 +204,7 @@ func (s *TorrenterClientTestSuite) TestMediaExistsBatch_Success() {
 		{Id: "2", Name: "Show 2"},
 	}
 
-	exists, inProgress, err := client.MediaExistsBatch(items)
+	exists, inProgress, err := client.MediaExistsBatch(context.Background(), items)
 
 	s.NoError(err)
 	s.NotNil(exists)
@@ -233,7 +234,7 @@ func (s *TorrenterClientTestSuite) TestMediaExistsBatch_EmptyMaps() {
 
 	items := []tvdb.Media{{Id: "1", Name: "Show 1"}}
 
-	exists, inProgress, err := client.MediaExistsBatch(items)
+	exists, inProgress, err := client.MediaExistsBatch(context.Background(), items)
 
 	s.NoError(err)
 	s.NotNil(exists)
@@ -252,7 +253,7 @@ func (s *TorrenterClientTestSuite) TestMediaExistsBatch_Non200Status() {
 
 	items := []tvdb.Media{{Id: "1", Name: "Show 1"}}
 
-	exists, inProgress, err := client.MediaExistsBatch(items)
+	exists, inProgress, err := client.MediaExistsBatch(context.Background(), items)
 
 	s.Error(err)
 	s.Nil(exists)
@@ -271,7 +272,7 @@ func (s *TorrenterClientTestSuite) TestMediaExistsBatch_InvalidJSON() {
 
 	items := []tvdb.Media{{Id: "1", Name: "Show 1"}}
 
-	exists, inProgress, err := client.MediaExistsBatch(items)
+	exists, inProgress, err := client.MediaExistsBatch(context.Background(), items)
 
 	s.Error(err)
 	s.Nil(exists)
@@ -283,7 +284,7 @@ func (s *TorrenterClientTestSuite) TestMediaExistsBatch_NetworkError() {
 
 	items := []tvdb.Media{{Id: "1", Name: "Show 1"}}
 
-	exists, inProgress, err := client.MediaExistsBatch(items)
+	exists, inProgress, err := client.MediaExistsBatch(context.Background(), items)
 
 	s.Error(err)
 	s.Nil(exists)
@@ -305,7 +306,7 @@ func (s *TorrenterClientTestSuite) TestMediaExistsBatch_EncodingError() {
 	// Create valid items that should encode properly
 	items := []tvdb.Media{{Id: "1", Name: "Show 1"}}
 
-	exists, inProgress, err := client.MediaExistsBatch(items)
+	exists, inProgress, err := client.MediaExistsBatch(context.Background(), items)
 
 	s.NoError(err)
 	s.NotNil(exists)

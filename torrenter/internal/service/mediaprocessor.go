@@ -2,7 +2,7 @@ package service
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"strconv"
 	"torrenter/internal/models"
 )
@@ -12,17 +12,17 @@ var (
 )
 
 type MediaProcessSvc struct {
-	Logger *log.Logger
+	Logger *slog.Logger
 	repo   Repository
 	fs     FileSystem
 }
 
-func NewMediaProcessSvc(logger *log.Logger, repo Repository, fs FileSystem) MediaProcessor {
+func NewMediaProcessSvc(logger *slog.Logger, repo Repository, fs FileSystem) MediaProcessor {
 	return &MediaProcessSvc{Logger: logger, repo: repo, fs: fs}
 }
 
 func (mp *MediaProcessSvc) ProcessDownloadedTorrent(media *models.TorrentCompleteEvent) error {
-	mp.Logger.Printf("Processing downloaded torrent for %s", media.Req.MediaName)
+	mp.Logger.Info("Processing downloaded torrent", "media", media.Req.MediaName)
 
 	// Create DownloadRequest from SearchStrategy
 	req := &models.DownloadRequest{
@@ -58,8 +58,8 @@ func (mp *MediaProcessSvc) ProcessDownloadedTorrent(media *models.TorrentComplet
 
 	// TODO: Add hard-linking target file
 
-	mp.Logger.Printf("Full save path: %s", fullSavePath)
-	mp.Logger.Printf("Torrent processing completed for %s", media.Req.MediaName)
+	mp.Logger.Info("Full save path", "path", fullSavePath)
+	mp.Logger.Info("Torrent processing completed", "media", media.Req.MediaName)
 
 	return nil
 }
