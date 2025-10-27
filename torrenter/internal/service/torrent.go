@@ -15,13 +15,17 @@ import (
 	"torrenter/internal/models"
 
 	"github.com/superturkey650/go-qbittorrent/qbt"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"golift.io/starr"
 	"golift.io/starr/prowlarr"
 )
 
 var (
-	baseSavePath = "/data/Downloads"
-	scoutTag     = "scout"
+	baseSavePath  = "/data/Downloads"
+	scoutTag      = "scout"
+	torrentTracer = otel.Tracer("torrenter/torrent")
 )
 
 type QbittHandler struct {
@@ -75,7 +79,56 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 
 	searchStrategies := [][]*models.SearchStrategy{}
 	if req.Category == "series" {
+		// Pre-download filtering: Check if episodes already exist in Plex
+		ctx, span := torrentTracer.Start(ctx, "filterExistingEpisodes")
+		span.SetAttributes(
+			attribute.String("show_name", req.Name),
+			attribute.String("tvdb_id", req.Id),
+			attribute.Int("total_episodes", len(req.Metadata.Episodes)),
+		)
+
+		episodesToDownload := []tvdb.Episode{}
 		for _, episode := range req.Metadata.Episodes {
+			// First try matching by TVDB ID (most reliable)
+			exists, err := q.repo.EpisodeExistsByTvdbId(ctx, req.Id, episode.SeasonNumber, episode.Number)
+			if err != nil {
+				q.logger.WarnContext(ctx, "Failed to check episode existence by TVDB ID, falling back to title match",
+					telemetry.WithTraceContext(ctx, "tvdb_id", req.Id, "season", episode.SeasonNumber, "episode", episode.Number, "error", err.Error())...)
+				// Fallback to name-based matching if TVDB ID check fails
+				exists, err = q.repo.EpisodeExists(ctx, req.Name, episode.SeasonNumber, episode.Number)
+				if err != nil {
+					q.logger.ErrorContext(ctx, "Failed to check episode existence by title",
+						telemetry.WithTraceContext(ctx, "show", req.Name, "season", episode.SeasonNumber, "episode", episode.Number, "error", err.Error())...)
+					// If both checks fail, assume episode doesn't exist (download it)
+					exists = false
+				}
+			}
+
+			if exists {
+				q.logger.InfoContext(ctx, "Episode already exists in Plex, skipping",
+					telemetry.WithTraceContext(ctx, "name", req.Name, "season", episode.SeasonNumber, "episode", episode.Number)...)
+				continue
+			}
+
+			episodesToDownload = append(episodesToDownload, episode)
+		}
+
+		episodesFiltered := len(req.Metadata.Episodes) - len(episodesToDownload)
+		span.SetAttributes(
+			attribute.Int("episodes_filtered", episodesFiltered),
+			attribute.Int("episodes_to_download", len(episodesToDownload)),
+		)
+		span.SetStatus(codes.Ok, "Episode filtering complete")
+		span.End()
+
+		if len(episodesToDownload) == 0 {
+			q.logger.InfoContext(ctx, "All episodes already exist in Plex, nothing to download", telemetry.WithTraceContext(ctx, "show", req.Name)...)
+			return nil
+		}
+
+		q.logger.InfoContext(ctx, "Episodes to download after filtering", telemetry.WithTraceContext(ctx, "show", req.Name, "total", len(req.Metadata.Episodes), "to_download", len(episodesToDownload))...)
+
+		for _, episode := range episodesToDownload {
 			q.logger.InfoContext(ctx, "Processing episode", telemetry.WithTraceContext(ctx, "name", req.Name, "season", episode.SeasonNumber, "episode", episode.Number)...)
 
 			searchStrategies = append(searchStrategies, q.createSearchStrategy(req, &episode))

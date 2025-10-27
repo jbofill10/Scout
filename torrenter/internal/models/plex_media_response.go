@@ -28,10 +28,11 @@ type PlexSeasonsResponse struct {
 }
 
 type PlexSeason struct {
-	SeasonKey string `xml:"ratingKey,attr"`
-	Key       string `xml:"key,attr"`
-	Title     string `xml:"title,attr"`
-	Index     int    `xml:"index,attr"`
+	SeasonKey string     `xml:"ratingKey,attr"`
+	Key       string     `xml:"key,attr"`
+	Title     string     `xml:"title,attr"`
+	Index     int        `xml:"index,attr"`
+	Guids     []PlexGuid `xml:"Guid"`
 }
 
 type PlexEpisodesResponse struct {
@@ -44,6 +45,7 @@ type PlexEpisode struct {
 	Key         string      `xml:"key,attr"`
 	Index       int         `xml:"index,attr"`
 	ParentIndex int         `xml:"parentIndex,attr"`
+	Guids       []PlexGuid  `xml:"Guid"`
 	Media       []MediaMeta `xml:"Media"`
 }
 
@@ -64,6 +66,7 @@ type PlexSeasonData struct {
 	Id           string
 	SeasonMeta   string
 	SeasonNumber int
+	TvdbId       string
 	Episodes     []PlexEpisodeData
 }
 
@@ -71,6 +74,7 @@ type PlexEpisodeData struct {
 	Id            string
 	EpisodeMeta   string
 	EpisodeNumber int
+	TvdbId        string
 	Media         []PlexMediaData
 }
 
@@ -87,6 +91,7 @@ type Movie struct {
 	Thumb     string      `xml:"thumb,attr" json:"thumb,omitempty"`
 	Art       string      `xml:"art,attr" json:"art,omitempty"`
 	Guids     []PlexGuid  `xml:"Guid"`
+	TvdbId    string      `json:"tvdbId,omitempty"`
 	MovieMeta []MediaMeta `xml:"Media" json:"media"`
 }
 

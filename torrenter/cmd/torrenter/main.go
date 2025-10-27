@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -86,7 +87,8 @@ func main() {
 	r.GET("/media/:hash", mediaHandler.MediaExists)
 
 	// Sync Plex library on startup
-	plex.SyncPlexLibrary()
+	logger.Info("Syncing Plex library on startup")
+	plex.SyncPlexLibrary(context.Background())
 
 	addr := os.Getenv("BIND_ADDRESS")
 	if addr == "" {

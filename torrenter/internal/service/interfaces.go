@@ -18,14 +18,14 @@ type MediaProcessor interface {
 
 // Repository defines database operations
 type Repository interface {
-	UpsertLibraries(libs models.PlexLibrariesResponse)
-	UpsertMovies(movies models.PlexMovieLibraryData)
-	UpsertShows(shows *models.PlexShowLibraryData)
+	UpsertLibraries(ctx context.Context, libs models.PlexLibrariesResponse)
+	UpsertMovies(ctx context.Context, movies models.PlexMovieLibraryData)
+	UpsertShows(ctx context.Context, shows *models.PlexShowLibraryData)
 	SetPreferredLibrary(id int, libType string) error
 	GetPreferredLibrary(libType string) (models.PlexLibrary, error)
-	GetLibraryByType(libType string) (int, error)
-	EpisodeExistsByTvdbId(tvdbId string, season, episode int) (bool, error)
-	EpisodeExists(showTitle string, season, episode int) (bool, error)
+	GetLibraryByType(ctx context.Context, libType string) (int, error)
+	EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season, episode int) (bool, error)
+	EpisodeExists(ctx context.Context, showTitle string, season, episode int) (bool, error)
 	MediaExists(id string) (bool, error)
 	InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason, traceID, spanID string) error
 	UpdateDownloadHistoryStatus(torrentHash, status, reason string) error
@@ -40,5 +40,5 @@ type FileSystem interface {
 
 // PlexService handles Plex library operations
 type PlexService interface {
-	SyncPlexLibrary()
+	SyncPlexLibrary(ctx context.Context)
 }

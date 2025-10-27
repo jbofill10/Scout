@@ -29,7 +29,7 @@ show_help() {
     echo "  webserver, tvdb-proxy, torrenter, ui, otel-collector, all"
     echo ""
     echo "Options:"
-    echo "  --skip-checks    Skip pre-flight validation checks"
+    echo "  --checks    Run pre-flight validation checks"
     echo "  --setup-mounts   Set up minikube mount processes in background"
     echo "  -h, --help       Show this help message"
     echo ""
@@ -61,8 +61,8 @@ while [[ $# -gt 0 ]]; do
             COMMAND="deploy"
             shift
             ;;
-        --skip-checks)
-            SKIP_CHECKS=true
+        --checks)
+            SKIP_CHECKS=false
             shift
             ;;
         --setup-mounts)

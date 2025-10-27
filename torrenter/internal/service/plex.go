@@ -1,12 +1,19 @@
 package service
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"torrenter/internal/models"
 )
@@ -15,129 +22,156 @@ var (
 	mediaSectionBase = "/library/sections"
 	libraryTypeMovie = "movie"
 	libraryTypeShow  = "show"
+	tracer           = otel.Tracer("torrenter/plex")
 )
 
 type PlexHandler struct {
-	cfg    *models.PlexCfg
-	repo   Repository
-	logger *slog.Logger
+	cfg        *models.PlexCfg
+	repo       Repository
+	logger     *slog.Logger
+	httpClient *http.Client
 }
 
 func NewPlexHandler(repo Repository, logger *slog.Logger, cfg *models.PlexCfg) *PlexHandler {
 	return &PlexHandler{
-		cfg:    cfg,
-		repo:   repo,
-		logger: logger,
+		cfg:        cfg,
+		repo:       repo,
+		logger:     logger,
+		httpClient: &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)},
 	}
 }
 
-func (p *PlexHandler) getLibraries() models.PlexLibrariesResponse {
+// extractTvdbId extracts TVDB ID from a slice of PlexGuid objects
+func extractTvdbId(guids []models.PlexGuid) string {
+	for _, guid := range guids {
+		if len(guid.ID) > 7 && guid.ID[:7] == "tvdb://" {
+			return guid.ID[7:] // Strip "tvdb://" prefix
+		}
+	}
+	return ""
+}
+
+func (p *PlexHandler) getLibraries(ctx context.Context) models.PlexLibrariesResponse {
+	ctx, span := tracer.Start(ctx, "getLibraries")
+	defer span.End()
+
 	url := p.cfg.Host + mediaSectionBase
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		p.logger.Error("Failed to create request for Plex libraries", "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to create request")
+		p.logger.ErrorContext(ctx, "Failed to create request for Plex libraries", "error", err)
 		os.Exit(1)
 	}
 	req.Header.Set("X-Plex-Token", p.cfg.Key)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		p.logger.Error("Failed to fetch Plex libraries", "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to fetch libraries")
+		p.logger.ErrorContext(ctx, "Failed to fetch Plex libraries", "error", err)
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		p.logger.Error("Failed to read Plex libraries response", "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to read response")
+		p.logger.ErrorContext(ctx, "Failed to read Plex libraries response", "error", err)
 		os.Exit(1)
 	}
 
 	var libraryRes models.PlexLibrariesResponse
 	err = xml.Unmarshal(bodyBytes, &libraryRes)
 	if err != nil {
-		p.logger.Error("Failed to unmarshal Plex libraries response", "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to unmarshal response")
+		p.logger.ErrorContext(ctx, "Failed to unmarshal Plex libraries response", "error", err)
 		os.Exit(1)
 	}
 
-	p.logger.Debug("Content", "data", libraryRes)
+	span.SetAttributes(attribute.Int("library.count", len(libraryRes.Directories)))
+	span.SetStatus(codes.Ok, "Libraries fetched successfully")
+	p.logger.DebugContext(ctx, "Fetched Plex libraries", "count", len(libraryRes.Directories))
 
 	return libraryRes
 }
 
-func (p *PlexHandler) SyncPlexLibrary() {
+func (p *PlexHandler) SyncPlexLibrary(ctx context.Context) {
+	ctx, span := tracer.Start(ctx, "SyncPlexLibrary",
+		trace.WithAttributes(
+			attribute.String("plex.host", p.cfg.Host),
+		),
+	)
+	defer span.End()
 
-	libraries := p.getLibraries()
-	p.repo.UpsertLibraries(libraries)
-	movies := p.getMovies()
-	p.repo.UpsertMovies(movies)
-	shows := p.getShows()
+	p.logger.InfoContext(ctx, "Starting Plex library sync")
+
+	libraries := p.getLibraries(ctx)
+	p.repo.UpsertLibraries(ctx, libraries)
+
+	movies := p.getMovies(ctx)
+	p.repo.UpsertMovies(ctx, movies)
+
+	shows := p.getShows(ctx)
 	if shows != nil {
-		p.repo.UpsertShows(shows)
+		p.repo.UpsertShows(ctx, shows)
 	}
 
-	p.logger.Info("Plex Library Sync Complete...")
+	span.SetStatus(codes.Ok, "Plex library sync completed successfully")
+	p.logger.InfoContext(ctx, "Plex Library Sync Complete")
 }
 
-// getTvdbIdForShow fetches detailed metadata for a show and extracts the TVDB ID from GUIDs
-func (p *PlexHandler) getTvdbIdForShow(ratingKey string) string {
-	url := fmt.Sprintf("%s/library/metadata/%s?includeGuids=1", p.cfg.Host, ratingKey)
+func (p *PlexHandler) getMovies(ctx context.Context) models.PlexMovieLibraryData {
+	ctx, span := tracer.Start(ctx, "getMovies")
+	defer span.End()
 
-	type MetadataContainer struct {
-		XMLName  string             `xml:"MediaContainer"`
-		Metadata []models.PlexShow  `xml:"Directory"`
-	}
-
-	var container MetadataContainer
-	err := p.fetchAndUnmarshal(url, &container)
-	if err != nil {
-		p.logger.Error("Error fetching metadata for show", "value", ratingKey, "error", err)
-		return ""
-	}
-
-	if len(container.Metadata) == 0 {
-		return ""
-	}
-
-	// Extract TVDB ID from Guids
-	for _, guid := range container.Metadata[0].Guids {
-		if len(guid.ID) > 7 && guid.ID[:7] == "tvdb://" {
-			return guid.ID[7:] // Strip "tvdb://" prefix
-		}
-	}
-
-	return ""
-}
-
-func (p *PlexHandler) getMovies() models.PlexMovieLibraryData {
-	p.logger.Info("Starting plex movie media sync...")
+	p.logger.InfoContext(ctx, "Starting plex movie media sync")
 	movies := models.PlexMovieLibraryData{}
 
-	section, err := p.repo.GetLibraryByType(libraryTypeMovie)
-
+	section, err := p.repo.GetLibraryByType(ctx, libraryTypeMovie)
 	if err != nil {
-		p.logger.Error("Error getting movie sections", "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to get movie section")
+		p.logger.ErrorContext(ctx, "Error getting movie sections", "error", err)
 		return movies
 	}
 
-	url := p.cfg.Host + mediaSectionBase + "/" + fmt.Sprint(section) + "/all"
-	err = p.fetchAndUnmarshal(url, &movies)
+	url := fmt.Sprintf("%s%s/%d/all?includeGuids=1", p.cfg.Host, mediaSectionBase, section)
+	span.SetAttributes(attribute.String("plex.url", url))
+
+	err = p.fetchAndUnmarshal(ctx, url, &movies)
 	if err != nil {
-		p.logger.Error("Error fetching movies", "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to fetch movies")
+		p.logger.ErrorContext(ctx, "Error fetching movies", "error", err)
 		return movies
 	}
+
+	// Extract TVDB IDs from movie Guids
+	_, extractSpan := tracer.Start(ctx, "extractMovieTvdbIds")
+	for i := range movies.Movies {
+		movies.Movies[i].TvdbId = extractTvdbId(movies.Movies[i].Guids)
+	}
+	extractSpan.SetAttributes(attribute.Int("movies_processed", len(movies.Movies)))
+	extractSpan.SetStatus(codes.Ok, "TVDB IDs extracted")
+	extractSpan.End()
+
+	span.SetAttributes(attribute.Int("movie.count", len(movies.Movies)))
+	span.SetStatus(codes.Ok, "Movies fetched successfully")
+	p.logger.InfoContext(ctx, "Fetched movies", "count", len(movies.Movies))
 
 	return movies
 }
 
-func (p *PlexHandler) fetchAndUnmarshal(url string, v interface{}) error {
-	req, err := http.NewRequest("GET", url, nil)
+func (p *PlexHandler) fetchAndUnmarshal(ctx context.Context, url string, v interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("X-Plex-Token", p.cfg.Key)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -152,18 +186,27 @@ func (p *PlexHandler) fetchAndUnmarshal(url string, v interface{}) error {
 	return xml.Unmarshal(body, v)
 }
 
-func (p *PlexHandler) getShows() *models.PlexShowLibraryData {
-	showSection, err := p.repo.GetLibraryByType(libraryTypeShow)
+func (p *PlexHandler) getShows(ctx context.Context) *models.PlexShowLibraryData {
+	ctx, span := tracer.Start(ctx, "getShows")
+	defer span.End()
+
+	showSection, err := p.repo.GetLibraryByType(ctx, libraryTypeShow)
 	if err != nil {
-		p.logger.Error("Error getting show section", "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to get show section")
+		p.logger.ErrorContext(ctx, "Error getting show section", "error", err)
 		return nil
 	}
 
-	url := fmt.Sprintf("%s/library/sections/%d/all", p.cfg.Host, showSection)
+	url := fmt.Sprintf("%s/library/sections/%d/all?includeGuids=1", p.cfg.Host, showSection)
+	span.SetAttributes(attribute.String("plex.url", url))
+
 	var showsResp models.PlexShowsResponse
-	err = p.fetchAndUnmarshal(url, &showsResp)
+	err = p.fetchAndUnmarshal(ctx, url, &showsResp)
 	if err != nil {
-		p.logger.Error("Error fetching shows", "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to fetch shows")
+		p.logger.ErrorContext(ctx, "Error fetching shows", "error", err)
 		return nil
 	}
 
@@ -171,9 +214,15 @@ func (p *PlexHandler) getShows() *models.PlexShowLibraryData {
 		Shows: make([]models.PlexShowData, 0, len(showsResp.Shows)),
 	}
 
+	_, processShowsSpan := tracer.Start(ctx, "processShows")
+	processShowsSpan.SetAttributes(attribute.Int("show_count", len(showsResp.Shows)))
+	defer processShowsSpan.End()
+
 	for _, show := range showsResp.Shows {
-		// Fetch detailed metadata with external IDs
-		tvdbId := p.getTvdbIdForShow(show.ShowKey)
+		showCtx, showSpan := tracer.Start(ctx, "processShow")
+		showSpan.SetAttributes(attribute.String("show_title", show.Title))
+		// Extract TVDB ID from show Guids
+		tvdbId := extractTvdbId(show.Guids)
 
 		showData := models.PlexShowData{
 			Id:       show.ShowKey,
@@ -184,37 +233,58 @@ func (p *PlexHandler) getShows() *models.PlexShowLibraryData {
 			Seasons:  make([]models.PlexSeasonData, 0),
 		}
 
-		// Get seasons for this show
-		url2 := p.cfg.Host + show.Key
+		// Get seasons for this show with includeGuids=1
+		seasonsURL := fmt.Sprintf("%s%s?includeGuids=1", p.cfg.Host, show.Key)
 		var seasonsResp models.PlexSeasonsResponse
-		err = p.fetchAndUnmarshal(url2, &seasonsResp)
+		err = p.fetchAndUnmarshal(showCtx, seasonsURL, &seasonsResp)
 		if err != nil {
-			p.logger.Error("Error fetching seasons for show", "field", show.Title, "error", err)
+			p.logger.ErrorContext(showCtx, "Error fetching seasons for show", "show", show.Title, "error", err)
+			showSpan.RecordError(err)
+			showSpan.SetStatus(codes.Error, "Failed to fetch seasons")
+			showSpan.End()
 			continue
 		}
 
+		seasonCount := 0
+		episodeCount := 0
 		for _, season := range seasonsResp.Seasons {
+			seasonCtx, seasonSpan := tracer.Start(showCtx, "processSeason")
+			seasonSpan.SetAttributes(attribute.Int("season_number", season.Index))
+
+			seasonCount++
+			// Extract TVDB ID for season
+			seasonTvdbId := extractTvdbId(season.Guids)
+
 			seasonData := models.PlexSeasonData{
 				Id:           season.SeasonKey,
 				SeasonMeta:   season.Key,
 				SeasonNumber: season.Index,
+				TvdbId:       seasonTvdbId,
 				Episodes:     make([]models.PlexEpisodeData, 0),
 			}
 
-			// Get episodes for this season
-			url3 := p.cfg.Host + season.Key
+			// Get episodes for this season with includeGuids=1
+			episodesURL := fmt.Sprintf("%s%s?includeGuids=1", p.cfg.Host, season.Key)
 			var episodesResp models.PlexEpisodesResponse
-			err = p.fetchAndUnmarshal(url3, &episodesResp)
+			err = p.fetchAndUnmarshal(seasonCtx, episodesURL, &episodesResp)
 			if err != nil {
-				p.logger.Error("Error fetching episodes for season", "field", season.Title, "error", err)
+				p.logger.ErrorContext(seasonCtx, "Error fetching episodes for season", "season", season.Title, "error", err)
+				seasonSpan.RecordError(err)
+				seasonSpan.SetStatus(codes.Error, "Failed to fetch episodes")
+				seasonSpan.End()
 				continue
 			}
 
 			for _, episode := range episodesResp.Videos {
+				episodeCount++
+				// Extract TVDB ID for episode
+				episodeTvdbId := extractTvdbId(episode.Guids)
+
 				episodeData := models.PlexEpisodeData{
 					Id:            episode.EpisodeKey,
 					EpisodeMeta:   episode.Key,
 					EpisodeNumber: episode.Index,
+					TvdbId:        episodeTvdbId,
 					Media:         []models.PlexMediaData{},
 				}
 				for _, media := range episode.Media {
@@ -229,10 +299,28 @@ func (p *PlexHandler) getShows() *models.PlexShowLibraryData {
 				}
 				seasonData.Episodes = append(seasonData.Episodes, episodeData)
 			}
+
+			seasonSpan.SetAttributes(attribute.Int("episode_count", len(seasonData.Episodes)))
+			seasonSpan.SetStatus(codes.Ok, "Season processed successfully")
+			seasonSpan.End()
+
 			showData.Seasons = append(showData.Seasons, seasonData)
 		}
+
+		showSpan.SetAttributes(
+			attribute.Int("season_count", seasonCount),
+			attribute.Int("episode_count", episodeCount))
+		showSpan.SetStatus(codes.Ok, "Show processed successfully")
+		showSpan.End()
+
 		libraryData.Shows = append(libraryData.Shows, showData)
 	}
+
+	processShowsSpan.SetStatus(codes.Ok, "All shows processed")
+
+	span.SetAttributes(attribute.Int("show.count", len(libraryData.Shows)))
+	span.SetStatus(codes.Ok, "Shows fetched successfully")
+	p.logger.InfoContext(ctx, "Fetched shows", "count", len(libraryData.Shows))
 
 	return libraryData
 }

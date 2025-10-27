@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS Libraries (
     id SERIAL PRIMARY KEY,
     type TEXT NOT NULL,
     path TEXT NOT NULL,
-    preferred INTEGER DEFAULT 0
+    preferred INTEGER DEFAULT 0,
+    section INTEGER NOT NULL
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_preferred_type
@@ -61,15 +62,21 @@ CREATE TABLE IF NOT EXISTS Seasons (
     id TEXT PRIMARY KEY,
     parentId TEXT REFERENCES Shows(id),
     season_meta TEXT,
-    season_number INTEGER
+    season_number INTEGER,
+    tvdb_id TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_seasons_tvdb_id ON Seasons(tvdb_id);
 
 CREATE TABLE IF NOT EXISTS Episodes (
     id TEXT PRIMARY KEY,
     parentId TEXT REFERENCES Seasons(id),
     episode_meta TEXT,
-    episode_number INTEGER
+    episode_number INTEGER,
+    tvdb_id TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_episodes_tvdb_id ON Episodes(tvdb_id);
 
 CREATE TABLE IF NOT EXISTS EpisodeMedia (
     id SERIAL PRIMARY KEY,
