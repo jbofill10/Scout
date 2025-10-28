@@ -31,7 +31,7 @@ func (h *MediaHandler) MediaExists(c *gin.Context) {
 		return
 	}
 
-	exists, err := h.interactor.CheckMediaExists(hash)
+	exists, err := h.interactor.CheckMediaExists(ctx, hash)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "Error checking media existence", "hash", hash, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

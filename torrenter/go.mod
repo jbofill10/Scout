@@ -8,12 +8,13 @@ replace shared/telemetry => ../shared/telemetry
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
+	github.com/XSAM/otelsql v0.29.0
 	github.com/gin-gonic/gin v1.10.1
 	github.com/lib/pq v1.10.9
 	github.com/stretchr/testify v1.11.1
 	github.com/superturkey650/go-qbittorrent v0.0.0-20250509144237-d119a59ccf27
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.47.0
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0
 	go.opentelemetry.io/otel v1.38.0
 	go.opentelemetry.io/otel/trace v1.38.0
 	golift.io/starr v1.2.1

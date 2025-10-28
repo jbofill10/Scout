@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -33,11 +32,15 @@ type PlexHandler struct {
 }
 
 func NewPlexHandler(repo Repository, logger *slog.Logger, cfg *models.PlexCfg) *PlexHandler {
+	// Use plain HTTP client without otelhttp to avoid redundant auto-instrumented spans
+	// We create manual spans with descriptive names in fetchAndUnmarshal() and getLibraries()
 	return &PlexHandler{
-		cfg:        cfg,
-		repo:       repo,
-		logger:     logger,
-		httpClient: &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)},
+		cfg:    cfg,
+		repo:   repo,
+		logger: logger,
+		httpClient: &http.Client{
+			Transport: http.DefaultTransport,
+		},
 	}
 }
 
@@ -63,10 +66,18 @@ func (p *PlexHandler) getLibraries(ctx context.Context) models.PlexLibrariesResp
 		p.logger.ErrorContext(ctx, "Failed to create request for Plex libraries", "error", err)
 		os.Exit(1)
 	}
+
+	// Create manual span for HTTP request with descriptive name
+	httpSpanName := fmt.Sprintf("Plex GET %s", req.URL.Path)
+	httpCtx, httpSpan := tracer.Start(ctx, httpSpanName)
+	defer httpSpan.End()
+
 	req.Header.Set("X-Plex-Token", p.cfg.Key)
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.httpClient.Do(req.WithContext(httpCtx))
 	if err != nil {
+		httpSpan.RecordError(err)
+		httpSpan.SetStatus(codes.Error, "HTTP request failed")
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to fetch libraries")
 		p.logger.ErrorContext(ctx, "Failed to fetch Plex libraries", "error", err)
@@ -76,11 +87,15 @@ func (p *PlexHandler) getLibraries(ctx context.Context) models.PlexLibrariesResp
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
+		httpSpan.RecordError(err)
+		httpSpan.SetStatus(codes.Error, "Failed to read response body")
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to read response")
 		p.logger.ErrorContext(ctx, "Failed to read Plex libraries response", "error", err)
 		os.Exit(1)
 	}
+
+	httpSpan.SetStatus(codes.Ok, "HTTP request successful")
 
 	var libraryRes models.PlexLibrariesResponse
 	err = xml.Unmarshal(bodyBytes, &libraryRes)
@@ -166,24 +181,49 @@ func (p *PlexHandler) getMovies(ctx context.Context) models.PlexMovieLibraryData
 }
 
 func (p *PlexHandler) fetchAndUnmarshal(ctx context.Context, url string, v interface{}) error {
+	// Create manual span with descriptive name based on URL path
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return err
 	}
+
+	// Extract path for span name
+	spanName := fmt.Sprintf("Plex GET %s", req.URL.Path)
+	ctx, span := tracer.Start(ctx, spanName)
+	defer span.End()
+
 	req.Header.Set("X-Plex-Token", p.cfg.Key)
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "HTTP request failed")
 		return err
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("non-200 response: %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
+		err := fmt.Errorf("non-200 response: %d", resp.StatusCode)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, fmt.Sprintf("HTTP %d", resp.StatusCode))
 		return err
 	}
-	return xml.Unmarshal(body, v)
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to read response body")
+		return err
+	}
+
+	err = xml.Unmarshal(body, v)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to unmarshal XML")
+		return err
+	}
+
+	span.SetStatus(codes.Ok, "Request successful")
+	return nil
 }
 
 func (p *PlexHandler) getShows(ctx context.Context) *models.PlexShowLibraryData {

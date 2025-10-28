@@ -5,12 +5,15 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"shared/telemetry"
 	"torrenter/internal/models"
 
+	"github.com/XSAM/otelsql"
 	_ "github.com/lib/pq"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
 var (
@@ -21,15 +24,15 @@ type Repository interface {
 	UpsertLibraries(ctx context.Context, libs models.PlexLibrariesResponse)
 	UpsertMovies(ctx context.Context, movies models.PlexMovieLibraryData)
 	UpsertShows(ctx context.Context, shows *models.PlexShowLibraryData)
-	SetPreferredLibrary(id int, libType string) error
-	GetPreferredLibrary(libType string) (models.PlexLibrary, error)
+	SetPreferredLibrary(ctx context.Context, id int, libType string) error
+	GetPreferredLibrary(ctx context.Context, libType string) (models.PlexLibrary, error)
 	GetLibraryByType(ctx context.Context, libType string) (int, error)
 	EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season, episode int) (bool, error)
 	EpisodeExists(ctx context.Context, showTitle string, season, episode int) (bool, error)
-	MediaExists(id string) (bool, error)
-	InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason, traceID, spanID string) error
-	UpdateDownloadHistoryStatus(torrentHash, status, reason string) error
-	GetPreferredUploaders(mediaType string, isAnime bool) ([]string, error)
+	MediaExists(ctx context.Context, id string) (bool, error)
+	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
+	UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error
+	GetPreferredUploaders(ctx context.Context, mediaType string, isAnime bool) ([]string, error)
 }
 
 type Repo struct {
@@ -38,10 +41,33 @@ type Repo struct {
 }
 
 func NewRepo(logger *slog.Logger, connStr string) (*Repo, error) {
-	db, err := sql.Open("postgres", connStr)
+	// Register wrapped driver with otelsql for automatic SQL tracing
+	driverName, err := otelsql.Register("postgres",
+		otelsql.WithAttributes(
+			semconv.DBSystemPostgreSQL,
+			attribute.String("peer.service", "postgres"),
+		),
+		otelsql.WithSpanOptions(otelsql.SpanOptions{
+			// Omit connection housekeeping spans (reduces noise from connection pool)
+			OmitConnResetSession: true,
+			OmitConnectorConnect: true,
+
+			// Omit prepared statement creation spans (keep execution spans)
+			OmitConnPrepare: true,
+
+			// Omit row iteration spans (keep the query span itself)
+			OmitRows: true,
+		}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to register otelsql driver: %w", err)
+	}
+
+	db, err := sql.Open(driverName, connStr)
 	if err != nil {
 		return nil, err
 	}
+
 	repo := &Repo{db: db, logger: logger}
 	return repo, nil
 }
@@ -68,40 +94,51 @@ func (r *Repo) UpsertLibraries(ctx context.Context, libs models.PlexLibrariesRes
 }
 
 // Unsets the preferred library for a given type then sets the preferred library by ID
-func (r *Repo) SetPreferredLibrary(id int, libType string) error {
-	tx, err := r.db.Begin()
+func (r *Repo) SetPreferredLibrary(ctx context.Context, id int, libType string) error {
+	ctx, span := repoTracer.Start(ctx, "repository.SetPreferredLibrary")
+	defer span.End()
+	span.SetAttributes(attribute.Int("library_id", id), attribute.String("library_type", libType))
+
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to begin transaction")
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
 	defer func() {
 		if err != nil {
 			if rbErr := tx.Rollback(); rbErr != nil {
-				r.logger.Error("Transaction rollback failed", "error", rbErr)
+				r.logger.ErrorContext(ctx, "Transaction rollback failed", "error", rbErr)
 			}
 		} else {
 			if cmErr := tx.Commit(); cmErr != nil {
-				r.logger.Error("Transaction commit failed", "error", cmErr)
+				r.logger.ErrorContext(ctx, "Transaction commit failed", "error", cmErr)
 			}
 		}
 	}()
 
-	_, err = tx.Exec(`UPDATE Libraries SET preferred = 0 WHERE type = $1 AND preferred = 1;`, libType)
+	_, err = tx.ExecContext(ctx, `UPDATE Libraries SET preferred = 0 WHERE type = $1 AND preferred = 1;`, libType)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to unset previous preferred")
 		return fmt.Errorf("failed to unset previous preferred: %w", err)
 	}
 
-	_, err = tx.Exec(`UPDATE Libraries SET preferred = 1 WHERE id = $1;`, id)
+	_, err = tx.ExecContext(ctx, `UPDATE Libraries SET preferred = 1 WHERE id = $1;`, id)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to set preferred library")
 		return fmt.Errorf("failed to set preferred library: %w", err)
 	}
 
+	span.SetStatus(codes.Ok, "Preferred library set successfully")
 	return nil
 }
 
-func (r *Repo) GetPreferredLibrary(libType string) (models.PlexLibrary, error) {
+func (r *Repo) GetPreferredLibrary(ctx context.Context, libType string) (models.PlexLibrary, error) {
 	var lib models.PlexLibrary
-	err := r.db.QueryRow(`SELECT * FROM Libraries WHERE type = $1 AND preferred = 1;`, libType).Scan(&lib.Id, &lib.Type, &lib.Path, &lib.Preferred)
+	err := r.db.QueryRowContext(ctx, `SELECT * FROM Libraries WHERE type = $1 AND preferred = 1;`, libType).Scan(&lib.Id, &lib.Type, &lib.Path, &lib.Preferred)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return models.PlexLibrary{}, fmt.Errorf("no preferred library found for type %s", libType)
@@ -111,9 +148,9 @@ func (r *Repo) GetPreferredLibrary(libType string) (models.PlexLibrary, error) {
 	return lib, nil
 }
 
-func (r *Repo) MediaExists(id string) (bool, error) {
+func (r *Repo) MediaExists(ctx context.Context, id string) (bool, error) {
 	var exists bool
-	err := r.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM Media WHERE id = $1);`, id).Scan(&exists)
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM Media WHERE id = $1);`, id).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("failed to check media existence: %w", err)
 	}
@@ -121,14 +158,6 @@ func (r *Repo) MediaExists(id string) (bool, error) {
 }
 
 func (r *Repo) EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season, episode int) (bool, error) {
-	ctx, span := repoTracer.Start(ctx, "repository.EpisodeExistsByTvdbId")
-	defer span.End()
-
-	span.SetAttributes(
-		attribute.String("tvdb_id", tvdbId),
-		attribute.Int("season", season),
-		attribute.Int("episode", episode))
-
 	var exists bool
 	query := `
 		SELECT EXISTS(
@@ -141,25 +170,13 @@ func (r *Repo) EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season,
 	`
 	err := r.db.QueryRowContext(ctx, query, tvdbId, season, episode).Scan(&exists)
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "Failed to check episode existence")
 		return false, fmt.Errorf("failed to check episode existence by tvdb id: %w", err)
 	}
 
-	span.SetAttributes(attribute.Bool("exists", exists))
-	span.SetStatus(codes.Ok, "Episode existence check complete")
 	return exists, nil
 }
 
 func (r *Repo) EpisodeExists(ctx context.Context, showTitle string, season, episode int) (bool, error) {
-	ctx, span := repoTracer.Start(ctx, "repository.EpisodeExists")
-	defer span.End()
-
-	span.SetAttributes(
-		attribute.String("show_title", showTitle),
-		attribute.Int("season", season),
-		attribute.Int("episode", episode))
-
 	var exists bool
 	query := `
 		SELECT EXISTS(
@@ -172,13 +189,9 @@ func (r *Repo) EpisodeExists(ctx context.Context, showTitle string, season, epis
 	`
 	err := r.db.QueryRowContext(ctx, query, showTitle, season, episode).Scan(&exists)
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "Failed to check episode existence")
 		return false, fmt.Errorf("failed to check episode existence by title: %w", err)
 	}
 
-	span.SetAttributes(attribute.Bool("exists", exists))
-	span.SetStatus(codes.Ok, "Episode existence check complete")
 	return exists, nil
 }
 
@@ -209,24 +222,15 @@ func (r *Repo) GetAllLibrarySections() []models.PlexLibrary {
 }
 
 func (r *Repo) GetLibraryByType(ctx context.Context, libType string) (int, error) {
-	ctx, span := repoTracer.Start(ctx, "repository.GetLibraryByType")
-	defer span.End()
-
-	span.SetAttributes(attribute.String("library_type", libType))
-
 	var section int
 	err := r.db.QueryRowContext(ctx, `SELECT section FROM Libraries WHERE type = $1 LIMIT 1;`, libType).Scan(&section)
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "Failed to get library by type")
 		if err == sql.ErrNoRows {
 			return 0, fmt.Errorf("no library found for type %s", libType)
 		}
 		return 0, fmt.Errorf("failed to query library by type: %w", err)
 	}
 
-	span.SetAttributes(attribute.Int("section", section))
-	span.SetStatus(codes.Ok, "Library found")
 	return section, nil
 }
 
@@ -354,8 +358,11 @@ func (r *Repo) UpsertShows(ctx context.Context, lib *models.PlexShowLibraryData)
 	span.SetStatus(codes.Ok, "Shows upserted successfully")
 }
 
-func (r *Repo) InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason, traceID, spanID string) error {
-	_, err := r.db.Exec(`
+func (r *Repo) InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error {
+	// Extract trace and span IDs from context
+	traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
+
+	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO DownloadHistory (mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason, trace_id, span_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`, mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason, traceID, spanID)
@@ -365,8 +372,8 @@ func (r *Repo) InsertDownloadHistory(mediaTitle string, season, episode, absolut
 	return nil
 }
 
-func (r *Repo) UpdateDownloadHistoryStatus(torrentHash, status, reason string) error {
-	_, err := r.db.Exec(`
+func (r *Repo) UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error {
+	_, err := r.db.ExecContext(ctx, `
 		UPDATE DownloadHistory SET status = $1, reason = $2 WHERE torrentHash = $3
 	`, status, reason, torrentHash)
 	if err != nil {
@@ -375,8 +382,8 @@ func (r *Repo) UpdateDownloadHistoryStatus(torrentHash, status, reason string) e
 	return nil
 }
 
-func (r *Repo) GetPreferredUploaders(mediaType string, isAnime bool) ([]string, error) {
-	rows, err := r.db.Query("SELECT uploaderName FROM UploaderPreferences WHERE mediaType = $1 AND isAnime = $2", mediaType, isAnime)
+func (r *Repo) GetPreferredUploaders(ctx context.Context, mediaType string, isAnime bool) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT uploaderName FROM UploaderPreferences WHERE mediaType = $1 AND isAnime = $2", mediaType, isAnime)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query uploader preferences: %w", err)
 	}
@@ -386,7 +393,7 @@ func (r *Repo) GetPreferredUploaders(mediaType string, isAnime bool) ([]string, 
 	for rows.Next() {
 		var uploader string
 		if err := rows.Scan(&uploader); err != nil {
-			r.logger.Error("Error scanning uploader", "error", err)
+			r.logger.ErrorContext(ctx, "Error scanning uploader", "error", err)
 			continue
 		}
 		preferred = append(preferred, uploader)

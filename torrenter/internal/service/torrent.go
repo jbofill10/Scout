@@ -158,8 +158,7 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 
 				if len(possibleTorrents) == 0 {
 					q.logger.InfoContext(ctx, "no matching torrents found", "query", ss.Query)
-					traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
-					err := q.repo.InsertDownloadHistory(req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, "", "failure", "no matching torrents found", traceID, spanID)
+					err := q.repo.InsertDownloadHistory(ctx, req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, "", "failure", "no matching torrents found")
 					if err != nil {
 						q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
 					}
@@ -169,20 +168,18 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 
 			}
 			q.sortTorrentsByQuality(bestMatches)
-			match := q.pickBestTorrent(bestMatches, req.Category, req.Anime)
+			match := q.pickBestTorrent(ctx, bestMatches, req.Category, req.Anime)
 			if match == nil {
 				q.logger.WarnContext(ctx, "No suitable torrent found", "show", req.Name)
 				ss := strategies[0]
-				traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
-				err := q.repo.InsertDownloadHistory(req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, "", "failure", "no suitable torrent found", traceID, spanID)
+				err := q.repo.InsertDownloadHistory(ctx, req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, "", "failure", "no suitable torrent found")
 				if err != nil {
 					q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
 				}
 				continue
 			}
 			ss := match.Strategy
-			traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
-			err := q.repo.InsertDownloadHistory(req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, match.Torrent.InfoHash, "downloading", "", traceID, spanID)
+			err := q.repo.InsertDownloadHistory(ctx, req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, match.Torrent.InfoHash, "downloading", "")
 			if err != nil {
 				q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
 			}
@@ -373,11 +370,11 @@ func (h *QbittHandler) sortTorrentsByQuality(matches []*models.TorrentMatch) {
 	})
 }
 
-func (q *QbittHandler) pickBestTorrent(matches []*models.TorrentMatch, mediaType string, isAnime bool) *models.TorrentMatch {
+func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.TorrentMatch, mediaType string, isAnime bool) *models.TorrentMatch {
 	// TODO: Discard torrents with low seeds, etc.
-	preferred, err := q.repo.GetPreferredUploaders(mediaType, isAnime)
+	preferred, err := q.repo.GetPreferredUploaders(ctx, mediaType, isAnime)
 	if err != nil {
-		q.logger.Error("Error querying uploader preferences", "error", err)
+		q.logger.ErrorContext(ctx, "Error querying uploader preferences", "error", err)
 		return matches[0]
 	}
 

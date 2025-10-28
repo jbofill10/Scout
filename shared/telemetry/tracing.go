@@ -11,24 +11,17 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // InitTracer initializes the OpenTelemetry tracer provider
 func InitTracer(serviceName, serviceVersion, otlpEndpoint string) (func(), error) {
 	ctx := context.Background()
 
-	// Create OTLP trace exporter
-	conn, err := grpc.Dial(
-		otlpEndpoint,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	// Create OTLP trace exporter with endpoint (host:port format)
+	exporter, err := otlptracegrpc.New(ctx,
+		otlptracegrpc.WithEndpoint(otlpEndpoint),
+		otlptracegrpc.WithInsecure(),
 	)
-	if err != nil {
-		return nil, err
-	}
-
-	exporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithGRPCConn(conn))
 	if err != nil {
 		return nil, err
 	}

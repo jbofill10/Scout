@@ -35,7 +35,7 @@ spec:
         - name: DB_NAME
           value: "scoutdb"
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: "otel-collector-service:4317"
+          value: "192.168.0.111:4317"
         - name: OTEL_SERVICE_NAME
           value: "webserver"
         resources:

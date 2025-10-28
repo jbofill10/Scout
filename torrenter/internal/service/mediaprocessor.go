@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -21,8 +22,8 @@ func NewMediaProcessSvc(logger *slog.Logger, repo Repository, fs FileSystem) Med
 	return &MediaProcessSvc{Logger: logger, repo: repo, fs: fs}
 }
 
-func (mp *MediaProcessSvc) ProcessDownloadedTorrent(media *models.TorrentCompleteEvent) error {
-	mp.Logger.Info("Processing downloaded torrent", "media", media.Req.MediaName)
+func (mp *MediaProcessSvc) ProcessDownloadedTorrent(ctx context.Context, media *models.TorrentCompleteEvent) error {
+	mp.Logger.InfoContext(ctx, "Processing downloaded torrent", "media", media.Req.MediaName)
 
 	// Create DownloadRequest from SearchStrategy
 	req := &models.DownloadRequest{
@@ -44,7 +45,7 @@ func (mp *MediaProcessSvc) ProcessDownloadedTorrent(media *models.TorrentComplet
 
 	// TODO: implement logic for movies
 	isShow := req.IsShow()
-	libraryPath, err := mp.getLibraryPath(isShow)
+	libraryPath, err := mp.getLibraryPath(ctx, isShow)
 	if err != nil {
 		return fmt.Errorf("failed to get library path: %v", err)
 	}
@@ -58,8 +59,8 @@ func (mp *MediaProcessSvc) ProcessDownloadedTorrent(media *models.TorrentComplet
 
 	// TODO: Add hard-linking target file
 
-	mp.Logger.Info("Full save path", "path", fullSavePath)
-	mp.Logger.Info("Torrent processing completed", "media", media.Req.MediaName)
+	mp.Logger.InfoContext(ctx, "Full save path", "path", fullSavePath)
+	mp.Logger.InfoContext(ctx, "Torrent processing completed", "media", media.Req.MediaName)
 
 	return nil
 }
@@ -92,7 +93,7 @@ func (mp *MediaProcessSvc) getFileExtension(fileName string) (string, error) {
 	return "", fmt.Errorf("no valid file extension found for %s", fileName)
 }
 
-func (mp *MediaProcessSvc) getLibraryPath(isShow bool) (models.PlexLibrary, error) {
+func (mp *MediaProcessSvc) getLibraryPath(ctx context.Context, isShow bool) (models.PlexLibrary, error) {
 	var mediaType string
 	if isShow {
 		mediaType = "show"
@@ -100,7 +101,7 @@ func (mp *MediaProcessSvc) getLibraryPath(isShow bool) (models.PlexLibrary, erro
 		mediaType = "movie"
 	}
 
-	lib, err := mp.repo.GetPreferredLibrary(mediaType)
+	lib, err := mp.repo.GetPreferredLibrary(ctx, mediaType)
 	if err != nil {
 		return models.PlexLibrary{}, fmt.Errorf("failed to get preferred library: %w", err)
 	}

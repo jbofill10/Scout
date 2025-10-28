@@ -13,7 +13,7 @@ type TorrentService interface {
 
 // MediaProcessor handles post-download processing
 type MediaProcessor interface {
-	ProcessDownloadedTorrent(media *models.TorrentCompleteEvent) error
+	ProcessDownloadedTorrent(ctx context.Context, media *models.TorrentCompleteEvent) error
 }
 
 // Repository defines database operations
@@ -21,15 +21,15 @@ type Repository interface {
 	UpsertLibraries(ctx context.Context, libs models.PlexLibrariesResponse)
 	UpsertMovies(ctx context.Context, movies models.PlexMovieLibraryData)
 	UpsertShows(ctx context.Context, shows *models.PlexShowLibraryData)
-	SetPreferredLibrary(id int, libType string) error
-	GetPreferredLibrary(libType string) (models.PlexLibrary, error)
+	SetPreferredLibrary(ctx context.Context, id int, libType string) error
+	GetPreferredLibrary(ctx context.Context, libType string) (models.PlexLibrary, error)
 	GetLibraryByType(ctx context.Context, libType string) (int, error)
 	EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season, episode int) (bool, error)
 	EpisodeExists(ctx context.Context, showTitle string, season, episode int) (bool, error)
-	MediaExists(id string) (bool, error)
-	InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason, traceID, spanID string) error
-	UpdateDownloadHistoryStatus(torrentHash, status, reason string) error
-	GetPreferredUploaders(mediaType string, isAnime bool) ([]string, error)
+	MediaExists(ctx context.Context, id string) (bool, error)
+	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
+	UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error
+	GetPreferredUploaders(ctx context.Context, mediaType string, isAnime bool) ([]string, error)
 }
 
 // FileSystem defines file system operations
