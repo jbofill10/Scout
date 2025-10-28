@@ -3,6 +3,7 @@
 package mocks
 
 import (
+	context "context"
 	models "torrenter/internal/models"
 
 	mock "github.com/stretchr/testify/mock"
@@ -13,17 +14,17 @@ type MediaProcessor struct {
 	mock.Mock
 }
 
-// ProcessDownloadedTorrent provides a mock function with given fields: media
-func (_m *MediaProcessor) ProcessDownloadedTorrent(media *models.TorrentCompleteEvent) error {
-	ret := _m.Called(media)
+// ProcessDownloadedTorrent provides a mock function with given fields: ctx, media
+func (_m *MediaProcessor) ProcessDownloadedTorrent(ctx context.Context, media *models.TorrentCompleteEvent) error {
+	ret := _m.Called(ctx, media)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ProcessDownloadedTorrent")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(*models.TorrentCompleteEvent) error); ok {
-		r0 = rf(media)
+	if rf, ok := ret.Get(0).(func(context.Context, *models.TorrentCompleteEvent) error); ok {
+		r0 = rf(ctx, media)
 	} else {
 		r0 = ret.Error(0)
 	}

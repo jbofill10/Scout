@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"torrenter/internal/repository/mocks"
 	servicemocks "torrenter/internal/service/mocks"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -92,16 +94,16 @@ func (ts *testSuite) TestGetFileExtension_Invalid() {
 
 func (ts *testSuite) TestGetLibraryPath_Show() {
 	expected := models.PlexLibrary{Path: "/shows"}
-	ts.repo.On("GetPreferredLibrary", "show").Return(expected, nil)
-	lib, err := ts.svc.getLibraryPath(true)
+	ts.repo.On("GetPreferredLibrary", mock.Anything, "show").Return(expected, nil)
+	lib, err := ts.svc.getLibraryPath(context.Background(), true)
 	ts.NoError(err)
 	ts.Equal(expected, lib)
 	ts.repo.AssertExpectations(ts.T())
 }
 
 func (ts *testSuite) TestGetLibraryPath_Movie_Error() {
-	ts.repo.On("GetPreferredLibrary", "movie").Return(models.PlexLibrary{}, errors.New("fail"))
-	lib, err := ts.svc.getLibraryPath(false)
+	ts.repo.On("GetPreferredLibrary", mock.Anything, "movie").Return(models.PlexLibrary{}, errors.New("fail"))
+	lib, err := ts.svc.getLibraryPath(context.Background(), false)
 	ts.Error(err)
 	ts.Equal(models.PlexLibrary{}, lib)
 	ts.repo.AssertExpectations(ts.T())
@@ -116,8 +118,8 @@ func (ts *testSuite) TestProcessDownloadedTorrent_Success() {
 			Episode:   2,
 		},
 	}
-	ts.repo.On("GetPreferredLibrary", "show").Return(models.PlexLibrary{Path: "/shows"}, nil)
-	err := ts.svc.ProcessDownloadedTorrent(event)
+	ts.repo.On("GetPreferredLibrary", mock.Anything, "show").Return(models.PlexLibrary{Path: "/shows"}, nil)
+	err := ts.svc.ProcessDownloadedTorrent(context.Background(), event)
 	ts.NoError(err)
 	ts.repo.AssertExpectations(ts.T())
 }
@@ -131,8 +133,8 @@ func (ts *testSuite) TestProcessDownloadedTorrent_FileExtError() {
 			Episode:   0,
 		},
 	}
-	ts.repo.On("GetPreferredLibrary", "movie").Return(models.PlexLibrary{Path: "/movies"}, nil)
-	err := ts.svc.ProcessDownloadedTorrent(event)
+	ts.repo.On("GetPreferredLibrary", mock.Anything, "movie").Return(models.PlexLibrary{Path: "/movies"}, nil)
+	err := ts.svc.ProcessDownloadedTorrent(context.Background(), event)
 	ts.Error(err)
 	ts.repo.AssertExpectations(ts.T())
 }

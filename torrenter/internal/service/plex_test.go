@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"torrenter/internal/models"
 	"torrenter/internal/repository/mocks"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -63,7 +65,7 @@ func (s *PlexHandlerTestSuite) TestGetLibraries_Success() {
 
 	s.handler.cfg.Host = server.URL
 
-	libs := s.handler.getLibraries()
+	libs := s.handler.getLibraries(context.Background())
 
 	s.Len(libs.Directories, 1)
 	s.Equal("show", libs.Directories[0].Type)
@@ -71,7 +73,7 @@ func (s *PlexHandlerTestSuite) TestGetLibraries_Success() {
 
 func (s *PlexHandlerTestSuite) TestGetMovies_Success() {
 	// Setup repo mock
-	s.repo.On("GetLibraryByType", "movie").Return(1, nil)
+	s.repo.On("GetLibraryByType", mock.Anything, "movie").Return(1, nil)
 
 	// Create mock Plex server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +96,7 @@ func (s *PlexHandlerTestSuite) TestGetMovies_Success() {
 
 	s.handler.cfg.Host = server.URL
 
-	movies := s.handler.getMovies()
+	movies := s.handler.getMovies(context.Background())
 
 	s.Len(movies.Movies, 1)
 	s.Equal("Test Movie", movies.Movies[0].Title)
@@ -102,9 +104,9 @@ func (s *PlexHandlerTestSuite) TestGetMovies_Success() {
 
 func (s *PlexHandlerTestSuite) TestGetMovies_NoLibrary() {
 	// Setup repo mock to return error
-	s.repo.On("GetLibraryByType", "movie").Return(0, http.ErrMissingFile)
+	s.repo.On("GetLibraryByType", mock.Anything, "movie").Return(0, http.ErrMissingFile)
 
-	movies := s.handler.getMovies()
+	movies := s.handler.getMovies(context.Background())
 
 	s.Empty(movies.Movies)
 }
@@ -127,7 +129,7 @@ func (s *PlexHandlerTestSuite) TestFetchAndUnmarshal_Success() {
 	s.handler.cfg.Host = server.URL
 
 	var result models.PlexLibrariesResponse
-	err := s.handler.fetchAndUnmarshal(server.URL+"/test", &result)
+	err := s.handler.fetchAndUnmarshal(context.Background(), server.URL+"/test", &result)
 
 	s.NoError(err)
 	s.Len(result.Directories, 1)
@@ -142,7 +144,7 @@ func (s *PlexHandlerTestSuite) TestFetchAndUnmarshal_HTTPError() {
 	s.handler.cfg.Host = server.URL
 
 	var result models.PlexLibrariesResponse
-	err := s.handler.fetchAndUnmarshal(server.URL+"/test", &result)
+	err := s.handler.fetchAndUnmarshal(context.Background(), server.URL+"/test", &result)
 
 	s.Error(err)
 	s.Contains(err.Error(), "non-200 response")
@@ -158,90 +160,9 @@ func (s *PlexHandlerTestSuite) TestFetchAndUnmarshal_InvalidXML() {
 	s.handler.cfg.Host = server.URL
 
 	var result models.PlexLibrariesResponse
-	err := s.handler.fetchAndUnmarshal(server.URL+"/test", &result)
+	err := s.handler.fetchAndUnmarshal(context.Background(), server.URL+"/test", &result)
 
 	s.Error(err)
-}
-
-func (s *PlexHandlerTestSuite) TestGetTvdbIdForShow_Success() {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.Equal("/library/metadata/123", r.URL.Path)
-
-		type MetadataContainer struct {
-			XMLName  string            `xml:"MediaContainer"`
-			Metadata []models.PlexShow `xml:"Directory"`
-		}
-
-		container := MetadataContainer{
-			Metadata: []models.PlexShow{
-				{
-					Guids: []models.PlexGuid{
-						{ID: "tvdb://456789"},
-					},
-				},
-			},
-		}
-
-		w.WriteHeader(http.StatusOK)
-		xml.NewEncoder(w).Encode(container)
-	}))
-	defer server.Close()
-
-	s.handler.cfg.Host = server.URL
-
-	tvdbId := s.handler.getTvdbIdForShow("123")
-
-	s.Equal("456789", tvdbId)
-}
-
-func (s *PlexHandlerTestSuite) TestGetTvdbIdForShow_NoGuids() {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		type MetadataContainer struct {
-			XMLName  string            `xml:"MediaContainer"`
-			Metadata []models.PlexShow `xml:"Directory"`
-		}
-
-		container := MetadataContainer{
-			Metadata: []models.PlexShow{
-				{
-					Guids: []models.PlexGuid{},
-				},
-			},
-		}
-
-		w.WriteHeader(http.StatusOK)
-		xml.NewEncoder(w).Encode(container)
-	}))
-	defer server.Close()
-
-	s.handler.cfg.Host = server.URL
-
-	tvdbId := s.handler.getTvdbIdForShow("123")
-
-	s.Equal("", tvdbId)
-}
-
-func (s *PlexHandlerTestSuite) TestGetTvdbIdForShow_NoMetadata() {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		type MetadataContainer struct {
-			XMLName  string            `xml:"MediaContainer"`
-			Metadata []models.PlexShow `xml:"Directory"`
-		}
-
-		container := MetadataContainer{
-			Metadata: []models.PlexShow{},
-		}
-
-		w.WriteHeader(http.StatusOK)
-		xml.NewEncoder(w).Encode(container)
-	}))
-	defer server.Close()
-
-	s.handler.cfg.Host = server.URL
-
-	tvdbId := s.handler.getTvdbIdForShow("123")
-
-	s.Equal("", tvdbId)
 }
 
 func (s *PlexHandlerTestSuite) TestNewPlexHandler() {
@@ -258,9 +179,9 @@ func (s *PlexHandlerTestSuite) TestSyncPlexLibrary_Integration() {
 	// and repository calls. For now, just verify the function exists and doesn't panic
 	// with proper mocking setup.
 
-	s.repo.On("UpsertLibraries", models.PlexLibrariesResponse{}).Maybe()
-	s.repo.On("UpsertMovies", models.PlexMovieLibraryData{}).Maybe()
-	s.repo.On("UpsertShows", &models.PlexShowLibraryData{}).Maybe()
+	s.repo.On("UpsertLibraries", mock.Anything, models.PlexLibrariesResponse{}).Maybe()
+	s.repo.On("UpsertMovies", mock.Anything, models.PlexMovieLibraryData{}).Maybe()
+	s.repo.On("UpsertShows", mock.Anything, &models.PlexShowLibraryData{}).Maybe()
 
 	// We can't easily test this without a full mock setup
 	// Just verify it exists

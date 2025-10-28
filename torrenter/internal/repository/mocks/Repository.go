@@ -3,6 +3,7 @@
 package mocks
 
 import (
+	context "context"
 	models "torrenter/internal/models"
 
 	mock "github.com/stretchr/testify/mock"
@@ -13,9 +14,9 @@ type Repository struct {
 	mock.Mock
 }
 
-// EpisodeExists provides a mock function with given fields: showTitle, season, episode
-func (_m *Repository) EpisodeExists(showTitle string, season int, episode int) (bool, error) {
-	ret := _m.Called(showTitle, season, episode)
+// EpisodeExists provides a mock function with given fields: ctx, showTitle, season, episode
+func (_m *Repository) EpisodeExists(ctx context.Context, showTitle string, season int, episode int) (bool, error) {
+	ret := _m.Called(ctx, showTitle, season, episode)
 
 	if len(ret) == 0 {
 		panic("no return value specified for EpisodeExists")
@@ -23,17 +24,17 @@ func (_m *Repository) EpisodeExists(showTitle string, season int, episode int) (
 
 	var r0 bool
 	var r1 error
-	if rf, ok := ret.Get(0).(func(string, int, int) (bool, error)); ok {
-		return rf(showTitle, season, episode)
+	if rf, ok := ret.Get(0).(func(context.Context, string, int, int) (bool, error)); ok {
+		return rf(ctx, showTitle, season, episode)
 	}
-	if rf, ok := ret.Get(0).(func(string, int, int) bool); ok {
-		r0 = rf(showTitle, season, episode)
+	if rf, ok := ret.Get(0).(func(context.Context, string, int, int) bool); ok {
+		r0 = rf(ctx, showTitle, season, episode)
 	} else {
 		r0 = ret.Get(0).(bool)
 	}
 
-	if rf, ok := ret.Get(1).(func(string, int, int) error); ok {
-		r1 = rf(showTitle, season, episode)
+	if rf, ok := ret.Get(1).(func(context.Context, string, int, int) error); ok {
+		r1 = rf(ctx, showTitle, season, episode)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -41,9 +42,9 @@ func (_m *Repository) EpisodeExists(showTitle string, season int, episode int) (
 	return r0, r1
 }
 
-// EpisodeExistsByTvdbId provides a mock function with given fields: tvdbId, season, episode
-func (_m *Repository) EpisodeExistsByTvdbId(tvdbId string, season int, episode int) (bool, error) {
-	ret := _m.Called(tvdbId, season, episode)
+// EpisodeExistsByTvdbId provides a mock function with given fields: ctx, tvdbId, season, episode
+func (_m *Repository) EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season int, episode int) (bool, error) {
+	ret := _m.Called(ctx, tvdbId, season, episode)
 
 	if len(ret) == 0 {
 		panic("no return value specified for EpisodeExistsByTvdbId")
@@ -51,17 +52,17 @@ func (_m *Repository) EpisodeExistsByTvdbId(tvdbId string, season int, episode i
 
 	var r0 bool
 	var r1 error
-	if rf, ok := ret.Get(0).(func(string, int, int) (bool, error)); ok {
-		return rf(tvdbId, season, episode)
+	if rf, ok := ret.Get(0).(func(context.Context, string, int, int) (bool, error)); ok {
+		return rf(ctx, tvdbId, season, episode)
 	}
-	if rf, ok := ret.Get(0).(func(string, int, int) bool); ok {
-		r0 = rf(tvdbId, season, episode)
+	if rf, ok := ret.Get(0).(func(context.Context, string, int, int) bool); ok {
+		r0 = rf(ctx, tvdbId, season, episode)
 	} else {
 		r0 = ret.Get(0).(bool)
 	}
 
-	if rf, ok := ret.Get(1).(func(string, int, int) error); ok {
-		r1 = rf(tvdbId, season, episode)
+	if rf, ok := ret.Get(1).(func(context.Context, string, int, int) error); ok {
+		r1 = rf(ctx, tvdbId, season, episode)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -69,9 +70,9 @@ func (_m *Repository) EpisodeExistsByTvdbId(tvdbId string, season int, episode i
 	return r0, r1
 }
 
-// GetLibraryByType provides a mock function with given fields: libType
-func (_m *Repository) GetLibraryByType(libType string) (int, error) {
-	ret := _m.Called(libType)
+// GetLibraryByType provides a mock function with given fields: ctx, libType
+func (_m *Repository) GetLibraryByType(ctx context.Context, libType string) (int, error) {
+	ret := _m.Called(ctx, libType)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetLibraryByType")
@@ -79,17 +80,17 @@ func (_m *Repository) GetLibraryByType(libType string) (int, error) {
 
 	var r0 int
 	var r1 error
-	if rf, ok := ret.Get(0).(func(string) (int, error)); ok {
-		return rf(libType)
+	if rf, ok := ret.Get(0).(func(context.Context, string) (int, error)); ok {
+		return rf(ctx, libType)
 	}
-	if rf, ok := ret.Get(0).(func(string) int); ok {
-		r0 = rf(libType)
+	if rf, ok := ret.Get(0).(func(context.Context, string) int); ok {
+		r0 = rf(ctx, libType)
 	} else {
 		r0 = ret.Get(0).(int)
 	}
 
-	if rf, ok := ret.Get(1).(func(string) error); ok {
-		r1 = rf(libType)
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, libType)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -97,9 +98,9 @@ func (_m *Repository) GetLibraryByType(libType string) (int, error) {
 	return r0, r1
 }
 
-// GetPreferredLibrary provides a mock function with given fields: libType
-func (_m *Repository) GetPreferredLibrary(libType string) (models.PlexLibrary, error) {
-	ret := _m.Called(libType)
+// GetPreferredLibrary provides a mock function with given fields: ctx, libType
+func (_m *Repository) GetPreferredLibrary(ctx context.Context, libType string) (models.PlexLibrary, error) {
+	ret := _m.Called(ctx, libType)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetPreferredLibrary")
@@ -107,17 +108,17 @@ func (_m *Repository) GetPreferredLibrary(libType string) (models.PlexLibrary, e
 
 	var r0 models.PlexLibrary
 	var r1 error
-	if rf, ok := ret.Get(0).(func(string) (models.PlexLibrary, error)); ok {
-		return rf(libType)
+	if rf, ok := ret.Get(0).(func(context.Context, string) (models.PlexLibrary, error)); ok {
+		return rf(ctx, libType)
 	}
-	if rf, ok := ret.Get(0).(func(string) models.PlexLibrary); ok {
-		r0 = rf(libType)
+	if rf, ok := ret.Get(0).(func(context.Context, string) models.PlexLibrary); ok {
+		r0 = rf(ctx, libType)
 	} else {
 		r0 = ret.Get(0).(models.PlexLibrary)
 	}
 
-	if rf, ok := ret.Get(1).(func(string) error); ok {
-		r1 = rf(libType)
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, libType)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -125,9 +126,9 @@ func (_m *Repository) GetPreferredLibrary(libType string) (models.PlexLibrary, e
 	return r0, r1
 }
 
-// GetPreferredUploaders provides a mock function with given fields: mediaType, isAnime
-func (_m *Repository) GetPreferredUploaders(mediaType string, isAnime bool) ([]string, error) {
-	ret := _m.Called(mediaType, isAnime)
+// GetPreferredUploaders provides a mock function with given fields: ctx, mediaType, isAnime
+func (_m *Repository) GetPreferredUploaders(ctx context.Context, mediaType string, isAnime bool) ([]string, error) {
+	ret := _m.Called(ctx, mediaType, isAnime)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetPreferredUploaders")
@@ -135,19 +136,19 @@ func (_m *Repository) GetPreferredUploaders(mediaType string, isAnime bool) ([]s
 
 	var r0 []string
 	var r1 error
-	if rf, ok := ret.Get(0).(func(string, bool) ([]string, error)); ok {
-		return rf(mediaType, isAnime)
+	if rf, ok := ret.Get(0).(func(context.Context, string, bool) ([]string, error)); ok {
+		return rf(ctx, mediaType, isAnime)
 	}
-	if rf, ok := ret.Get(0).(func(string, bool) []string); ok {
-		r0 = rf(mediaType, isAnime)
+	if rf, ok := ret.Get(0).(func(context.Context, string, bool) []string); ok {
+		r0 = rf(ctx, mediaType, isAnime)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]string)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(string, bool) error); ok {
-		r1 = rf(mediaType, isAnime)
+	if rf, ok := ret.Get(1).(func(context.Context, string, bool) error); ok {
+		r1 = rf(ctx, mediaType, isAnime)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -155,17 +156,17 @@ func (_m *Repository) GetPreferredUploaders(mediaType string, isAnime bool) ([]s
 	return r0, r1
 }
 
-// InsertDownloadHistory provides a mock function with given fields: mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason, traceID, spanID
-func (_m *Repository) InsertDownloadHistory(mediaTitle string, season int, episode int, absoluteEpisode int, torrentHash string, status string, reason string, traceID string, spanID string) error {
-	ret := _m.Called(mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason, traceID, spanID)
+// InsertDownloadHistory provides a mock function with given fields: ctx, mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason
+func (_m *Repository) InsertDownloadHistory(ctx context.Context, mediaTitle string, season int, episode int, absoluteEpisode int, torrentHash string, status string, reason string) error {
+	ret := _m.Called(ctx, mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason)
 
 	if len(ret) == 0 {
 		panic("no return value specified for InsertDownloadHistory")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string, int, int, int, string, string, string, string, string) error); ok {
-		r0 = rf(mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason, traceID, spanID)
+	if rf, ok := ret.Get(0).(func(context.Context, string, int, int, int, string, string, string) error); ok {
+		r0 = rf(ctx, mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -173,9 +174,9 @@ func (_m *Repository) InsertDownloadHistory(mediaTitle string, season int, episo
 	return r0
 }
 
-// MediaExists provides a mock function with given fields: id
-func (_m *Repository) MediaExists(id string) (bool, error) {
-	ret := _m.Called(id)
+// MediaExists provides a mock function with given fields: ctx, id
+func (_m *Repository) MediaExists(ctx context.Context, id string) (bool, error) {
+	ret := _m.Called(ctx, id)
 
 	if len(ret) == 0 {
 		panic("no return value specified for MediaExists")
@@ -183,17 +184,17 @@ func (_m *Repository) MediaExists(id string) (bool, error) {
 
 	var r0 bool
 	var r1 error
-	if rf, ok := ret.Get(0).(func(string) (bool, error)); ok {
-		return rf(id)
+	if rf, ok := ret.Get(0).(func(context.Context, string) (bool, error)); ok {
+		return rf(ctx, id)
 	}
-	if rf, ok := ret.Get(0).(func(string) bool); ok {
-		r0 = rf(id)
+	if rf, ok := ret.Get(0).(func(context.Context, string) bool); ok {
+		r0 = rf(ctx, id)
 	} else {
 		r0 = ret.Get(0).(bool)
 	}
 
-	if rf, ok := ret.Get(1).(func(string) error); ok {
-		r1 = rf(id)
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, id)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -201,17 +202,17 @@ func (_m *Repository) MediaExists(id string) (bool, error) {
 	return r0, r1
 }
 
-// SetPreferredLibrary provides a mock function with given fields: id, libType
-func (_m *Repository) SetPreferredLibrary(id int, libType string) error {
-	ret := _m.Called(id, libType)
+// SetPreferredLibrary provides a mock function with given fields: ctx, id, libType
+func (_m *Repository) SetPreferredLibrary(ctx context.Context, id int, libType string) error {
+	ret := _m.Called(ctx, id, libType)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SetPreferredLibrary")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(int, string) error); ok {
-		r0 = rf(id, libType)
+	if rf, ok := ret.Get(0).(func(context.Context, int, string) error); ok {
+		r0 = rf(ctx, id, libType)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -219,17 +220,17 @@ func (_m *Repository) SetPreferredLibrary(id int, libType string) error {
 	return r0
 }
 
-// UpdateDownloadHistoryStatus provides a mock function with given fields: torrentHash, status, reason
-func (_m *Repository) UpdateDownloadHistoryStatus(torrentHash string, status string, reason string) error {
-	ret := _m.Called(torrentHash, status, reason)
+// UpdateDownloadHistoryStatus provides a mock function with given fields: ctx, torrentHash, status, reason
+func (_m *Repository) UpdateDownloadHistoryStatus(ctx context.Context, torrentHash string, status string, reason string) error {
+	ret := _m.Called(ctx, torrentHash, status, reason)
 
 	if len(ret) == 0 {
 		panic("no return value specified for UpdateDownloadHistoryStatus")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string, string, string) error); ok {
-		r0 = rf(torrentHash, status, reason)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string) error); ok {
+		r0 = rf(ctx, torrentHash, status, reason)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -237,19 +238,19 @@ func (_m *Repository) UpdateDownloadHistoryStatus(torrentHash string, status str
 	return r0
 }
 
-// UpsertLibraries provides a mock function with given fields: libs
-func (_m *Repository) UpsertLibraries(libs models.PlexLibrariesResponse) {
-	_m.Called(libs)
+// UpsertLibraries provides a mock function with given fields: ctx, libs
+func (_m *Repository) UpsertLibraries(ctx context.Context, libs models.PlexLibrariesResponse) {
+	_m.Called(ctx, libs)
 }
 
-// UpsertMovies provides a mock function with given fields: movies
-func (_m *Repository) UpsertMovies(movies models.PlexMovieLibraryData) {
-	_m.Called(movies)
+// UpsertMovies provides a mock function with given fields: ctx, movies
+func (_m *Repository) UpsertMovies(ctx context.Context, movies models.PlexMovieLibraryData) {
+	_m.Called(ctx, movies)
 }
 
-// UpsertShows provides a mock function with given fields: shows
-func (_m *Repository) UpsertShows(shows *models.PlexShowLibraryData) {
-	_m.Called(shows)
+// UpsertShows provides a mock function with given fields: ctx, shows
+func (_m *Repository) UpsertShows(ctx context.Context, shows *models.PlexShowLibraryData) {
+	_m.Called(ctx, shows)
 }
 
 // NewRepository creates a new instance of Repository. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.

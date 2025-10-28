@@ -2,6 +2,7 @@ package repository
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"log/slog"
 	"testing"
@@ -61,7 +62,7 @@ func (s *RepoTestSuite) TestUpsertLibraries_Success() {
 		WithArgs(1, "show", "/data/shows", "1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	s.repo.UpsertLibraries(libs)
+	s.repo.UpsertLibraries(context.Background(), libs)
 
 	s.NoError(s.mock.ExpectationsWereMet())
 }
@@ -88,7 +89,7 @@ func (s *RepoTestSuite) TestUpsertLibraries_MultipleLocations() {
 		WithArgs(2, "show", "/data/shows2", "1").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 
-	s.repo.UpsertLibraries(libs)
+	s.repo.UpsertLibraries(context.Background(), libs)
 
 	s.NoError(s.mock.ExpectationsWereMet())
 }
@@ -103,7 +104,7 @@ func (s *RepoTestSuite) TestSetPreferredLibrary_Success() {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	s.mock.ExpectCommit()
 
-	err := s.repo.SetPreferredLibrary(1, "show")
+	err := s.repo.SetPreferredLibrary(context.Background(), 1, "show")
 
 	s.NoError(err)
 	s.NoError(s.mock.ExpectationsWereMet())
@@ -112,7 +113,7 @@ func (s *RepoTestSuite) TestSetPreferredLibrary_Success() {
 func (s *RepoTestSuite) TestSetPreferredLibrary_TransactionError() {
 	s.mock.ExpectBegin().WillReturnError(sql.ErrConnDone)
 
-	err := s.repo.SetPreferredLibrary(1, "show")
+	err := s.repo.SetPreferredLibrary(context.Background(), 1, "show")
 
 	s.Error(err)
 	s.NoError(s.mock.ExpectationsWereMet())
@@ -125,7 +126,7 @@ func (s *RepoTestSuite) TestSetPreferredLibrary_UnsetError() {
 		WillReturnError(sql.ErrConnDone)
 	s.mock.ExpectRollback()
 
-	err := s.repo.SetPreferredLibrary(1, "show")
+	err := s.repo.SetPreferredLibrary(context.Background(), 1, "show")
 
 	s.Error(err)
 	s.NoError(s.mock.ExpectationsWereMet())
@@ -139,7 +140,7 @@ func (s *RepoTestSuite) TestGetPreferredLibrary_Success() {
 		WithArgs("show").
 		WillReturnRows(rows)
 
-	lib, err := s.repo.GetPreferredLibrary("show")
+	lib, err := s.repo.GetPreferredLibrary(context.Background(), "show")
 
 	s.NoError(err)
 	s.Equal("/data/shows", lib.Path)
@@ -152,7 +153,7 @@ func (s *RepoTestSuite) TestGetPreferredLibrary_NotFound() {
 		WithArgs("show").
 		WillReturnError(sql.ErrNoRows)
 
-	lib, err := s.repo.GetPreferredLibrary("show")
+	lib, err := s.repo.GetPreferredLibrary(context.Background(), "show")
 
 	s.Error(err)
 	s.Contains(err.Error(), "no preferred library found")
@@ -167,7 +168,7 @@ func (s *RepoTestSuite) TestMediaExists_True() {
 		WithArgs("abc123").
 		WillReturnRows(rows)
 
-	exists, err := s.repo.MediaExists("abc123")
+	exists, err := s.repo.MediaExists(context.Background(), "abc123")
 
 	s.NoError(err)
 	s.True(exists)
@@ -181,7 +182,7 @@ func (s *RepoTestSuite) TestMediaExists_False() {
 		WithArgs("nonexistent").
 		WillReturnRows(rows)
 
-	exists, err := s.repo.MediaExists("nonexistent")
+	exists, err := s.repo.MediaExists(context.Background(), "nonexistent")
 
 	s.NoError(err)
 	s.False(exists)
@@ -195,7 +196,7 @@ func (s *RepoTestSuite) TestEpisodeExistsByTvdbId_True() {
 		WithArgs("123", 1, 2).
 		WillReturnRows(rows)
 
-	exists, err := s.repo.EpisodeExistsByTvdbId("123", 1, 2)
+	exists, err := s.repo.EpisodeExistsByTvdbId(context.Background(), "123", 1, 2)
 
 	s.NoError(err)
 	s.True(exists)
@@ -209,7 +210,7 @@ func (s *RepoTestSuite) TestEpisodeExistsByTvdbId_False() {
 		WithArgs("123", 1, 2).
 		WillReturnRows(rows)
 
-	exists, err := s.repo.EpisodeExistsByTvdbId("123", 1, 2)
+	exists, err := s.repo.EpisodeExistsByTvdbId(context.Background(), "123", 1, 2)
 
 	s.NoError(err)
 	s.False(exists)
@@ -221,7 +222,7 @@ func (s *RepoTestSuite) TestEpisodeExistsByTvdbId_Error() {
 		WithArgs("123", 1, 2).
 		WillReturnError(sql.ErrConnDone)
 
-	exists, err := s.repo.EpisodeExistsByTvdbId("123", 1, 2)
+	exists, err := s.repo.EpisodeExistsByTvdbId(context.Background(), "123", 1, 2)
 
 	s.Error(err)
 	s.False(exists)
@@ -235,7 +236,7 @@ func (s *RepoTestSuite) TestEpisodeExists_True() {
 		WithArgs("Test Show", 1, 2).
 		WillReturnRows(rows)
 
-	exists, err := s.repo.EpisodeExists("Test Show", 1, 2)
+	exists, err := s.repo.EpisodeExists(context.Background(), "Test Show", 1, 2)
 
 	s.NoError(err)
 	s.True(exists)
@@ -249,7 +250,7 @@ func (s *RepoTestSuite) TestEpisodeExists_False() {
 		WithArgs("Test Show", 1, 2).
 		WillReturnRows(rows)
 
-	exists, err := s.repo.EpisodeExists("Test Show", 1, 2)
+	exists, err := s.repo.EpisodeExists(context.Background(), "Test Show", 1, 2)
 
 	s.NoError(err)
 	s.False(exists)
@@ -261,7 +262,7 @@ func (s *RepoTestSuite) TestEpisodeExists_Error() {
 		WithArgs("Test Show", 1, 2).
 		WillReturnError(sql.ErrConnDone)
 
-	exists, err := s.repo.EpisodeExists("Test Show", 1, 2)
+	exists, err := s.repo.EpisodeExists(context.Background(), "Test Show", 1, 2)
 
 	s.Error(err)
 	s.False(exists)
@@ -303,7 +304,7 @@ func (s *RepoTestSuite) TestGetLibraryByType_Success() {
 		WithArgs("show").
 		WillReturnRows(rows)
 
-	section, err := s.repo.GetLibraryByType("show")
+	section, err := s.repo.GetLibraryByType(context.Background(), "show")
 
 	s.NoError(err)
 	s.Equal(1, section)
@@ -315,7 +316,7 @@ func (s *RepoTestSuite) TestGetLibraryByType_NotFound() {
 		WithArgs("unknown").
 		WillReturnError(sql.ErrNoRows)
 
-	section, err := s.repo.GetLibraryByType("unknown")
+	section, err := s.repo.GetLibraryByType(context.Background(), "unknown")
 
 	s.Error(err)
 	s.Equal(0, section)
@@ -326,11 +327,12 @@ func (s *RepoTestSuite) TestUpsertMovies_Success() {
 	movies := models.PlexMovieLibraryData{
 		Movies: []models.Movie{
 			{
-				Id:    "1",
-				Title: "Test Movie",
-				Year:  2023,
-				Thumb: "/thumb.jpg",
-				Art:   "/art.jpg",
+				Id:     "1",
+				Title:  "Test Movie",
+				Year:   2023,
+				Thumb:  "/thumb.jpg",
+				Art:    "/art.jpg",
+				TvdbId: "123456",
 				MovieMeta: []models.MediaMeta{
 					{
 						VideoResolution: "1080p",
@@ -344,14 +346,14 @@ func (s *RepoTestSuite) TestUpsertMovies_Success() {
 	}
 
 	s.mock.ExpectExec(`INSERT INTO Movies`).
-		WithArgs("1", "Test Movie", 2023, "/thumb.jpg", "/art.jpg").
+		WithArgs("1", "Test Movie", 2023, "/thumb.jpg", "/art.jpg", "123456").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	s.mock.ExpectExec(`INSERT INTO MovieMedia`).
 		WithArgs("1", "1080p", "/data/movies/test.mkv").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	s.repo.UpsertMovies(movies)
+	s.repo.UpsertMovies(context.Background(), movies)
 
 	s.NoError(s.mock.ExpectationsWereMet())
 }
@@ -370,11 +372,13 @@ func (s *RepoTestSuite) TestUpsertShows_Success() {
 						Id:           "s1",
 						SeasonMeta:   "/shows/1/season/1",
 						SeasonNumber: 1,
+						TvdbId:       "season123",
 						Episodes: []models.PlexEpisodeData{
 							{
 								Id:            "e1",
 								EpisodeMeta:   "/shows/1/season/1/episode/1",
 								EpisodeNumber: 1,
+								TvdbId:        "ep123",
 								Media: []models.PlexMediaData{
 									{
 										Id:              "1",
@@ -397,12 +401,12 @@ func (s *RepoTestSuite) TestUpsertShows_Success() {
 
 	// Expect season insert
 	s.mock.ExpectExec(`INSERT INTO Seasons`).
-		WithArgs("s1", "1", "/shows/1/season/1", 1).
+		WithArgs("s1", "1", "/shows/1/season/1", 1, "season123").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Expect episode insert
 	s.mock.ExpectExec(`INSERT INTO Episodes`).
-		WithArgs("e1", "s1", "/shows/1/season/1/episode/1", 1).
+		WithArgs("e1", "s1", "/shows/1/season/1/episode/1", 1, "ep123").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Expect episode media insert
@@ -410,7 +414,7 @@ func (s *RepoTestSuite) TestUpsertShows_Success() {
 		WithArgs("1", "e1", "1080p", "/data/shows/test.mkv").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	s.repo.UpsertShows(lib)
+	s.repo.UpsertShows(context.Background(), lib)
 
 	s.NoError(s.mock.ExpectationsWereMet())
 }
@@ -454,7 +458,7 @@ func (s *RepoTestSuite) TestUpsertShows_MultipleEpisodes() {
 	s.mock.ExpectExec(`INSERT INTO Episodes`).WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mock.ExpectExec(`INSERT INTO Episodes`).WillReturnResult(sqlmock.NewResult(1, 1))
 
-	s.repo.UpsertShows(lib)
+	s.repo.UpsertShows(context.Background(), lib)
 
 	s.NoError(s.mock.ExpectationsWereMet())
 }

@@ -13,6 +13,7 @@ import (
 	servicemocks "torrenter/internal/service/mocks"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -59,7 +60,7 @@ func (s *TorrenterInteractorTestSuite) TestDownloadTorrent_InvalidJSON() {
 }
 
 func (s *TorrenterInteractorTestSuite) TestMediaExists_Exists() {
-	s.repo.On("MediaExists", "abc123").Return(true, nil)
+	s.repo.On("MediaExists", mock.Anything, "abc123").Return(true, nil)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -72,7 +73,7 @@ func (s *TorrenterInteractorTestSuite) TestMediaExists_Exists() {
 }
 
 func (s *TorrenterInteractorTestSuite) TestMediaExists_NotFound() {
-	s.repo.On("MediaExists", "nonexistent").Return(false, nil)
+	s.repo.On("MediaExists", mock.Anything, "nonexistent").Return(false, nil)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -85,7 +86,7 @@ func (s *TorrenterInteractorTestSuite) TestMediaExists_NotFound() {
 }
 
 func (s *TorrenterInteractorTestSuite) TestMediaExists_Error() {
-	s.repo.On("MediaExists", "error123").Return(false, errors.New("db error"))
+	s.repo.On("MediaExists", mock.Anything, "error123").Return(false, errors.New("db error"))
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
