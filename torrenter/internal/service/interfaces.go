@@ -25,7 +25,6 @@ type Repository interface {
 	GetPreferredLibrary(ctx context.Context, libType string) (models.PlexLibrary, error)
 	GetLibraryByType(ctx context.Context, libType string) (int, error)
 	EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season, episode int) (bool, error)
-	EpisodeExists(ctx context.Context, showTitle string, season, episode int) (bool, error)
 	MediaExists(ctx context.Context, id string) (bool, error)
 	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
 	UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error
@@ -36,6 +35,7 @@ type Repository interface {
 type FileSystem interface {
 	HardLink(sourcePath, destPath string) error
 	MkDir(path string) error
+	ReadDir(path string) ([]string, error)
 }
 
 // PlexService handles Plex library operations

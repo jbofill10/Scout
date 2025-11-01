@@ -30,3 +30,19 @@ func (fs *FsSvc) MkDir(path string) error {
 	}
 	return err
 }
+
+func (fs *FsSvc) ReadDir(path string) ([]string, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		fs.Logger.Error("Failed to read directory", "path", path, "error", err)
+		return nil, err
+	}
+
+	var filenames []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			filenames = append(filenames, entry.Name())
+		}
+	}
+	return filenames, nil
+}

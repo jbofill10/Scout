@@ -229,46 +229,6 @@ func (s *RepoTestSuite) TestEpisodeExistsByTvdbId_Error() {
 	s.NoError(s.mock.ExpectationsWereMet())
 }
 
-func (s *RepoTestSuite) TestEpisodeExists_True() {
-	rows := sqlmock.NewRows([]string{"exists"}).AddRow(true)
-
-	s.mock.ExpectQuery(`SELECT EXISTS`).
-		WithArgs("Test Show", 1, 2).
-		WillReturnRows(rows)
-
-	exists, err := s.repo.EpisodeExists(context.Background(), "Test Show", 1, 2)
-
-	s.NoError(err)
-	s.True(exists)
-	s.NoError(s.mock.ExpectationsWereMet())
-}
-
-func (s *RepoTestSuite) TestEpisodeExists_False() {
-	rows := sqlmock.NewRows([]string{"exists"}).AddRow(false)
-
-	s.mock.ExpectQuery(`SELECT EXISTS`).
-		WithArgs("Test Show", 1, 2).
-		WillReturnRows(rows)
-
-	exists, err := s.repo.EpisodeExists(context.Background(), "Test Show", 1, 2)
-
-	s.NoError(err)
-	s.False(exists)
-	s.NoError(s.mock.ExpectationsWereMet())
-}
-
-func (s *RepoTestSuite) TestEpisodeExists_Error() {
-	s.mock.ExpectQuery(`SELECT EXISTS`).
-		WithArgs("Test Show", 1, 2).
-		WillReturnError(sql.ErrConnDone)
-
-	exists, err := s.repo.EpisodeExists(context.Background(), "Test Show", 1, 2)
-
-	s.Error(err)
-	s.False(exists)
-	s.NoError(s.mock.ExpectationsWereMet())
-}
-
 func (s *RepoTestSuite) TestGetAllLibrarySections_Success() {
 	rows := sqlmock.NewRows([]string{"id", "section", "type", "path", "preferred"}).
 		AddRow(1, 1, "show", "/data/shows", 1).

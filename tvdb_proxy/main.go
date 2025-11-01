@@ -184,7 +184,8 @@ func loadConfig() error {
 	conf, err := toml.LoadFile("api.toml")
 	if err == nil {
 		if err := conf.Unmarshal(&tvDbConfig); err != nil {
-			logger.Error("Error unmarshalling config", "error", err); os.Exit(1)
+			logger.Error("Error unmarshalling config", "error", err)
+			os.Exit(1)
 		}
 	}
 
@@ -281,6 +282,60 @@ func querySeriesMetadata(ctx context.Context, seriesId string) (tvdb.TVDBSeriesR
 
 }
 
+// fetchTranslations fetches translation data for a given media ID and language code
+// Returns a slice of aliases from the translation endpoint, or an empty slice on error
+func fetchTranslations(ctx context.Context, mediaId string, language string) []tvdb.Alias {
+	translationURL := tvDbConfig.Host + fmt.Sprintf("/series/%s/translations/%s", mediaId, language)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", translationURL, nil)
+	if err != nil {
+		logger.ErrorContext(ctx, "Failed to create translations request", "media_id", mediaId, "language", language, "error", err)
+		return []tvdb.Alias{}
+	}
+
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", tvDbConfig.Token))
+
+	client := &http.Client{
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.ErrorContext(ctx, "Failed to fetch translations", "media_id", mediaId, "language", language, "error", err)
+		return []tvdb.Alias{}
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			logger.ErrorContext(ctx, "warning: failed to close translations response body", "error", cerr)
+		}
+	}()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.ErrorContext(ctx, "Failed to read translations response body", "media_id", mediaId, "language", language, "error", err)
+		return []tvdb.Alias{}
+	}
+
+	var translationInfo tvdb.TVDBTranslationResponse
+	if err := json.Unmarshal(bodyBytes, &translationInfo); err != nil {
+		logger.ErrorContext(ctx, "Failed to decode translations response", "media_id", mediaId, "language", language, "error", err)
+		return []tvdb.Alias{}
+	}
+
+	// If we got a valid translation name, return it as an alias
+	logger.InfoContext(ctx, "Fetched translation", "media_id", mediaId, "language", language, "name", translationInfo.Data.Name, "body", translationInfo)
+	var aliases []tvdb.Alias
+	for _, alias := range translationInfo.Data.Aliases {
+		aliases = append(aliases, tvdb.Alias{
+			Language: language,
+			Name:     alias,
+		})
+	}
+	return aliases
+
+}
+
 func getExtendedInformation(c *gin.Context) {
 	mediaId := c.Param("id")
 	fmt.Printf("Fetching extended information for media ID: %s\n", mediaId)
@@ -333,6 +388,40 @@ func getExtendedInformation(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Internal Server Error: Unable to decode extended information for media ID %s", mediaId)})
 		return
 	}
+
+	// Determine if the show is anime by checking genres
+	isAnime := false
+	for _, genre := range info.Data.Genres {
+		if genre.Name == "Anime" {
+			isAnime = true
+			break
+		}
+	}
+
+	// Always fetch English translations
+	logger.InfoContext(ctx, "Fetching English translations", "media_id", mediaId)
+	engAliases := fetchTranslations(ctx, mediaId, "eng")
+	info.Data.Aliases = append(info.Data.Aliases, engAliases...)
+
+	// If anime, also fetch Japanese translations
+	if isAnime {
+		logger.InfoContext(ctx, "Show is anime, fetching Japanese translations", "media_id", mediaId)
+		jpnAliases := fetchTranslations(ctx, mediaId, "jpn")
+		info.Data.Aliases = append(info.Data.Aliases, jpnAliases...)
+	}
+
+	logger.InfoContext(ctx, "All aliases", "media_id", mediaId, "is_anime", isAnime, "aliases", info.Data.Aliases)
+
+	// Filter aliases by language: always include 'eng', include 'jpn' if anime
+	filteredAliases := []tvdb.Alias{}
+	for _, alias := range info.Data.Aliases {
+		if alias.Language == "eng" || (isAnime && alias.Language == "jpn") {
+			filteredAliases = append(filteredAliases, alias)
+		}
+	}
+	info.Data.Aliases = filteredAliases
+
+	logger.InfoContext(ctx, "Filtered aliases", "media_id", mediaId, "is_anime", isAnime, "aliases", info.Data.Aliases)
 
 	c.JSON(http.StatusOK, info)
 }

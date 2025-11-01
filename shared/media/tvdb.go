@@ -23,6 +23,8 @@ type Media struct {
 	Overview string `json:"overview"`
 	// Year show was made
 	Year string `json:"year"`
+	// Alternative names/aliases for the show
+	Aliases []string `json:"aliases"`
 	// Information about series, such as episodes, date aired, etc.
 	Metadata TVDBSeriesMetadata `json:"metadata"`
 }
@@ -91,12 +93,30 @@ type TVDBSeriesExtendedResponse struct {
 }
 
 type TVDBSeriesExtendedData struct {
-	Slug   string   `json:"slug"`
-	Genres []Genres `json:"genres"`
+	Slug    string   `json:"slug"`
+	Genres  []Genres `json:"genres"`
+	Aliases []Alias  `json:"aliases"`
 }
 
 type Genres struct {
 	Id   int    `json:"id"`
 	Name string `json:"name"`
 	Slug string `json:"slug"`
+}
+
+type Alias struct {
+	Language string `json:"language"`
+	Name     string `json:"name"`
+}
+
+type TVDBTranslationResponse struct {
+	Status string              `json:"status"`
+	Data   TVDBTranslationData `json:"data"`
+}
+
+type TVDBTranslationData struct {
+	Name     string   `json:"name"`
+	Overview string   `json:"overview"`
+	Language string   `json:"language"`
+	Aliases  []string `json:"aliases"`
 }

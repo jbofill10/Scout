@@ -28,7 +28,6 @@ type Repository interface {
 	GetPreferredLibrary(ctx context.Context, libType string) (models.PlexLibrary, error)
 	GetLibraryByType(ctx context.Context, libType string) (int, error)
 	EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season, episode int) (bool, error)
-	EpisodeExists(ctx context.Context, showTitle string, season, episode int) (bool, error)
 	MediaExists(ctx context.Context, id string) (bool, error)
 	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
 	UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error
@@ -138,7 +137,7 @@ func (r *Repo) SetPreferredLibrary(ctx context.Context, id int, libType string) 
 
 func (r *Repo) GetPreferredLibrary(ctx context.Context, libType string) (models.PlexLibrary, error) {
 	var lib models.PlexLibrary
-	err := r.db.QueryRowContext(ctx, `SELECT * FROM Libraries WHERE type = $1 AND preferred = 1;`, libType).Scan(&lib.Id, &lib.Type, &lib.Path, &lib.Preferred)
+	err := r.db.QueryRowContext(ctx, `SELECT id, type, path, preferred, section FROM Libraries WHERE type = $1 AND preferred = 1;`, libType).Scan(&lib.Id, &lib.Type, &lib.Path, &lib.Preferred, &lib.Section)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return models.PlexLibrary{}, fmt.Errorf("no preferred library found for type %s", libType)
@@ -162,34 +161,13 @@ func (r *Repo) EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season,
 	query := `
 		SELECT EXISTS(
 			SELECT 1
-			FROM Shows s
-			JOIN Seasons se ON se.parentId = s.id
-			JOIN Episodes e ON e.parentId = se.id
-			WHERE s.tvdb_id = $1 AND se.season_number = $2 AND e.episode_number = $3
+			FROM Episodes
+			WHERE tvdb_id = $1
 		)
 	`
-	err := r.db.QueryRowContext(ctx, query, tvdbId, season, episode).Scan(&exists)
+	err := r.db.QueryRowContext(ctx, query, tvdbId).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("failed to check episode existence by tvdb id: %w", err)
-	}
-
-	return exists, nil
-}
-
-func (r *Repo) EpisodeExists(ctx context.Context, showTitle string, season, episode int) (bool, error) {
-	var exists bool
-	query := `
-		SELECT EXISTS(
-			SELECT 1
-			FROM Shows s
-			JOIN Seasons se ON se.parentId = s.id
-			JOIN Episodes e ON e.parentId = se.id
-			WHERE s.title = $1 AND se.season_number = $2 AND e.episode_number = $3
-		)
-	`
-	err := r.db.QueryRowContext(ctx, query, showTitle, season, episode).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("failed to check episode existence by title: %w", err)
 	}
 
 	return exists, nil

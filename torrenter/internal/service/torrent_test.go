@@ -282,20 +282,99 @@ func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithSpaces() {
 
 	strategies := s.handler.createSearchStrategy(media, episode)
 
-	// Should create both spaced and non-spaced versions
+	// Should create strategies using the provided name (no automatic permutations)
 	hasSpaced := false
-	hasNoSpace := false
 	for _, strategy := range strategies {
 		if strategy.MediaName == "Show With Spaces" {
 			hasSpaced = true
 		}
-		if strategy.MediaName == "ShowWithSpaces" {
-			hasNoSpace = true
-		}
 	}
 
 	s.True(hasSpaced)
-	s.True(hasNoSpace)
+	// Should have 2 strategies for non-anime (2 query formats)
+	s.Equal(2, len(strategies))
+}
+
+func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithAliases() {
+	media := &tvdb.Media{
+		Name:    "Attack on Titan",
+		Aliases: []string{"Shingeki no Kyojin", "AoT"},
+		Anime:   false,
+	}
+
+	episode := &tvdb.Episode{
+		SeasonNumber: 1,
+		Number:       1,
+	}
+
+	strategies := s.handler.createSearchStrategy(media, episode)
+
+	// Should create strategies for original name + all aliases
+	// 3 names × 2 query formats = 6 strategies
+	s.Equal(6, len(strategies))
+
+	// Verify all three names are present in strategies
+	mediaNames := make(map[string]bool)
+	for _, strategy := range strategies {
+		mediaNames[strategy.MediaName] = true
+	}
+
+	s.True(mediaNames["Attack on Titan"])
+	s.True(mediaNames["Shingeki no Kyojin"])
+	s.True(mediaNames["AoT"])
+}
+
+func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithDuplicateAliases() {
+	media := &tvdb.Media{
+		Name:    "Test Show",
+		Aliases: []string{"Test Show", "TestShow", "Test Show"}, // Duplicate "Test Show"
+		Anime:   false,
+	}
+
+	episode := &tvdb.Episode{
+		SeasonNumber: 1,
+		Number:       1,
+	}
+
+	strategies := s.handler.createSearchStrategy(media, episode)
+
+	// Should deduplicate: "Test Show" appears once, "TestShow" appears once
+	// 2 unique names × 2 query formats = 4 strategies
+	s.Equal(4, len(strategies))
+
+	// Verify only unique names are used
+	mediaNames := make(map[string]bool)
+	for _, strategy := range strategies {
+		mediaNames[strategy.MediaName] = true
+	}
+
+	s.Equal(2, len(mediaNames))
+	s.True(mediaNames["Test Show"])
+	s.True(mediaNames["TestShow"])
+}
+
+func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithEmptyAliases() {
+	media := &tvdb.Media{
+		Name:    "Test Show",
+		Aliases: []string{"", "Valid Alias", ""}, // Empty strings should be filtered
+		Anime:   false,
+	}
+
+	episode := &tvdb.Episode{
+		SeasonNumber: 1,
+		Number:       1,
+	}
+
+	strategies := s.handler.createSearchStrategy(media, episode)
+
+	// Should filter empty strings: "Test Show" + "Valid Alias"
+	// 2 names × 2 query formats = 4 strategies
+	s.Equal(4, len(strategies))
+
+	// Verify only non-empty names are used
+	for _, strategy := range strategies {
+		s.NotEmpty(strategy.MediaName)
+	}
 }
 
 func (s *QbittHandlerTestSuite) TestDidTorrentComplete_Completed() {

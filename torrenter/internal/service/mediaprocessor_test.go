@@ -80,16 +80,36 @@ func (ts *testSuite) TestPrepMediaPath_Movie() {
 	ts.Equal("TestMovie (2023)", path)
 }
 
-func (ts *testSuite) TestGetFileExtension_Valid() {
-	ext, err := ts.svc.getFileExtension("file.mkv")
+func (ts *testSuite) TestGetFile_Valid() {
+	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.mkv"}, nil)
+	fileName, err := ts.svc.getFile("/downloads")
 	ts.NoError(err)
-	ts.Equal(".mkv", ext)
+	ts.Equal("file.mkv", fileName)
+	ts.fs.AssertExpectations(ts.T())
 }
 
-func (ts *testSuite) TestGetFileExtension_Invalid() {
-	ext, err := ts.svc.getFileExtension("file.txt")
+func (ts *testSuite) TestGetFile_NoVideoFiles() {
+	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.txt", "readme.md"}, nil)
+	fileName, err := ts.svc.getFile("/downloads")
 	ts.Error(err)
-	ts.Equal("", ext)
+	ts.Equal("", fileName)
+	ts.fs.AssertExpectations(ts.T())
+}
+
+func (ts *testSuite) TestGetFile_MultipleVideoFiles() {
+	ts.fs.On("ReadDir", "/downloads").Return([]string{"file1.mkv", "file2.mp4"}, nil)
+	fileName, err := ts.svc.getFile("/downloads")
+	ts.NoError(err)
+	ts.Equal("file1.mkv", fileName) // Should return first video file
+	ts.fs.AssertExpectations(ts.T())
+}
+
+func (ts *testSuite) TestGetFile_ReadDirError() {
+	ts.fs.On("ReadDir", "/downloads").Return([]string{}, errors.New("permission denied"))
+	fileName, err := ts.svc.getFile("/downloads")
+	ts.Error(err)
+	ts.Equal("", fileName)
+	ts.fs.AssertExpectations(ts.T())
 }
 
 func (ts *testSuite) TestGetLibraryPath_Show() {
@@ -111,7 +131,7 @@ func (ts *testSuite) TestGetLibraryPath_Movie_Error() {
 
 func (ts *testSuite) TestProcessDownloadedTorrent_Success() {
 	event := &models.TorrentCompleteEvent{
-		SavePath: "/downloads/file.mkv",
+		SavePath: "/downloads",
 		Req: &models.SearchStrategy{
 			MediaName: "TestShow",
 			Season:    1,
@@ -119,14 +139,16 @@ func (ts *testSuite) TestProcessDownloadedTorrent_Success() {
 		},
 	}
 	ts.repo.On("GetPreferredLibrary", mock.Anything, "show").Return(models.PlexLibrary{Path: "/shows"}, nil)
+	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.mkv"}, nil)
 	err := ts.svc.ProcessDownloadedTorrent(context.Background(), event)
 	ts.NoError(err)
 	ts.repo.AssertExpectations(ts.T())
+	ts.fs.AssertExpectations(ts.T())
 }
 
-func (ts *testSuite) TestProcessDownloadedTorrent_FileExtError() {
+func (ts *testSuite) TestProcessDownloadedTorrent_NoVideoFileError() {
 	event := &models.TorrentCompleteEvent{
-		SavePath: "/downloads/file.txt",
+		SavePath: "/downloads",
 		Req: &models.SearchStrategy{
 			MediaName: "TestMovie",
 			Season:    0,
@@ -134,7 +156,9 @@ func (ts *testSuite) TestProcessDownloadedTorrent_FileExtError() {
 		},
 	}
 	ts.repo.On("GetPreferredLibrary", mock.Anything, "movie").Return(models.PlexLibrary{Path: "/movies"}, nil)
+	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.txt", "readme.md"}, nil)
 	err := ts.svc.ProcessDownloadedTorrent(context.Background(), event)
 	ts.Error(err)
 	ts.repo.AssertExpectations(ts.T())
+	ts.fs.AssertExpectations(ts.T())
 }

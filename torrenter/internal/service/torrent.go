@@ -95,13 +95,6 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 				q.logger.WarnContext(ctx, "Failed to check episode existence by TVDB ID, falling back to title match",
 					telemetry.WithTraceContext(ctx, "tvdb_id", req.Id, "season", episode.SeasonNumber, "episode", episode.Number, "error", err.Error())...)
 				// Fallback to name-based matching if TVDB ID check fails
-				exists, err = q.repo.EpisodeExists(ctx, req.Name, episode.SeasonNumber, episode.Number)
-				if err != nil {
-					q.logger.ErrorContext(ctx, "Failed to check episode existence by title",
-						telemetry.WithTraceContext(ctx, "show", req.Name, "season", episode.SeasonNumber, "episode", episode.Number, "error", err.Error())...)
-					// If both checks fail, assume episode doesn't exist (download it)
-					exists = false
-				}
 			}
 
 			if exists {
@@ -114,6 +107,7 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 		}
 
 		episodesFiltered := len(req.Metadata.Episodes) - len(episodesToDownload)
+
 		span.SetAttributes(
 			attribute.Int("episodes_filtered", episodesFiltered),
 			attribute.Int("episodes_to_download", len(episodesToDownload)),
@@ -126,10 +120,12 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 			return nil
 		}
 
-		q.logger.InfoContext(ctx, "Episodes to download after filtering", telemetry.WithTraceContext(ctx, "show", req.Name, "total", len(req.Metadata.Episodes), "to_download", len(episodesToDownload))...)
+		q.logger.InfoContext(ctx, "Episodes to download after filtering", telemetry.WithTraceContext(ctx, "show", req.Name,
+			"total", len(req.Metadata.Episodes), "to_download", len(episodesToDownload), "show_aliases", req.Aliases)...)
 
 		for _, episode := range episodesToDownload {
-			q.logger.InfoContext(ctx, "Processing episode", telemetry.WithTraceContext(ctx, "name", req.Name, "season", episode.SeasonNumber, "episode", episode.Number)...)
+			q.logger.InfoContext(ctx, "Processing episode", telemetry.WithTraceContext(ctx, "name", req.Name, "season", episode.SeasonNumber,
+				"episode", episode.Number)...)
 
 			searchStrategies = append(searchStrategies, q.createSearchStrategy(req, &episode))
 		}
@@ -167,6 +163,7 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 				}
 
 			}
+
 			q.sortTorrentsByQuality(bestMatches)
 			match := q.pickBestTorrent(ctx, bestMatches, req.Category, req.Anime)
 			if match == nil {
@@ -178,13 +175,14 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 				}
 				continue
 			}
+
 			ss := match.Strategy
 			err := q.repo.InsertDownloadHistory(ctx, req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, match.Torrent.InfoHash, "downloading", "")
 			if err != nil {
 				q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
 			}
-			q.downloadTorrent(match.Torrent)
 
+			q.downloadTorrent(match.Torrent)
 			// watch torrent to complete
 			go func(ctx context.Context) {
 				ranRecheck := false
@@ -240,7 +238,20 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episode) []*models.SearchStrategy {
 	var ss []*models.SearchStrategy
 
-	showNames := []string{req.Name, strings.ReplaceAll(req.Name, " ", "")}
+	// Build media names from req.Name + all aliases, with deduplication
+	mediaNames := []string{req.Name}
+	mediaNames = append(mediaNames, req.Aliases...)
+
+	// Deduplicate
+	seen := make(map[string]bool)
+	uniqueNames := []string{}
+	for _, name := range mediaNames {
+		if !seen[name] && name != "" {
+			seen[name] = true
+			uniqueNames = append(uniqueNames, name)
+		}
+	}
+	showNames := uniqueNames
 
 	if req.Anime {
 		for _, showName := range showNames {
@@ -323,7 +334,7 @@ func (q *QbittHandler) isCorrectTorrent(torrent *prowlarr.Search, strategy *mode
 }
 
 func (q *QbittHandler) downloadTorrent(torrent *prowlarr.Search) error {
-	q.logger.Info("Downloading torrent", "filename", torrent.FileName)
+	q.logger.Info("Downloading torrent", "filename", torrent.FileName, "hash", torrent.InfoHash, "guid", torrent.GUID)
 
 	torrentSavePath := baseSavePath + "/" + torrent.Title
 	q.logger.Info("Torrent save path", "path", torrentSavePath)

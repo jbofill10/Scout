@@ -6,15 +6,16 @@ import (
 	"log/slog"
 	"time"
 
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 	tvdb "shared/media"
 	status "shared/status"
 	"shared/telemetry"
 	"webserver/internal/clients"
 	"webserver/internal/repository"
 	"webserver/internal/scheduler"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var tracer = otel.Tracer("webserver")
@@ -82,6 +83,14 @@ func (i *DownloadInteractor) WatchForDueMedia() {
 	}()
 }
 
+func (i *DownloadInteractor) extractAliases(aliases []tvdb.Alias) []string {
+	var aliasNames []string
+	for _, alias := range aliases {
+		aliasNames = append(aliasNames, alias.Name)
+	}
+	return aliasNames
+}
+
 // DownloadShow handles the download request for a TV show
 func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) error {
 	extendedInfo, err := i.getExtendedInformation(ctx, req.Id)
@@ -93,18 +102,19 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 	isAnime := isMediaAnime(extendedInfo)
 
 	today := time.Now()
-	i.logger.InfoContext(ctx, "Download request", "media", req)
+	i.logger.InfoContext(ctx, "Download request", "media", extendedInfo)
 	mediaToDownload := []tvdb.Episode{}
 	absoluteNumber := 1
 
 	for _, episode := range req.Metadata.Episodes {
 		// Create a child span for each episode
-		episodeCtx, episodeSpan := tracer.Start(ctx, fmt.Sprintf("episode_S%dE%d", episode.SeasonNumber, episode.Number),
+		episodeCtx, episodeSpan := tracer.Start(ctx, fmt.Sprintf("%s S%dE%d", req.Name, episode.SeasonNumber, episode.Number),
 			trace.WithAttributes(
 				attribute.String("media.name", req.Name),
 				attribute.Int("episode.season", episode.SeasonNumber),
 				attribute.Int("episode.number", episode.Number),
 				attribute.String("episode.aired", episode.Aired),
+				attribute.Bool("anime", isAnime),
 			),
 		)
 
@@ -126,7 +136,6 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 
 		// Has the episode aired yet?
 		if today.After(episodeAired) {
-			// Episode has aired - add to immediate download batch
 			episodeSpan.SetAttributes(attribute.String("episode.status", "downloading"))
 			mediaToDownload = append(mediaToDownload, episode)
 			err = i.repo.InsertDownloadHistory(req.Name, episode.SeasonNumber, episode.Number, episode.AbsoluteNumber,
@@ -149,6 +158,7 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 				Status:       req.Status,
 				Overview:     req.Overview,
 				Year:         req.Year,
+				Aliases:      i.extractAliases(extendedInfo.Data.Aliases),
 			}
 			scheduledMedia.Metadata.Episodes = []tvdb.Episode{episode}
 
@@ -186,6 +196,7 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 			Slug:     req.Slug,
 			Year:     req.Year,
 			Metadata: req.Metadata,
+			Aliases:  i.extractAliases(extendedInfo.Data.Aliases),
 		}
 		downloadPayload.Metadata.Episodes = mediaToDownload
 

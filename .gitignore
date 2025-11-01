@@ -1,6 +1,8 @@
 node_modules
 CLAUDE.md
 MATCHING_SOLUTION.md
+DEPLOYMENT.md
+OBSERVABILITY.md
 .claude
 .github
 bruno*

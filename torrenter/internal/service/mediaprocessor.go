@@ -50,14 +50,15 @@ func (mp *MediaProcessSvc) ProcessDownloadedTorrent(ctx context.Context, media *
 		return fmt.Errorf("failed to get library path: %v", err)
 	}
 
-	fileExt, err := mp.getFileExtension(media.SavePath)
+	fileName, err := mp.getFile(media.SavePath)
 	if err != nil {
-		return fmt.Errorf("failed to get file extension: %v", err)
+		return fmt.Errorf("failed to get file: %v", err)
 	}
 
-	fullSavePath := fmt.Sprintf("%s/%s.%s", libraryPath.Path, mediaPath, fileExt)
+	fullSavePath := fmt.Sprintf("%s/%s/%s", libraryPath.Path, mediaPath, fileName)
 
 	// TODO: Add hard-linking target file
+	// mp.fs.HardLink(fullSavePath, li)
 
 	mp.Logger.InfoContext(ctx, "Full save path", "path", fullSavePath)
 	mp.Logger.InfoContext(ctx, "Torrent processing completed", "media", media.Req.MediaName)
@@ -84,13 +85,31 @@ func standardizeNumber(num int) string {
 	return fmt.Sprintf("%d", num)
 }
 
-func (mp *MediaProcessSvc) getFileExtension(fileName string) (string, error) {
-	for _, ext := range commonFileExtensions {
-		if len(fileName) >= len(ext) && fileName[len(fileName)-len(ext):] == ext {
-			return ext, nil
+func (mp *MediaProcessSvc) getFile(dirPath string) (string, error) {
+	files, err := mp.fs.ReadDir(dirPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read directory %s: %w", dirPath, err)
+	}
+
+	var videoFiles []string
+	for _, file := range files {
+		for _, ext := range commonFileExtensions {
+			if len(file) >= len(ext) && file[len(file)-len(ext):] == ext {
+				videoFiles = append(videoFiles, file)
+				break
+			}
 		}
 	}
-	return "", fmt.Errorf("no valid file extension found for %s", fileName)
+
+	if len(videoFiles) == 0 {
+		return "", fmt.Errorf("no video files found in directory %s", dirPath)
+	}
+
+	if len(videoFiles) > 1 {
+		mp.Logger.Warn("Multiple video files found in directory, using first", "directory", dirPath, "files", videoFiles)
+	}
+
+	return videoFiles[0], nil
 }
 
 func (mp *MediaProcessSvc) getLibraryPath(ctx context.Context, isShow bool) (models.PlexLibrary, error) {

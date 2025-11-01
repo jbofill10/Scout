@@ -38,8 +38,6 @@ func (i *DownloadInteractor) InitiateDownload(ctx context.Context, req *tvdb.Med
 		return err
 	}
 
-	// Spawn goroutine to handle download completion
-	// Note: We pass the context to maintain trace continuity through the entire download lifecycle
 	go i.handleDownloadCompletion(ctx, dlComplete)
 
 	return nil
@@ -49,15 +47,19 @@ func (i *DownloadInteractor) InitiateDownload(ctx context.Context, req *tvdb.Med
 func (i *DownloadInteractor) handleDownloadCompletion(ctx context.Context, dlComplete <-chan models.TorrentCompleteEvent) {
 	event := <-dlComplete
 
-	if err := i.mp.ProcessDownloadedTorrent(ctx, &event); err != nil {
-		i.logger.ErrorContext(ctx, "Error processing downloaded torrent", "error", err)
-		if err2 := i.repo.UpdateDownloadHistoryStatus(ctx, event.Hash, "failure", err.Error()); err2 != nil {
-			i.logger.ErrorContext(ctx, "Failed to update download history", "error", err2)
+	// Create a new background context since the original HTTP request context may be canceled
+	// by the time the torrent completes downloading
+	bgCtx := context.Background()
+
+	if err := i.mp.ProcessDownloadedTorrent(bgCtx, &event); err != nil {
+		i.logger.ErrorContext(bgCtx, "Error processing downloaded torrent", "error", err)
+		if err2 := i.repo.UpdateDownloadHistoryStatus(bgCtx, event.Hash, "failure", err.Error()); err2 != nil {
+			i.logger.ErrorContext(bgCtx, "Failed to update download history", "error", err2)
 		}
 		return
 	}
 
-	if err := i.repo.UpdateDownloadHistoryStatus(ctx, event.Hash, "success", ""); err != nil {
-		i.logger.ErrorContext(ctx, "Failed to update download history", "error", err)
+	if err := i.repo.UpdateDownloadHistoryStatus(bgCtx, event.Hash, "success", ""); err != nil {
+		i.logger.ErrorContext(bgCtx, "Failed to update download history", "error", err)
 	}
 }
