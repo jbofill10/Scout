@@ -14,6 +14,8 @@ type TorrentService interface {
 // MediaProcessor handles post-download processing
 type MediaProcessor interface {
 	ProcessDownloadedTorrent(ctx context.Context, media *models.TorrentCompleteEvent) error
+	InvalidateCache(ctx context.Context)
+	StartCacheCleanup(ctx context.Context)
 }
 
 // Repository defines database operations
@@ -24,6 +26,8 @@ type Repository interface {
 	SetPreferredLibrary(ctx context.Context, id int, libType string) error
 	GetPreferredLibrary(ctx context.Context, libType string) (models.PlexLibrary, error)
 	GetLibraryByType(ctx context.Context, libType string) (int, error)
+	GetShowBaseDirectory(ctx context.Context, tvdbId string) (string, error)
+	GetMovieBaseDirectory(ctx context.Context, tvdbId string) (string, error)
 	EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season, episode int) (bool, error)
 	MediaExists(ctx context.Context, id string) (bool, error)
 	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error

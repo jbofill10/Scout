@@ -15,9 +15,9 @@ export function initTelemetry() {
     }),
   });
 
-  // Configure OTLP exporter to send traces to OTel Collector via ingress
+  // Configure OTLP exporter to send traces to OTel Collector via nginx proxy
   const exporter = new OTLPTraceExporter({
-    url: 'http://scout.local:30030/v1/traces',
+    url: '/v1/traces',
     headers: {},
   });
 
@@ -35,13 +35,13 @@ export function initTelemetry() {
         '@opentelemetry/instrumentation-user-interaction': {},
         '@opentelemetry/instrumentation-fetch': {
           propagateTraceHeaderCorsUrls: [
-            /http:\/\/scout\.local:30030\/api\/.*/,
+            /\/api\/.*/,
             /http:\/\/localhost:22920\/.*/,
           ],
         },
         '@opentelemetry/instrumentation-xml-http-request': {
           propagateTraceHeaderCorsUrls: [
-            /http:\/\/scout\.local:30030\/api\/.*/,
+            /\/api\/.*/,
             /http:\/\/localhost:22920\/.*/,
           ],
         },

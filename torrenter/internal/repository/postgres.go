@@ -27,6 +27,8 @@ type Repository interface {
 	SetPreferredLibrary(ctx context.Context, id int, libType string) error
 	GetPreferredLibrary(ctx context.Context, libType string) (models.PlexLibrary, error)
 	GetLibraryByType(ctx context.Context, libType string) (int, error)
+	GetShowBaseDirectory(ctx context.Context, tvdbId string) (string, error)
+	GetMovieBaseDirectory(ctx context.Context, tvdbId string) (string, error)
 	EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season, episode int) (bool, error)
 	MediaExists(ctx context.Context, id string) (bool, error)
 	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
@@ -161,11 +163,15 @@ func (r *Repo) EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season,
 	query := `
 		SELECT EXISTS(
 			SELECT 1
-			FROM Episodes
-			WHERE tvdb_id = $1
+			FROM Episodes e
+			JOIN Seasons s ON e.parentId = s.id
+			JOIN Shows sh ON s.parentId = sh.id
+			WHERE sh.tvdb_id = $1
+			  AND s.season_number = $2
+			  AND e.episode_number = $3
 		)
 	`
-	err := r.db.QueryRowContext(ctx, query, tvdbId).Scan(&exists)
+	err := r.db.QueryRowContext(ctx, query, tvdbId, season, episode).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("failed to check episode existence by tvdb id: %w", err)
 	}
@@ -212,21 +218,49 @@ func (r *Repo) GetLibraryByType(ctx context.Context, libType string) (int, error
 	return section, nil
 }
 
+func (r *Repo) GetShowBaseDirectory(ctx context.Context, tvdbId string) (string, error) {
+	var baseDir sql.NullString
+	err := r.db.QueryRowContext(ctx, `SELECT base_directory FROM Shows WHERE tvdb_id = $1 AND base_directory IS NOT NULL LIMIT 1;`, tvdbId).Scan(&baseDir)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("no show found for tvdb_id %s or base_directory is NULL", tvdbId)
+		}
+		return "", fmt.Errorf("failed to query show base directory: %w", err)
+	}
+
+	return baseDir.String, nil
+}
+
+
+func (r *Repo) GetMovieBaseDirectory(ctx context.Context, tvdbId string) (string, error) {
+	var baseDir sql.NullString
+	err := r.db.QueryRowContext(ctx, `SELECT base_directory FROM Movies WHERE tvdb_id = $1 AND base_directory IS NOT NULL LIMIT 1;`, tvdbId).Scan(&baseDir)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("no movie found for tvdb_id %s or base_directory is NULL", tvdbId)
+		}
+		return "", fmt.Errorf("failed to query movie base directory: %w", err)
+	}
+
+	return baseDir.String, nil
+}
+
 func (r *Repo) UpsertMovies(ctx context.Context, movies models.PlexMovieLibraryData) {
 	ctx, span := repoTracer.Start(ctx, "repository.UpsertMovies")
 	defer span.End()
 
 	for _, movie := range movies.Movies {
 		_, err := r.db.ExecContext(ctx, `
-			INSERT INTO Movies (id, title, year, thumb, art, tvdb_id)
-			VALUES ($1, $2, $3, $4, $5, $6)
+			INSERT INTO Movies (id, title, year, thumb, art, tvdb_id, base_directory)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT (id) DO UPDATE SET
 				title = EXCLUDED.title,
 				year = EXCLUDED.year,
 				thumb = EXCLUDED.thumb,
 				art = EXCLUDED.art,
-				tvdb_id = EXCLUDED.tvdb_id
-		`, movie.Id, movie.Title, movie.Year, movie.Thumb, movie.Art, movie.TvdbId)
+				tvdb_id = EXCLUDED.tvdb_id,
+				base_directory = EXCLUDED.base_directory
+		`, movie.Id, movie.Title, movie.Year, movie.Thumb, movie.Art, movie.TvdbId, movie.BaseDirectory)
 		if err != nil {
 			r.logger.ErrorContext(ctx, "Failed to upsert movie", "title", movie.Title, "error", err)
 			span.RecordError(err)
@@ -262,14 +296,15 @@ func (r *Repo) UpsertShows(ctx context.Context, lib *models.PlexShowLibraryData)
 	for _, show := range lib.Shows {
 		showCount++
 		_, err := r.db.ExecContext(ctx, `
-			INSERT INTO Shows (id, title, show_meta, thumb, tvdb_id)
-			VALUES ($1, $2, $3, $4, $5)
+			INSERT INTO Shows (id, title, show_meta, thumb, tvdb_id, base_directory)
+			VALUES ($1, $2, $3, $4, $5, $6)
 			ON CONFLICT (id) DO UPDATE SET
 				title = EXCLUDED.title,
 				show_meta = EXCLUDED.show_meta,
 				thumb = EXCLUDED.thumb,
-				tvdb_id = EXCLUDED.tvdb_id
-		`, show.Id, show.Title, show.ShowMeta, show.Thumb, show.TvdbId)
+				tvdb_id = EXCLUDED.tvdb_id,
+				base_directory = EXCLUDED.base_directory
+		`, show.Id, show.Title, show.ShowMeta, show.Thumb, show.TvdbId, show.BaseDirectory)
 		if err != nil {
 			r.logger.ErrorContext(ctx, "Failed to upsert show", "title", show.Title, "error", err)
 			span.RecordError(err)
@@ -312,13 +347,9 @@ func (r *Repo) UpsertShows(ctx context.Context, lib *models.PlexShowLibraryData)
 
 				for _, media := range episode.Media {
 					_, err = r.db.ExecContext(ctx, `
-						INSERT INTO EpisodeMedia (id, parentId, video_resolution, file_path)
-						VALUES ($1, $2, $3, $4)
-						ON CONFLICT (id) DO UPDATE SET
-							parentId = EXCLUDED.parentId,
-							video_resolution = EXCLUDED.video_resolution,
-							file_path = EXCLUDED.file_path
-					`, media.Id, episode.Id, media.VideoResolution, media.File)
+						INSERT INTO EpisodeMedia (parentId, video_resolution, file_path)
+						VALUES ($1, $2, $3)
+					`, episode.Id, media.VideoResolution, media.File)
 					if err != nil {
 						r.logger.ErrorContext(ctx, "Failed to insert plex media for episode", "episode_id", episode.Id, "error", err, "media", media)
 						span.RecordError(err)

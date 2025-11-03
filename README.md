@@ -4,11 +4,11 @@ Over-engineered microservices architecture for automated media torrenting with a
 
 ## ⚠️ Security Notice
 
-**Before deploying Scout, you must configure secrets properly.** This repository does not include actual credentials.
+**Before deploying Scout, you must configure environment variables properly.** This repository does not include actual credentials.
 
-1. Copy template files in `k8s/secrets/*.template.yaml` and fill in your values
-2. Never commit files containing real credentials
-3. See [SECURITY.md](SECURITY.md) for detailed setup instructions
+1. Copy `.env.template` to `.env` and fill in your secrets
+2. Never commit your `.env` file (protected by `.gitignore`)
+3. See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed setup instructions
 
 ## 🏗️ Architecture
 
@@ -19,43 +19,45 @@ Scout is built as four microservices that work together:
 - **torrenter** (Go): Download processor with qBittorrent and Plex integration
 - **ui** (React/TypeScript): Web interface for search and management
 
-## 🚀 Quick Start with Kubernetes (Recommended)
+## 🚀 Quick Start with Docker Compose (Recommended)
 
 ### Prerequisites
-- [Minikube](https://minikube.sigs.k8s.io/docs/start/)
-- [kubectl](https://kubernetes.io/docs/tasks/tools/)
-- Docker
+- Docker (version 20.10+)
+- Docker Compose (version 2.0+)
+- At least 4GB RAM available for Docker
 
-### Deploy to Minikube
+### Deploy Scout
 ```bash
-# Start Minikube
-minikube start --cpus=4 --memory=8192
+# Copy template files and configure
+cp .env.template .env
+cp docker-compose.yml.template docker-compose.yml
+cp nginx/nginx.conf.template nginx/nginx.conf
+nano .env  # Fill in your API keys and credentials
 
 # Deploy all services
-./deploy.sh
-
-# Access the UI (via ingress)
-# The deployment script will provide access instructions
+./compose-deploy.sh
 ```
+
+Access Scout at `http://localhost:30030` or `http://<YOUR_LAN_IP>:30030`
 
 ### Development Workflow
 ```bash
 # Rebuild a service after changes
-./dev.sh rebuild webserver
+./compose-deploy.sh rebuild webserver
 
 # View logs
-./dev.sh logs torrenter
+./compose-deploy.sh logs torrenter
 
 # Check status
-./dev.sh status
+./compose-deploy.sh status
 
 # See all commands
-./dev.sh help
+./compose-deploy.sh --help
 ```
 
-See [k8s/README.md](k8s/README.md) for detailed documentation.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed documentation.
 
-## 🐳 Running Locally (Without K8s)
+## 🐳 Running Services Locally (Without Docker)
 
 Each service can run independently for development:
 
@@ -89,46 +91,40 @@ npm run dev
 ```
 
 **Configuration Note:** Services will look for configuration in this order:
-1. Environment variables (highest priority)
-2. Kubernetes secrets at `/root/secrets/` (if running in K8s)
-3. Local TOML files (tvdb_proxy only, for local development)
+1. Environment variables from `.env` file (highest priority)
+2. Local TOML files (tvdb_proxy only, for local development without Docker)
+3. Default values coded in services
 
 ## 📋 Configuration
 
-### ⚠️ Required Setup
-
-**You must configure secrets and configmaps before deployment.** See [SECURITY.md](SECURITY.md) for complete instructions.
+All configuration is managed via the `.env` file. See [DEPLOYMENT.md](DEPLOYMENT.md) for complete instructions.
 
 Quick setup:
 ```bash
-# Copy configmap templates (for environment-specific settings)
-cp k8s/configmaps/torrenter-configmap.template.yaml k8s/configmaps/torrenter-configmap.yaml
-cp k8s/configmaps/tvdb-proxy-configmap.template.yaml k8s/configmaps/tvdb-proxy-configmap.yaml
+# Copy template
+cp .env.template .env
 
-# Copy secret templates (for credentials)
-cp k8s/secrets/postgres-secret.template.yaml k8s/secrets/postgres-secret.yaml
-cp k8s/secrets/torrenter-secrets.template.yaml k8s/secrets/torrenter-secrets.yaml
-cp k8s/secrets/tvdb-proxy-secrets.template.yaml k8s/secrets/tvdb-proxy-secrets.yaml
-
-# Edit configmaps and replace <YOUR_LAN_IP> with your actual IP
-# Edit secrets and replace placeholders with base64-encoded values
-# See SECURITY.md for detailed instructions
+# Edit with your credentials
+nano .env  # or use your preferred editor
 ```
 
-### Local Development Configuration
+Required secrets:
+- **TVDB** API credentials (api-key, token) - Get from https://thetvdb.com/api-information
+- **Prowlarr** API key - Find in Prowlarr Settings → General
+- **qBittorrent** credentials (username, password)
+- **Plex** token and library sections - Get token from https://support.plex.tv/articles/204059436
+- **Database** password (optional, has default: scoutpass)
 
-Each service has its own TOML config file:
+### Local Development (Without Docker)
 
-- `tvdb_proxy/api.toml`: TVDB API credentials (not in repo - create your own)
-- `torrenter/config.toml`: qBittorrent, Plex, Prowlarr settings (not in repo - create your own)
-- No config needed for webserver and ui
+For running services directly without containers, you can use TOML config files:
+- `tvdb_proxy/api.toml`: TVDB API credentials (optional, can use env vars)
+- `torrenter/config.toml`: Service settings (optional, can use env vars)
 
-### Kubernetes Configuration
-In Kubernetes, configs are managed via:
-- **ConfigMaps**: Environment-specific settings (IPs, ports, library IDs) - create from templates
-- **Secrets**: Sensitive credentials (API keys, passwords) - create from templates
-
-Both actual configmaps and secrets are gitignored. Only templates are committed to the repository.
+Or export environment variables from your `.env` file:
+```bash
+export $(cat .env | xargs)
+```
 
 ## 🔧 Tech Stack
 
@@ -145,9 +141,10 @@ Both actual configmaps and secrets are gitignored. Only templates are committed 
 - Vite
 
 **Infrastructure:**
-- Kubernetes (Minikube for local)
+- Docker Compose
 - Docker multi-stage builds
-- Persistent volumes for databases
+- Named volumes (PostgreSQL) and bind mounts (/data)
+- Nginx reverse proxy
 
 **Integrations:**
 - TVDB API v4 (media metadata)
@@ -189,17 +186,13 @@ Scout/
 │   └── package.json
 ├── shared/                       # Shared Go modules
 │   ├── media/                    # TVDB data structures
-│   └── status/                   # Download status types
+│   ├── status/                   # Download status types
+│   └── telemetry/                # OpenTelemetry tracing utilities
 ├── sql/                          # Database setup and migration scripts
-├── k8s/                          # Kubernetes manifests
-│   ├── configmaps/               # Service configurations (gitignored, use templates)
-│   ├── secrets/                  # Sensitive data (gitignored, use templates)
-│   ├── deployments/              # Pod definitions
-│   ├── services/                 # Service discovery
-│   ├── pvcs/                     # Persistent storage
-│   └── ingress/                  # External access
-├── deploy.sh                     # Automated deployment script
-└── dev.sh                        # Development helpers
+├── nginx/                        # Nginx reverse proxy configuration
+├── docker-compose.yml            # Docker Compose orchestration
+├── .env.template                 # Environment variables template
+└── compose-deploy.sh             # Deployment and management script
 ```
 
 ## 🎯 Features
@@ -213,26 +206,26 @@ Scout/
 
 ## 🔐 Security
 
-**READ THIS BEFORE DEPLOYMENT:** [SECURITY.md](SECURITY.md)
+**READ THIS BEFORE DEPLOYMENT:** Configure your `.env` file properly
 
 Important security practices:
-- All secrets must be configured from templates before deployment
-- Never commit actual credentials (`.gitignore` protects you)
+- Configure `.env` file from `.env.template` before deployment
+- Never commit your `.env` file (`.gitignore` protects you)
 - Rotate credentials if you suspect exposure
-- Use environment-specific secrets for dev/staging/prod
-- Consider Sealed Secrets or external secret managers for production
+- Use strong, unique passwords for all services
+- For production, consider external secret managers (HashiCorp Vault, AWS Secrets Manager, etc.)
 
 The repository includes:
-- `.template.yaml` files with placeholders for all required secrets
-- Comprehensive security documentation in SECURITY.md
+- `.env.template` file with all required variables documented
+- Comprehensive deployment documentation in DEPLOYMENT.md
 - `.gitignore` rules to prevent credential leaks
 
 ## 📚 Documentation
 
-- [Kubernetes Setup Guide](k8s/README.md)
-- [Development Workflow](k8s/README.md#-development-workflow)
-- [Configuration Strategy](k8s/README.md#-configuration-strategy)
-- [Troubleshooting](k8s/README.md#-troubleshooting)
+- [Deployment Guide](DEPLOYMENT.md) - Docker Compose setup, LAN access, troubleshooting
+- [Architecture Overview](CLAUDE.md) - Microservices architecture, data flow, development commands
+- [Observability](OBSERVABILITY.md) - OpenTelemetry tracing and structured logging
+- Service READMEs: [webserver](webserver/README.md), [torrenter](torrenter/README.md), [tvdb_proxy](tvdb_proxy/README.md), [ui](ui/README.md)
 
 ## 🤝 Contributing
 
@@ -240,8 +233,8 @@ The repository includes:
 2. Test locally:
    - Go services: `go run cmd/<service>/main.go` (or `go run main.go` for tvdb_proxy)
    - UI: `npm run dev`
-3. Test in K8s: `./dev.sh rebuild <service>`
-4. Check logs: `./dev.sh logs <service>`
+3. Test with Docker Compose: `./compose-deploy.sh rebuild <service>`
+4. Check logs: `./compose-deploy.sh logs <service>`
 5. Run tests: `go test ./...` (in service directory)
 6. Run linter: `golangci-lint run` (in service directory)
 

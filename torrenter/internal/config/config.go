@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"torrenter/internal/models"
 )
 
-// Load loads the torrenter configuration from environment variables and Kubernetes secrets
+// Load loads the torrenter configuration from environment variables
 func Load() (models.TorrenterConf, error) {
 	var cfg models.TorrenterConf
 
@@ -18,11 +17,9 @@ func Load() (models.TorrenterConf, error) {
 		return cfg, fmt.Errorf("PROWLARR_HOST environment variable is required")
 	}
 
-	// Load Prowlarr key from secret file (mounted by k8s)
-	if prowlarrKey, err := os.ReadFile("/root/secrets/prowlarr-key"); err == nil {
-		cfg.Prowlarr.Key = strings.TrimSpace(string(prowlarrKey))
-	} else {
-		return cfg, fmt.Errorf("failed to read prowlarr-key: %w", err)
+	cfg.Prowlarr.Key = getEnv("PROWLARR_KEY", "")
+	if cfg.Prowlarr.Key == "" {
+		return cfg, fmt.Errorf("PROWLARR_KEY environment variable is required")
 	}
 
 	// Load qBittorrent config
@@ -31,16 +28,14 @@ func Load() (models.TorrenterConf, error) {
 		return cfg, fmt.Errorf("QBITT_HOST environment variable is required")
 	}
 
-	if qbittUser, err := os.ReadFile("/root/secrets/qbitt-user"); err == nil {
-		cfg.Qbitt.User = strings.TrimSpace(string(qbittUser))
-	} else {
-		return cfg, fmt.Errorf("failed to read qbitt-user: %w", err)
+	cfg.Qbitt.User = getEnv("QBITT_USER", "")
+	if cfg.Qbitt.User == "" {
+		return cfg, fmt.Errorf("QBITT_USER environment variable is required")
 	}
 
-	if qbittPassword, err := os.ReadFile("/root/secrets/qbitt-password"); err == nil {
-		cfg.Qbitt.Password = strings.TrimSpace(string(qbittPassword))
-	} else {
-		return cfg, fmt.Errorf("failed to read qbitt-password: %w", err)
+	cfg.Qbitt.Password = getEnv("QBITT_PASSWORD", "")
+	if cfg.Qbitt.Password == "" {
+		return cfg, fmt.Errorf("QBITT_PASSWORD environment variable is required")
 	}
 
 	// Load Plex config
@@ -49,10 +44,9 @@ func Load() (models.TorrenterConf, error) {
 		return cfg, fmt.Errorf("PLEX_HOST environment variable is required")
 	}
 
-	if plexKey, err := os.ReadFile("/root/secrets/plex-key"); err == nil {
-		cfg.Plex.Key = strings.TrimSpace(string(plexKey))
-	} else {
-		return cfg, fmt.Errorf("failed to read plex-key: %w", err)
+	cfg.Plex.Key = getEnv("PLEX_KEY", "")
+	if cfg.Plex.Key == "" {
+		return cfg, fmt.Errorf("PLEX_KEY environment variable is required")
 	}
 
 	// Parse Plex sections from environment variables
@@ -70,8 +64,8 @@ func Load() (models.TorrenterConf, error) {
 		return cfg, fmt.Errorf("invalid PLEX_SHOW_SECTIONS value: %s", showSections)
 	}
 
-	// Load UI config
-	cfg.Ui.Endpoint = getEnv("UI_ENDPOINT", "ws://localhost:22920/status")
+	// Load UI config (default for docker-compose)
+	cfg.Ui.Endpoint = getEnv("UI_ENDPOINT", "ws://webserver:22920/status")
 
 	return cfg, nil
 }

@@ -3,12 +3,19 @@
 
 -- Webserver tables
 -- Stores complete tvdb.Media objects ready to be sent to torrenter.Download()
+-- This table stores TWO sets of trace IDs:
+--   1. scheduled_trace_id/scheduled_span_id: The original trace when user scheduled the download
+--   2. trace_id/span_id: The trace when the scheduled download actually executes
 CREATE TABLE IF NOT EXISTS ScheduledDownloads (
     id SERIAL PRIMARY KEY,
     media JSONB NOT NULL,
     content_hash TEXT,
     release_time TIMESTAMP NOT NULL,
-    schedule_status TEXT DEFAULT 'pending'
+    schedule_status TEXT DEFAULT 'pending',
+    scheduled_trace_id TEXT,
+    scheduled_span_id TEXT,
+    trace_id TEXT,
+    span_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_downloads_release ON ScheduledDownloads(release_time);
@@ -16,6 +23,16 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_downloads_status ON ScheduledDownloads(
 
 -- Index to ensure we can quickly detect duplicate scheduled content by its content hash
 CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_downloads_hash ON ScheduledDownloads(content_hash);
+
+-- Index for querying all scheduled downloads from a specific user action
+CREATE INDEX IF NOT EXISTS idx_scheduled_downloads_scheduled_trace
+ON ScheduledDownloads(scheduled_trace_id)
+WHERE scheduled_trace_id IS NOT NULL;
+
+-- Index for querying execution traces
+CREATE INDEX IF NOT EXISTS idx_scheduled_downloads_execution_trace
+ON ScheduledDownloads(trace_id)
+WHERE trace_id IS NOT NULL;
 
 -- Torrenter tables
 CREATE TABLE IF NOT EXISTS Libraries (
@@ -36,7 +53,8 @@ CREATE TABLE IF NOT EXISTS Movies (
     year INTEGER,
     thumb TEXT,
     art TEXT,
-    tvdb_id TEXT
+    tvdb_id TEXT,
+    base_directory TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_movies_tvdb_id ON Movies(tvdb_id);
@@ -53,7 +71,8 @@ CREATE TABLE IF NOT EXISTS Shows (
     title TEXT NOT NULL,
     show_meta TEXT,
     thumb TEXT,
-    tvdb_id TEXT
+    tvdb_id TEXT,
+    base_directory TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_shows_tvdb_id ON Shows(tvdb_id);
@@ -90,10 +109,23 @@ CREATE TABLE IF NOT EXISTS ShowDownloadHistory (
     mediaTitle TEXT NOT NULL,
     season INTEGER,
     episode INTEGER,
+    absoluteEpisode INTEGER,
     downloadDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     reason TEXT,
-    status TEXT NOT NULL
+    status TEXT NOT NULL,
+    trace_id TEXT,
+    span_id TEXT
 );
+
+-- Index for querying all episodes from a specific download request
+CREATE INDEX IF NOT EXISTS idx_show_download_history_trace
+ON ShowDownloadHistory(trace_id)
+WHERE trace_id IS NOT NULL;
+
+-- Index for finding a specific episode's span in traces
+CREATE INDEX IF NOT EXISTS idx_show_download_history_span
+ON ShowDownloadHistory(span_id)
+WHERE span_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS MovieDownloadHistory (
     id SERIAL PRIMARY KEY,
@@ -101,8 +133,20 @@ CREATE TABLE IF NOT EXISTS MovieDownloadHistory (
     year INTEGER,
     downloadDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     reason TEXT,
-    status TEXT NOT NULL
+    status TEXT NOT NULL,
+    trace_id TEXT,
+    span_id TEXT
 );
+
+-- Index for querying all movies from a specific download request
+CREATE INDEX IF NOT EXISTS idx_movie_download_history_trace
+ON MovieDownloadHistory(trace_id)
+WHERE trace_id IS NOT NULL;
+
+-- Index for finding a specific movie's span in traces
+CREATE INDEX IF NOT EXISTS idx_movie_download_history_span
+ON MovieDownloadHistory(span_id)
+WHERE span_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS UploaderPreferences (
     id SERIAL PRIMARY KEY,

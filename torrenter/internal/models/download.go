@@ -41,6 +41,7 @@ type SearchStrategy struct {
 	Episode     int
 	Exclude     []string
 	ReleaseYear string
+	TvdbId      string
 }
 
 type TorrentMatch struct {

@@ -54,12 +54,13 @@ type PlexShowLibraryData struct {
 }
 
 type PlexShowData struct {
-	Id       string
-	Title    string
-	ShowMeta string
-	Thumb    string
-	TvdbId   string
-	Seasons  []PlexSeasonData
+	Id            string
+	Title         string
+	ShowMeta      string
+	Thumb         string
+	TvdbId        string
+	BaseDirectory string
+	Seasons       []PlexSeasonData
 }
 
 type PlexSeasonData struct {
@@ -85,14 +86,15 @@ type PlexMediaData struct {
 }
 
 type Movie struct {
-	Id        string      `xml:"ratingKey,attr" json:"ratingKey"`
-	Title     string      `xml:"title,attr" json:"title"`
-	Year      int         `xml:"year,attr" json:"year,omitempty"`
-	Thumb     string      `xml:"thumb,attr" json:"thumb,omitempty"`
-	Art       string      `xml:"art,attr" json:"art,omitempty"`
-	Guids     []PlexGuid  `xml:"Guid"`
-	TvdbId    string      `json:"tvdbId,omitempty"`
-	MovieMeta []MediaMeta `xml:"Media" json:"media"`
+	Id            string      `xml:"ratingKey,attr" json:"ratingKey"`
+	Title         string      `xml:"title,attr" json:"title"`
+	Year          int         `xml:"year,attr" json:"year,omitempty"`
+	Thumb         string      `xml:"thumb,attr" json:"thumb,omitempty"`
+	Art           string      `xml:"art,attr" json:"art,omitempty"`
+	Guids         []PlexGuid  `xml:"Guid"`
+	TvdbId        string      `json:"tvdbId,omitempty"`
+	BaseDirectory string      `json:"baseDirectory,omitempty"`
+	MovieMeta     []MediaMeta `xml:"Media" json:"media"`
 }
 
 type MediaMeta struct {

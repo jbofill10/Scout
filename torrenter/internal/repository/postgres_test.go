@@ -133,10 +133,10 @@ func (s *RepoTestSuite) TestSetPreferredLibrary_UnsetError() {
 }
 
 func (s *RepoTestSuite) TestGetPreferredLibrary_Success() {
-	rows := sqlmock.NewRows([]string{"id", "type", "path", "preferred"}).
-		AddRow(1, "show", "/data/shows", 1)
+	rows := sqlmock.NewRows([]string{"id", "type", "path", "preferred", "section"}).
+		AddRow(1, "show", "/data/shows", 1, 1)
 
-	s.mock.ExpectQuery(`SELECT \* FROM Libraries`).
+	s.mock.ExpectQuery(`SELECT id, type, path, preferred, section FROM Libraries`).
 		WithArgs("show").
 		WillReturnRows(rows)
 
@@ -149,7 +149,7 @@ func (s *RepoTestSuite) TestGetPreferredLibrary_Success() {
 }
 
 func (s *RepoTestSuite) TestGetPreferredLibrary_NotFound() {
-	s.mock.ExpectQuery(`SELECT \* FROM Libraries`).
+	s.mock.ExpectQuery(`SELECT id, type, path, preferred, section FROM Libraries`).
 		WithArgs("show").
 		WillReturnError(sql.ErrNoRows)
 
@@ -287,12 +287,13 @@ func (s *RepoTestSuite) TestUpsertMovies_Success() {
 	movies := models.PlexMovieLibraryData{
 		Movies: []models.Movie{
 			{
-				Id:     "1",
-				Title:  "Test Movie",
-				Year:   2023,
-				Thumb:  "/thumb.jpg",
-				Art:    "/art.jpg",
-				TvdbId: "123456",
+				Id:            "1",
+				Title:         "Test Movie",
+				Year:          2023,
+				Thumb:         "/thumb.jpg",
+				Art:           "/art.jpg",
+				TvdbId:        "123456",
+				BaseDirectory: "/data/movies",
 				MovieMeta: []models.MediaMeta{
 					{
 						VideoResolution: "1080p",
@@ -305,10 +306,12 @@ func (s *RepoTestSuite) TestUpsertMovies_Success() {
 		},
 	}
 
+	// Expect movie insert with base_directory - uses ExecContext (not Query)
 	s.mock.ExpectExec(`INSERT INTO Movies`).
-		WithArgs("1", "Test Movie", 2023, "/thumb.jpg", "/art.jpg", "123456").
-		WillReturnResult(sqlmock.NewResult(1, 1))
+		WithArgs("1", "Test Movie", 2023, "/thumb.jpg", "/art.jpg", "123456", "/data/movies").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 
+	// Expect movie media insert - uses movie's Plex ID ("1") as parentId
 	s.mock.ExpectExec(`INSERT INTO MovieMedia`).
 		WithArgs("1", "1080p", "/data/movies/test.mkv").
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -322,11 +325,12 @@ func (s *RepoTestSuite) TestUpsertShows_Success() {
 	lib := &models.PlexShowLibraryData{
 		Shows: []models.PlexShowData{
 			{
-				Id:       "1",
-				Title:    "Test Show",
-				ShowMeta: "/shows/1",
-				Thumb:    "/thumb.jpg",
-				TvdbId:   "123",
+				Id:            "1",
+				Title:         "Test Show",
+				ShowMeta:      "/shows/1",
+				Thumb:         "/thumb.jpg",
+				TvdbId:        "123",
+				BaseDirectory: "/data/shows",
 				Seasons: []models.PlexSeasonData{
 					{
 						Id:           "s1",
@@ -354,24 +358,24 @@ func (s *RepoTestSuite) TestUpsertShows_Success() {
 		},
 	}
 
-	// Expect show insert
+	// Expect show insert with base_directory - uses ExecContext (not Query)
 	s.mock.ExpectExec(`INSERT INTO Shows`).
-		WithArgs("1", "Test Show", "/shows/1", "/thumb.jpg", "123").
-		WillReturnResult(sqlmock.NewResult(1, 1))
+		WithArgs("1", "Test Show", "/shows/1", "/thumb.jpg", "123", "/data/shows").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	// Expect season insert
+	// Expect season insert - uses show's Plex ID ("1") as parentId
 	s.mock.ExpectExec(`INSERT INTO Seasons`).
 		WithArgs("s1", "1", "/shows/1/season/1", 1, "season123").
-		WillReturnResult(sqlmock.NewResult(1, 1))
+		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	// Expect episode insert
+	// Expect episode insert - uses season's Plex ID ("s1") as parentId
 	s.mock.ExpectExec(`INSERT INTO Episodes`).
 		WithArgs("e1", "s1", "/shows/1/season/1/episode/1", 1, "ep123").
-		WillReturnResult(sqlmock.NewResult(1, 1))
+		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	// Expect episode media insert
+	// Expect episode media insert - uses episode's Plex ID ("e1") as parentId
 	s.mock.ExpectExec(`INSERT INTO EpisodeMedia`).
-		WithArgs("1", "e1", "1080p", "/data/shows/test.mkv").
+		WithArgs("e1", "1080p", "/data/shows/test.mkv").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	s.repo.UpsertShows(context.Background(), lib)
@@ -383,27 +387,31 @@ func (s *RepoTestSuite) TestUpsertShows_MultipleEpisodes() {
 	lib := &models.PlexShowLibraryData{
 		Shows: []models.PlexShowData{
 			{
-				Id:       "1",
-				Title:    "Test Show",
-				ShowMeta: "/shows/1",
-				Thumb:    "/thumb.jpg",
-				TvdbId:   "123",
+				Id:            "1",
+				Title:         "Test Show",
+				ShowMeta:      "/shows/1",
+				Thumb:         "/thumb.jpg",
+				TvdbId:        "123",
+				BaseDirectory: "/data/shows",
 				Seasons: []models.PlexSeasonData{
 					{
 						Id:           "s1",
 						SeasonMeta:   "/shows/1/season/1",
 						SeasonNumber: 1,
+						TvdbId:       "season123",
 						Episodes: []models.PlexEpisodeData{
 							{
 								Id:            "e1",
 								EpisodeMeta:   "/shows/1/season/1/episode/1",
 								EpisodeNumber: 1,
+								TvdbId:        "ep123",
 								Media:         []models.PlexMediaData{},
 							},
 							{
 								Id:            "e2",
 								EpisodeMeta:   "/shows/1/season/1/episode/2",
 								EpisodeNumber: 2,
+								TvdbId:        "ep456",
 								Media:         []models.PlexMediaData{},
 							},
 						},
@@ -413,10 +421,25 @@ func (s *RepoTestSuite) TestUpsertShows_MultipleEpisodes() {
 		},
 	}
 
-	s.mock.ExpectExec(`INSERT INTO Shows`).WillReturnResult(sqlmock.NewResult(1, 1))
-	s.mock.ExpectExec(`INSERT INTO Seasons`).WillReturnResult(sqlmock.NewResult(1, 1))
-	s.mock.ExpectExec(`INSERT INTO Episodes`).WillReturnResult(sqlmock.NewResult(1, 1))
-	s.mock.ExpectExec(`INSERT INTO Episodes`).WillReturnResult(sqlmock.NewResult(1, 1))
+	// Expect show insert with base_directory
+	s.mock.ExpectExec(`INSERT INTO Shows`).
+		WithArgs("1", "Test Show", "/shows/1", "/thumb.jpg", "123", "/data/shows").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Expect season insert
+	s.mock.ExpectExec(`INSERT INTO Seasons`).
+		WithArgs("s1", "1", "/shows/1/season/1", 1, "season123").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Expect first episode insert
+	s.mock.ExpectExec(`INSERT INTO Episodes`).
+		WithArgs("e1", "s1", "/shows/1/season/1/episode/1", 1, "ep123").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Expect second episode insert
+	s.mock.ExpectExec(`INSERT INTO Episodes`).
+		WithArgs("e2", "s1", "/shows/1/season/1/episode/2", 2, "ep456").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	s.repo.UpsertShows(context.Background(), lib)
 

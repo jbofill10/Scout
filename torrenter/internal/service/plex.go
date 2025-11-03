@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -25,19 +27,21 @@ var (
 )
 
 type PlexHandler struct {
-	cfg        *models.PlexCfg
-	repo       Repository
-	logger     *slog.Logger
-	httpClient *http.Client
+	cfg            *models.PlexCfg
+	repo           Repository
+	logger         *slog.Logger
+	httpClient     *http.Client
+	mediaProcessor MediaProcessor
 }
 
-func NewPlexHandler(repo Repository, logger *slog.Logger, cfg *models.PlexCfg) *PlexHandler {
+func NewPlexHandler(repo Repository, logger *slog.Logger, cfg *models.PlexCfg, mediaProcessor MediaProcessor) *PlexHandler {
 	// Use plain HTTP client without otelhttp to avoid redundant auto-instrumented spans
 	// We create manual spans with descriptive names in fetchAndUnmarshal() and getLibraries()
 	return &PlexHandler{
-		cfg:    cfg,
-		repo:   repo,
-		logger: logger,
+		cfg:            cfg,
+		repo:           repo,
+		logger:         logger,
+		mediaProcessor: mediaProcessor,
 		httpClient: &http.Client{
 			Transport: http.DefaultTransport,
 		},
@@ -134,6 +138,12 @@ func (p *PlexHandler) SyncPlexLibrary(ctx context.Context) {
 		p.repo.UpsertShows(ctx, shows)
 	}
 
+	// Invalidate cache entries that now exist in the database
+	if p.mediaProcessor != nil {
+		p.mediaProcessor.InvalidateCache(ctx)
+		p.logger.InfoContext(ctx, "Cache invalidation triggered after Plex sync")
+	}
+
 	span.SetStatus(codes.Ok, "Plex library sync completed successfully")
 	p.logger.InfoContext(ctx, "Plex Library Sync Complete")
 }
@@ -145,15 +155,15 @@ func (p *PlexHandler) getMovies(ctx context.Context) models.PlexMovieLibraryData
 	p.logger.InfoContext(ctx, "Starting plex movie media sync")
 	movies := models.PlexMovieLibraryData{}
 
-	section, err := p.repo.GetLibraryByType(ctx, libraryTypeMovie)
+	movieLibrary, err := p.repo.GetPreferredLibrary(ctx, libraryTypeMovie)
 	if err != nil {
 		span.RecordError(err)
-		span.SetStatus(codes.Error, "Failed to get movie section")
-		p.logger.ErrorContext(ctx, "Error getting movie sections", "error", err)
+		span.SetStatus(codes.Error, "Failed to get movie library")
+		p.logger.ErrorContext(ctx, "Error getting movie library", "error", err)
 		return movies
 	}
 
-	url := fmt.Sprintf("%s%s/%d/all?includeGuids=1", p.cfg.Host, mediaSectionBase, section)
+	url := fmt.Sprintf("%s%s/%d/all?includeGuids=1", p.cfg.Host, mediaSectionBase, movieLibrary.Section)
 	span.SetAttributes(attribute.String("plex.url", url))
 
 	err = p.fetchAndUnmarshal(ctx, url, &movies)
@@ -164,13 +174,21 @@ func (p *PlexHandler) getMovies(ctx context.Context) models.PlexMovieLibraryData
 		return movies
 	}
 
-	// Extract TVDB IDs from movie Guids
+	// Extract TVDB IDs and base directories from movie data
 	_, extractSpan := tracer.Start(ctx, "extractMovieTvdbIds")
 	for i := range movies.Movies {
 		movies.Movies[i].TvdbId = extractTvdbId(movies.Movies[i].Guids)
+
+		// Extract base directory from first available file path
+		for _, media := range movies.Movies[i].MovieMeta {
+			if len(media.Part) > 0 && media.Part[0].File != "" {
+				movies.Movies[i].BaseDirectory = extractMovieBaseDirectory(media.Part[0].File, movieLibrary.Path)
+				break
+			}
+		}
 	}
 	extractSpan.SetAttributes(attribute.Int("movies_processed", len(movies.Movies)))
-	extractSpan.SetStatus(codes.Ok, "TVDB IDs extracted")
+	extractSpan.SetStatus(codes.Ok, "TVDB IDs and base directories extracted")
 	extractSpan.End()
 
 	span.SetAttributes(attribute.Int("movie.count", len(movies.Movies)))
@@ -230,15 +248,15 @@ func (p *PlexHandler) getShows(ctx context.Context) *models.PlexShowLibraryData 
 	ctx, span := tracer.Start(ctx, "getShows")
 	defer span.End()
 
-	showSection, err := p.repo.GetLibraryByType(ctx, libraryTypeShow)
+	showLibrary, err := p.repo.GetPreferredLibrary(ctx, libraryTypeShow)
 	if err != nil {
 		span.RecordError(err)
-		span.SetStatus(codes.Error, "Failed to get show section")
-		p.logger.ErrorContext(ctx, "Error getting show section", "error", err)
+		span.SetStatus(codes.Error, "Failed to get show library")
+		p.logger.ErrorContext(ctx, "Error getting show library", "error", err)
 		return nil
 	}
 
-	url := fmt.Sprintf("%s/library/sections/%d/all?includeGuids=1", p.cfg.Host, showSection)
+	url := fmt.Sprintf("%s/library/sections/%d/all?includeGuids=1", p.cfg.Host, showLibrary.Section)
 	span.SetAttributes(attribute.String("plex.url", url))
 
 	var showsResp models.PlexShowsResponse
@@ -347,6 +365,24 @@ func (p *PlexHandler) getShows(ctx context.Context) *models.PlexShowLibraryData 
 			showData.Seasons = append(showData.Seasons, seasonData)
 		}
 
+		// Extract base directory from first available episode file path
+		for _, season := range showData.Seasons {
+			for _, episode := range season.Episodes {
+				for _, media := range episode.Media {
+					if media.File != "" {
+						showData.BaseDirectory = extractShowBaseDirectory(media.File, showLibrary.Path)
+						break
+					}
+				}
+				if showData.BaseDirectory != "" {
+					break
+				}
+			}
+			if showData.BaseDirectory != "" {
+				break
+			}
+		}
+
 		showSpan.SetAttributes(
 			attribute.Int("season_count", seasonCount),
 			attribute.Int("episode_count", episodeCount))
@@ -363,4 +399,66 @@ func (p *PlexHandler) getShows(ctx context.Context) *models.PlexShowLibraryData 
 	p.logger.InfoContext(ctx, "Fetched shows", "count", len(libraryData.Shows))
 
 	return libraryData
+}
+
+// extractShowBaseDirectory extracts the show's base directory by combining the library path
+// with the first subdirectory from the file path. This works regardless of file organization.
+// Example: filePath="/data/shows/Breaking Bad/Season 01/ep.mkv", libraryPath="/data/shows" → "/data/shows/Breaking Bad"
+func extractShowBaseDirectory(filePath, libraryPath string) string {
+	if filePath == "" || libraryPath == "" {
+		return ""
+	}
+
+	// Clean paths for consistent comparison
+	filePath = filepath.Clean(filePath)
+	libraryPath = filepath.Clean(libraryPath)
+
+	// Remove library path prefix from file path
+	if !strings.HasPrefix(filePath, libraryPath) {
+		return ""
+	}
+
+	// Get relative path after library
+	relativePath := strings.TrimPrefix(filePath, libraryPath)
+	relativePath = strings.TrimPrefix(relativePath, string(filepath.Separator))
+
+	// Split and take first directory component (the show directory)
+	parts := strings.Split(relativePath, string(filepath.Separator))
+	if len(parts) == 0 || parts[0] == "" {
+		return ""
+	}
+
+	// Return library path + show directory
+	return filepath.Join(libraryPath, parts[0])
+}
+
+// extractMovieBaseDirectory extracts the movie's base directory by combining the library path
+// with the first subdirectory from the file path.
+// Example: filePath="/data/movies/The Matrix (1999)/The Matrix.mkv", libraryPath="/data/movies" → "/data/movies/The Matrix (1999)"
+func extractMovieBaseDirectory(filePath, libraryPath string) string {
+	if filePath == "" || libraryPath == "" {
+		return ""
+	}
+
+	// Clean paths for consistent comparison
+	filePath = filepath.Clean(filePath)
+	libraryPath = filepath.Clean(libraryPath)
+
+	// Remove library path prefix from file path
+	if !strings.HasPrefix(filePath, libraryPath) {
+		return ""
+	}
+
+	// Get relative path after library
+	relativePath := strings.TrimPrefix(filePath, libraryPath)
+	relativePath = strings.TrimPrefix(relativePath, string(filepath.Separator))
+
+	// Split and take first directory component (the movie directory)
+	parts := strings.Split(relativePath, string(filepath.Separator))
+	if len(parts) == 0 || parts[0] == "" {
+		return ""
+	}
+
+	// Return library path + movie directory
+	return filepath.Join(libraryPath, parts[0])
 }

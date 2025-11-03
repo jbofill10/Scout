@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	tvdb "shared/media"
@@ -130,6 +131,9 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 			searchStrategies = append(searchStrategies, q.createSearchStrategy(req, &episode))
 		}
 
+		// Use WaitGroup to track all monitoring goroutines
+		var wg sync.WaitGroup
+
 		for _, strategies := range searchStrategies {
 			bestMatches := []*models.TorrentMatch{}
 			for _, ss := range strategies {
@@ -184,7 +188,9 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 
 			q.downloadTorrent(match.Torrent)
 			// watch torrent to complete
+			wg.Add(1)
 			go func(ctx context.Context) {
+				defer wg.Done()
 				ranRecheck := false
 				retries := 1
 				for {
@@ -231,6 +237,13 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 			}(ctx)
 
 		}
+
+		// Close the channel after all monitoring goroutines complete
+		go func() {
+			wg.Wait()
+			close(done)
+			q.logger.InfoContext(ctx, "All torrents processed, channel closed")
+		}()
 	}
 	return nil
 }
@@ -262,6 +275,7 @@ func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episo
 				Episode:     episode.AbsoluteNumber,
 				EpisodeMeta: episode,
 				Exclude:     []string{"season", "episode"},
+				TvdbId:      req.Id,
 			})
 		}
 	}
@@ -280,6 +294,7 @@ func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episo
 				Season:      episode.SeasonNumber,
 				Episode:     episode.Number,
 				EpisodeMeta: episode,
+				TvdbId:      req.Id,
 			})
 		}
 	}
@@ -305,7 +320,7 @@ func (q *QbittHandler) calcIndexerIDs(_ string, isAnime bool) []int64 {
 }
 
 func (q *QbittHandler) isCorrectTorrent(torrent *prowlarr.Search, strategy *models.SearchStrategy) bool {
-	if strings.Contains(strings.ToLower(torrent.SortTitle), "batch") {
+	if strings.Contains(strings.ToLower(torrent.SortTitle), "batch") || strings.Contains(strings.ToLower(torrent.SortTitle), "cour") {
 		return false
 	}
 

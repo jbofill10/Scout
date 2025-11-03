@@ -69,8 +69,8 @@ func main() {
 	}
 
 	fs := service.NewFsSvc(logger)
-	plex := service.NewPlexHandler(repo, logger, &cfg.Plex)
 	mp := service.NewMediaProcessSvc(logger, repo, fs)
+	plex := service.NewPlexHandler(repo, logger, &cfg.Plex, mp)
 
 	// Initialize interactors
 	downloadInteractor := interactors.NewDownloadInteractor(qbitt, mp, repo, logger)
@@ -89,6 +89,10 @@ func main() {
 	// Sync Plex library on startup
 	logger.Info("Syncing Plex library on startup")
 	plex.SyncPlexLibrary(context.Background())
+
+	// Start cache cleanup goroutine
+	ctx := context.Background()
+	mp.StartCacheCleanup(ctx)
 
 	addr := os.Getenv("BIND_ADDRESS")
 	if addr == "" {

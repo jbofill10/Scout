@@ -1,0 +1,138 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: scout-postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-scoutdb}
+      POSTGRES_USER: ${DB_USER:-scoutuser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-scoutpass}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/setup-postgres.sql:/docker-entrypoint-initdb.d/setup.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-scoutuser} -d ${DB_NAME:-scoutdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - scout-network
+
+  tvdb-proxy:
+    build:
+      context: .
+      dockerfile: tvdb_proxy/Dockerfile
+    container_name: scout-tvdb-proxy
+    environment:
+      BIND_ADDRESS: 0.0.0.0:22000
+      TVDB_HOST: ${TVDB_HOST:-https://api4.thetvdb.com/v4}
+      TVDB_API_KEY: ${TVDB_API_KEY}
+      TVDB_TOKEN: ${TVDB_TOKEN}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-localhost:4317}
+      OTEL_SERVICE_NAME: tvdb-proxy
+    ports:
+      - "22000:22000"
+    restart: unless-stopped
+    networks:
+      - scout-network
+
+  torrenter:
+    build:
+      context: .
+      dockerfile: torrenter/Dockerfile
+    container_name: scout-torrenter
+    environment:
+      BIND_ADDRESS: 0.0.0.0:22001
+      DB_HOST: postgres
+      DB_USER: ${DB_USER:-scoutuser}
+      DB_PASSWORD: ${DB_PASSWORD:-scoutpass}
+      DB_NAME: ${DB_NAME:-scoutdb}
+      PROWLARR_HOST: ${PROWLARR_HOST:-http://host.docker.internal:9696}
+      PROWLARR_KEY: ${PROWLARR_KEY}
+      QBITT_HOST: ${QBITT_HOST:-http://host.docker.internal:8080}
+      QBITT_USER: ${QBITT_USER}
+      QBITT_PASSWORD: ${QBITT_PASSWORD}
+      PLEX_HOST: ${PLEX_HOST:-http://host.docker.internal:32400}
+      PLEX_KEY: ${PLEX_KEY}
+      PLEX_MOVIE_SECTIONS: ${PLEX_MOVIE_SECTIONS:-3}
+      PLEX_SHOW_SECTIONS: ${PLEX_SHOW_SECTIONS:-4}
+      UI_ENDPOINT: ws://webserver:22920/status
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-localhost:4317}
+      OTEL_SERVICE_NAME: torrenter
+    volumes:
+      - /data/Downloads:/data/Downloads
+      - /data/Media:/data/Media
+    ports:
+      - "22001:22001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - scout-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  webserver:
+    build:
+      context: .
+      dockerfile: webserver/Dockerfile
+    container_name: scout-webserver
+    environment:
+      BIND_ADDRESS: 0.0.0.0:22920
+      TVDB_PROXY_HOST: tvdb-proxy:22000
+      TORRENTER_HOST: torrenter:22001
+      DB_HOST: postgres
+      DB_USER: ${DB_USER:-scoutuser}
+      DB_PASSWORD: ${DB_PASSWORD:-scoutpass}
+      DB_NAME: ${DB_NAME:-scoutdb}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-localhost:4317}
+      OTEL_SERVICE_NAME: webserver
+    ports:
+      - "22920:22920"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      tvdb-proxy:
+        condition: service_started
+      torrenter:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - scout-network
+
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+      args:
+        WEBSERVER_API_URL: http://webserver:22920
+    container_name: scout-ui
+    # Port not exposed - nginx routes to this service internally
+    restart: unless-stopped
+    networks:
+      - scout-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: scout-nginx
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "30030:80"
+    depends_on:
+      - webserver
+      - ui
+    restart: unless-stopped
+    networks:
+      - scout-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  scout-network:
+    driver: bridge

@@ -9,7 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"torrenter/internal/models"
-	"torrenter/internal/repository/mocks"
+	repoMocks "torrenter/internal/repository/mocks"
+	serviceMocks "torrenter/internal/service/mocks"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -17,10 +18,11 @@ import (
 
 type PlexHandlerTestSuite struct {
 	suite.Suite
-	handler *PlexHandler
-	repo    *mocks.Repository
-	logger  *slog.Logger
-	cfg     *models.PlexCfg
+	handler        *PlexHandler
+	repo           *repoMocks.Repository
+	mediaProcessor *serviceMocks.MediaProcessor
+	logger         *slog.Logger
+	cfg            *models.PlexCfg
 }
 
 func TestPlexHandlerSuite(t *testing.T) {
@@ -30,14 +32,15 @@ func TestPlexHandlerSuite(t *testing.T) {
 func (s *PlexHandlerTestSuite) SetupTest() {
 	buf := new(bytes.Buffer)
 	s.logger = slog.New(slog.NewTextHandler(buf, nil))
-	s.repo = mocks.NewRepository(s.T())
+	s.repo = repoMocks.NewRepository(s.T())
+	s.mediaProcessor = serviceMocks.NewMediaProcessor(s.T())
 
 	s.cfg = &models.PlexCfg{
 		Host: "http://localhost:32400",
 		Key:  "test-token",
 	}
 
-	s.handler = NewPlexHandler(s.repo, s.logger, s.cfg)
+	s.handler = NewPlexHandler(s.repo, s.logger, s.cfg, s.mediaProcessor)
 }
 
 func (s *PlexHandlerTestSuite) TestGetLibraries_Success() {
@@ -73,7 +76,13 @@ func (s *PlexHandlerTestSuite) TestGetLibraries_Success() {
 
 func (s *PlexHandlerTestSuite) TestGetMovies_Success() {
 	// Setup repo mock
-	s.repo.On("GetLibraryByType", mock.Anything, "movie").Return(1, nil)
+	library := models.PlexLibrary{
+		Id:      1,
+		Type:    "movie",
+		Path:    "/data/movies",
+		Section: 1,
+	}
+	s.repo.On("GetPreferredLibrary", mock.Anything, "movie").Return(library, nil)
 
 	// Create mock Plex server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +113,7 @@ func (s *PlexHandlerTestSuite) TestGetMovies_Success() {
 
 func (s *PlexHandlerTestSuite) TestGetMovies_NoLibrary() {
 	// Setup repo mock to return error
-	s.repo.On("GetLibraryByType", mock.Anything, "movie").Return(0, http.ErrMissingFile)
+	s.repo.On("GetPreferredLibrary", mock.Anything, "movie").Return(models.PlexLibrary{}, http.ErrMissingFile)
 
 	movies := s.handler.getMovies(context.Background())
 
@@ -166,12 +175,14 @@ func (s *PlexHandlerTestSuite) TestFetchAndUnmarshal_InvalidXML() {
 }
 
 func (s *PlexHandlerTestSuite) TestNewPlexHandler() {
-	handler := NewPlexHandler(s.repo, s.logger, s.cfg)
+	mediaProc := serviceMocks.NewMediaProcessor(s.T())
+	handler := NewPlexHandler(s.repo, s.logger, s.cfg, mediaProc)
 
 	s.NotNil(handler)
 	s.Equal(s.repo, handler.repo)
 	s.Equal(s.logger, handler.logger)
 	s.Equal(s.cfg, handler.cfg)
+	s.Equal(mediaProc, handler.mediaProcessor)
 }
 
 func (s *PlexHandlerTestSuite) TestSyncPlexLibrary_Integration() {

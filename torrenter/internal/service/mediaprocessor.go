@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strconv"
+	"sync"
+	"time"
 	"torrenter/internal/models"
 )
 
@@ -12,14 +15,86 @@ var (
 	commonFileExtensions = []string{".mkv", ".mp4", ".avi", ".mov", ".webm"}
 )
 
+// BaseDirectoryCache provides thread-safe in-memory caching of tvdb_id -> base_directory mappings
+type BaseDirectoryCache struct {
+	mu    sync.RWMutex
+	cache map[string]string
+}
+
+func NewBaseDirectoryCache() *BaseDirectoryCache {
+	return &BaseDirectoryCache{
+		cache: make(map[string]string),
+	}
+}
+
 type MediaProcessSvc struct {
-	Logger *slog.Logger
-	repo   Repository
-	fs     FileSystem
+	Logger    *slog.Logger
+	repo      Repository
+	fs        FileSystem
+	dirCache  *BaseDirectoryCache
+	cancelCtx context.CancelFunc
 }
 
 func NewMediaProcessSvc(logger *slog.Logger, repo Repository, fs FileSystem) MediaProcessor {
-	return &MediaProcessSvc{Logger: logger, repo: repo, fs: fs}
+	return &MediaProcessSvc{
+		Logger:   logger,
+		repo:     repo,
+		fs:       fs,
+		dirCache: NewBaseDirectoryCache(),
+	}
+}
+
+// GetFromCache retrieves a cached base directory for a given tvdb_id
+func (mp *MediaProcessSvc) GetFromCache(tvdbId string) (string, bool) {
+	mp.dirCache.mu.RLock()
+	defer mp.dirCache.mu.RUnlock()
+	baseDir, exists := mp.dirCache.cache[tvdbId]
+	return baseDir, exists
+}
+
+// SetInCache stores a base directory for a given tvdb_id
+func (mp *MediaProcessSvc) SetInCache(tvdbId, baseDir string) {
+	mp.dirCache.mu.Lock()
+	defer mp.dirCache.mu.Unlock()
+	mp.dirCache.cache[tvdbId] = baseDir
+	mp.Logger.Debug("Cached base directory", "tvdb_id", tvdbId, "base_dir", baseDir)
+}
+
+// InvalidateCache removes cache entries for tvdb_ids that now exist in the database
+func (mp *MediaProcessSvc) InvalidateCache(ctx context.Context) {
+	mp.dirCache.mu.Lock()
+	defer mp.dirCache.mu.Unlock()
+
+	for tvdbId := range mp.dirCache.cache {
+		// Check if base_directory now exists in Shows or Movies
+		_, showErr := mp.repo.GetShowBaseDirectory(ctx, tvdbId)
+		_, movieErr := mp.repo.GetMovieBaseDirectory(ctx, tvdbId)
+
+		// If either query succeeded, the base_directory is now in DB - remove from cache
+		if showErr == nil || movieErr == nil {
+			delete(mp.dirCache.cache, tvdbId)
+			mp.Logger.Info("Invalidated cache entry", "tvdb_id", tvdbId)
+		}
+	}
+}
+
+// StartCacheCleanup runs a goroutine that periodically invalidates the cache every 30 minutes
+func (mp *MediaProcessSvc) StartCacheCleanup(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Minute)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				mp.Logger.Info("Cache cleanup goroutine stopping")
+				return
+			case <-ticker.C:
+				mp.Logger.Info("Running periodic cache cleanup")
+				mp.InvalidateCache(ctx)
+			}
+		}
+	}()
+	mp.Logger.Info("Started cache cleanup goroutine (runs every 30 minutes)")
 }
 
 func (mp *MediaProcessSvc) ProcessDownloadedTorrent(ctx context.Context, media *models.TorrentCompleteEvent) error {
@@ -40,28 +115,111 @@ func (mp *MediaProcessSvc) ProcessDownloadedTorrent(ctx context.Context, media *
 		req.Episode = fmt.Sprint(media.Req.Episode)
 	}
 
-	// Prepare the media path based on the request
-	mediaPath := mp.prepMediaPath(req)
-
-	// TODO: implement logic for movies
-	isShow := req.IsShow()
-	libraryPath, err := mp.getLibraryPath(ctx, isShow)
-	if err != nil {
-		return fmt.Errorf("failed to get library path: %v", err)
-	}
-
 	fileName, err := mp.getFile(media.SavePath)
 	if err != nil {
 		return fmt.Errorf("failed to get file: %v", err)
 	}
 
-	fullSavePath := fmt.Sprintf("%s/%s/%s", libraryPath.Path, mediaPath, fileName)
+	isShow := req.IsShow()
 
-	// TODO: Add hard-linking target file
-	// mp.fs.HardLink(fullSavePath, li)
+	var baseDir string
+	var source string
 
-	mp.Logger.InfoContext(ctx, "Full save path", "path", fullSavePath)
-	mp.Logger.InfoContext(ctx, "Torrent processing completed", "media", media.Req.MediaName)
+	if media.Req.TvdbId != "" {
+		// Check cache first
+		cachedDir, found := mp.GetFromCache(media.Req.TvdbId)
+		if found {
+			baseDir = cachedDir
+			source = "cache"
+			mp.Logger.InfoContext(ctx, "Found base directory in cache", "tvdb_id", media.Req.TvdbId, "base_dir", baseDir)
+		} else {
+			// not in cache, query database
+			var err error
+			if isShow {
+				baseDir, err = mp.repo.GetShowBaseDirectory(ctx, media.Req.TvdbId)
+			} else {
+				baseDir, err = mp.repo.GetMovieBaseDirectory(ctx, media.Req.TvdbId)
+			}
+			if err == nil && baseDir != "" {
+				source = "database"
+				mp.Logger.InfoContext(ctx, "Found base directory in database", "tvdb_id", media.Req.TvdbId, "base_dir", baseDir)
+				// Cache the DB result for future use
+				mp.SetInCache(media.Req.TvdbId, baseDir)
+			}
+		}
+	}
+
+	var fullSavePath string
+	if baseDir != "" {
+		// Use existing base directory (from cache or DB)
+		if isShow {
+			season, _ := strconv.Atoi(req.Season)
+			seasonPath := fmt.Sprintf("Season %s", standardizeNumber(season))
+			fullSavePath = filepath.Join(baseDir, seasonPath, fileName)
+		} else {
+			fullSavePath = filepath.Join(baseDir, fileName)
+		}
+		mp.Logger.InfoContext(ctx, "Using base directory", "source", source, "base_dir", baseDir)
+	} else {
+		// 3. Construct new path and cache it
+		libraryPath, err := mp.getLibraryPath(ctx, isShow)
+		if err != nil {
+			return fmt.Errorf("failed to get library path: %v", err)
+		}
+
+		// Construct base directory (show/movie folder only, no season/episode)
+		if isShow {
+			baseDir = filepath.Join(libraryPath.Path, req.MediaName)
+			season, _ := strconv.Atoi(req.Season)
+			seasonPath := fmt.Sprintf("Season %s", standardizeNumber(season))
+			fullSavePath = filepath.Join(baseDir, seasonPath, fileName)
+		} else {
+			baseDir = filepath.Join(libraryPath.Path, req.MediaName+" ("+req.ReleaseYear+")")
+			fullSavePath = filepath.Join(baseDir, fileName)
+		}
+
+		// Cache the base directory for consistency
+		if media.Req.TvdbId != "" {
+			mp.SetInCache(media.Req.TvdbId, baseDir)
+		}
+
+		mp.Logger.InfoContext(ctx, "Constructed new base directory and cached it", "base_dir", baseDir, "tvdb_id", media.Req.TvdbId)
+	}
+
+	// Create source path (where qBittorrent saved the file)
+	sourcePath := filepath.Join(media.SavePath, fileName)
+
+	// Extract target directory from full save path
+	targetDir := filepath.Dir(fullSavePath)
+
+	mp.Logger.InfoContext(ctx, "Preparing to create symbolic link", "source", sourcePath, "destination", fullSavePath)
+	mp.Logger.InfoContext(ctx, "Creating target directory", "path", targetDir)
+
+	// Create directory structure (includes Season folder for shows)
+	mp.Logger.InfoContext(ctx, "Creating target directory", "path", targetDir)
+	if err := mp.fs.MkDir(targetDir); err != nil {
+		return fmt.Errorf("failed to create target directory %s: %w", targetDir, err)
+	}
+
+	// Create symbolic link from qBittorrent download to Plex library
+	mp.Logger.InfoContext(ctx, "Creating symbolic link", "source", sourcePath, "destination", fullSavePath)
+	if err := mp.fs.HardLink(sourcePath, fullSavePath); err != nil {
+		mp.Logger.ErrorContext(ctx, "Failed to create symbolic link", "source", sourcePath, "destination", fullSavePath, "error", err)
+
+		// Log failure to download history
+		absoluteEpisode := 0
+		if media.Req.EpisodeMeta != nil {
+			absoluteEpisode = media.Req.EpisodeMeta.AbsoluteNumber
+		}
+		reason := fmt.Sprintf("symbolic link failed: %v", err)
+		if historyErr := mp.repo.InsertDownloadHistory(ctx, media.Req.MediaName, media.Req.Season, media.Req.Episode, absoluteEpisode, media.Hash, "failure", reason); historyErr != nil {
+			mp.Logger.ErrorContext(ctx, "Failed to insert download history", "error", historyErr)
+		}
+
+		return fmt.Errorf("failed to create symbolic link from %s to %s: %w", sourcePath, fullSavePath, err)
+	}
+
+	mp.Logger.InfoContext(ctx, "Successfully created symbolic link", "path", fullSavePath)
 
 	return nil
 }

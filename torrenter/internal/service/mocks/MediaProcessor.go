@@ -14,6 +14,11 @@ type MediaProcessor struct {
 	mock.Mock
 }
 
+// InvalidateCache provides a mock function with given fields: ctx
+func (_m *MediaProcessor) InvalidateCache(ctx context.Context) {
+	_m.Called(ctx)
+}
+
 // ProcessDownloadedTorrent provides a mock function with given fields: ctx, media
 func (_m *MediaProcessor) ProcessDownloadedTorrent(ctx context.Context, media *models.TorrentCompleteEvent) error {
 	ret := _m.Called(ctx, media)
@@ -30,6 +35,11 @@ func (_m *MediaProcessor) ProcessDownloadedTorrent(ctx context.Context, media *m
 	}
 
 	return r0
+}
+
+// StartCacheCleanup provides a mock function with given fields: ctx
+func (_m *MediaProcessor) StartCacheCleanup(ctx context.Context) {
+	_m.Called(ctx)
 }
 
 // NewMediaProcessor creates a new instance of MediaProcessor. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.

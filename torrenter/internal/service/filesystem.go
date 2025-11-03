@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 )
@@ -14,12 +15,20 @@ func NewFsSvc(logger *slog.Logger) FileSystem {
 }
 
 func (fs *FsSvc) HardLink(sourcePath, destPath string) error {
-	fs.Logger.Info("Creating hard link", "source", sourcePath, "dest", destPath)
-	err := os.Link(sourcePath, destPath)
-	if err != nil {
-		fs.Logger.Error("Failed to create hard link", "error", err)
+	fs.Logger.Info("Creating symbolic link", "source", sourcePath, "dest", destPath)
+
+	// Check if source exists first to maintain hard link behavior
+	if _, err := os.Stat(sourcePath); err != nil {
+		fs.Logger.Error("Source file does not exist", "source", sourcePath, "error", err)
+		return fmt.Errorf("source file does not exist: %w", err)
 	}
-	return err
+
+	err := os.Symlink(sourcePath, destPath)
+	if err != nil {
+		fs.Logger.Error("Failed to create symbolic link", "error", err)
+		return err
+	}
+	return nil
 }
 
 func (fs *FsSvc) MkDir(path string) error {

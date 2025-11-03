@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"sort"
-	"strings"
 	"sync"
 
 	tvdb "shared/media"
@@ -189,7 +188,7 @@ func loadConfig() error {
 		}
 	}
 
-	// Override with environment variables (takes precedence)
+	// Override with environment variables (highest priority)
 	if host := os.Getenv("TVDB_HOST"); host != "" {
 		tvDbConfig.Host = host
 	}
@@ -198,14 +197,6 @@ func loadConfig() error {
 	}
 	if token := os.Getenv("TVDB_TOKEN"); token != "" {
 		tvDbConfig.Token = token
-	}
-
-	// Load sensitive data from secrets files (K8s mounted secrets)
-	if apiKey, err := os.ReadFile("secrets/api-key"); err == nil {
-		tvDbConfig.ApiKey = strings.TrimSpace(string(apiKey))
-	}
-	if token, err := os.ReadFile("secrets/token"); err == nil {
-		tvDbConfig.Token = strings.TrimSpace(string(token))
 	}
 
 	// Validate required fields

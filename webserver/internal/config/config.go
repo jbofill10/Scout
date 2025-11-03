@@ -27,7 +27,7 @@ func Load() (Config, error) {
 	var cfg Config
 
 	// Database configuration
-	cfg.Database.Host = getEnv("DB_HOST", "postgres-service")
+	cfg.Database.Host = getEnv("DB_HOST", "postgres")
 	cfg.Database.User = getEnv("DB_USER", "scoutuser")
 	cfg.Database.Password = getEnv("DB_PASSWORD", "scoutpass")
 	cfg.Database.Name = getEnv("DB_NAME", "scoutdb")
@@ -40,9 +40,9 @@ func Load() (Config, error) {
 		cfg.Database.Name,
 	)
 
-	// Service discovery
-	cfg.TVDBProxyHost = getEnv("TVDB_PROXY_HOST", "localhost:22000")
-	cfg.TorrenterHost = getEnv("TORRENTER_HOST", "localhost:22001")
+	// Service discovery (defaults for docker-compose)
+	cfg.TVDBProxyHost = getEnv("TVDB_PROXY_HOST", "tvdb-proxy:22000")
+	cfg.TorrenterHost = getEnv("TORRENTER_HOST", "torrenter:22001")
 
 	// Server configuration
 	cfg.BindAddress = getEnv("BIND_ADDRESS", "0.0.0.0:22920")

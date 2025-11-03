@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"torrenter/internal/models"
 	"torrenter/internal/repository/mocks"
@@ -34,7 +35,8 @@ func (ts *testSuite) SetupTest() {
 	ts.logger = slog.New(slog.NewTextHandler(buf, nil))
 	ts.fs = servicemocks.NewFileSystem(ts.T())
 
-	ts.svc = &MediaProcessSvc{Logger: ts.logger, repo: ts.repo, fs: ts.fs}
+	// Use constructor to ensure cache is properly initialized
+	ts.svc = NewMediaProcessSvc(ts.logger, ts.repo, ts.fs).(*MediaProcessSvc)
 }
 
 func (ts *testSuite) TestPrepMediaPath_Show() {
@@ -136,10 +138,17 @@ func (ts *testSuite) TestProcessDownloadedTorrent_Success() {
 			MediaName: "TestShow",
 			Season:    1,
 			Episode:   2,
+			TvdbId:    "12345",
 		},
 	}
-	ts.repo.On("GetPreferredLibrary", mock.Anything, "show").Return(models.PlexLibrary{Path: "/shows"}, nil)
 	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.mkv"}, nil)
+	// Mock GetShowBaseDirectory - return error to test fallback path (uses cache/construct)
+	ts.repo.On("GetShowBaseDirectory", mock.Anything, "12345").Return("", errors.New("not found"))
+	ts.repo.On("GetPreferredLibrary", mock.Anything, "show").Return(models.PlexLibrary{Path: "/shows"}, nil)
+	// Mock MkDir and HardLink for directory creation and hard linking
+	ts.fs.On("MkDir", "/shows/TestShow/Season 01").Return(nil)
+	ts.fs.On("HardLink", "/downloads/file.mkv", "/shows/TestShow/Season 01/file.mkv").Return(nil)
+	// Note: SetBaseDirectoryForTvdbId no longer exists - base directories are cached in-memory only
 	err := ts.svc.ProcessDownloadedTorrent(context.Background(), event)
 	ts.NoError(err)
 	ts.repo.AssertExpectations(ts.T())
@@ -155,10 +164,82 @@ func (ts *testSuite) TestProcessDownloadedTorrent_NoVideoFileError() {
 			Episode:   0,
 		},
 	}
-	ts.repo.On("GetPreferredLibrary", mock.Anything, "movie").Return(models.PlexLibrary{Path: "/movies"}, nil)
+	// Note: getFile is called first, so it fails before GetPreferredLibrary or GetMovieBaseDirectory are called
 	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.txt", "readme.md"}, nil)
 	err := ts.svc.ProcessDownloadedTorrent(context.Background(), event)
 	ts.Error(err)
+	ts.fs.AssertExpectations(ts.T())
+}
+
+func (ts *testSuite) TestProcessDownloadedTorrent_Movie_Success() {
+	event := &models.TorrentCompleteEvent{
+		SavePath: "/downloads",
+		Req: &models.SearchStrategy{
+			MediaName:   "TestMovie",
+			ReleaseYear: "2023",
+			Season:      0,
+			Episode:     0,
+			TvdbId:      "67890",
+		},
+	}
+	ts.fs.On("ReadDir", "/downloads").Return([]string{"movie.mkv"}, nil)
+	// Mock GetMovieBaseDirectory - return error to test fallback path (uses cache/construct)
+	ts.repo.On("GetMovieBaseDirectory", mock.Anything, "67890").Return("", errors.New("not found"))
+	ts.repo.On("GetPreferredLibrary", mock.Anything, "movie").Return(models.PlexLibrary{Path: "/movies"}, nil)
+	// Mock MkDir and HardLink for directory creation and hard linking
+	ts.fs.On("MkDir", "/movies/TestMovie (2023)").Return(nil)
+	ts.fs.On("HardLink", "/downloads/movie.mkv", "/movies/TestMovie (2023)/movie.mkv").Return(nil)
+	err := ts.svc.ProcessDownloadedTorrent(context.Background(), event)
+	ts.NoError(err)
+	ts.repo.AssertExpectations(ts.T())
+	ts.fs.AssertExpectations(ts.T())
+}
+
+func (ts *testSuite) TestProcessDownloadedTorrent_MkDirError() {
+	event := &models.TorrentCompleteEvent{
+		SavePath: "/downloads",
+		Req: &models.SearchStrategy{
+			MediaName: "TestShow",
+			Season:    1,
+			Episode:   2,
+			TvdbId:    "12345",
+		},
+	}
+	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.mkv"}, nil)
+	ts.repo.On("GetShowBaseDirectory", mock.Anything, "12345").Return("", errors.New("not found"))
+	ts.repo.On("GetPreferredLibrary", mock.Anything, "show").Return(models.PlexLibrary{Path: "/shows"}, nil)
+	// Mock MkDir to return error
+	ts.fs.On("MkDir", "/shows/TestShow/Season 01").Return(errors.New("permission denied"))
+	err := ts.svc.ProcessDownloadedTorrent(context.Background(), event)
+	ts.Error(err)
+	ts.Contains(err.Error(), "failed to create target directory")
+	ts.repo.AssertExpectations(ts.T())
+	ts.fs.AssertExpectations(ts.T())
+}
+
+func (ts *testSuite) TestProcessDownloadedTorrent_HardLinkError() {
+	event := &models.TorrentCompleteEvent{
+		SavePath: "/downloads",
+		Req: &models.SearchStrategy{
+			MediaName: "TestShow",
+			Season:    1,
+			Episode:   2,
+			TvdbId:    "12345",
+		},
+	}
+	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.mkv"}, nil)
+	ts.repo.On("GetShowBaseDirectory", mock.Anything, "12345").Return("", errors.New("not found"))
+	ts.repo.On("GetPreferredLibrary", mock.Anything, "show").Return(models.PlexLibrary{Path: "/shows"}, nil)
+	ts.fs.On("MkDir", "/shows/TestShow/Season 01").Return(nil)
+	// Mock HardLink to return error
+	ts.fs.On("HardLink", "/downloads/file.mkv", "/shows/TestShow/Season 01/file.mkv").Return(errors.New("cross-device link"))
+	// Expect InsertDownloadHistory call when hard link fails
+	ts.repo.On("InsertDownloadHistory", mock.Anything, "TestShow", 1, 2, 0, "", "failure", mock.MatchedBy(func(reason string) bool {
+		return strings.Contains(reason, "symbolic link failed")
+	})).Return(nil)
+	err := ts.svc.ProcessDownloadedTorrent(context.Background(), event)
+	ts.Error(err)
+	ts.Contains(err.Error(), "failed to create symbolic link")
 	ts.repo.AssertExpectations(ts.T())
 	ts.fs.AssertExpectations(ts.T())
 }
