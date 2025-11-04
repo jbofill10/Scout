@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	tvdb "shared/media"
 	"strings"
 	"testing"
 	"torrenter/internal/models"
@@ -39,47 +40,77 @@ func (ts *testSuite) SetupTest() {
 	ts.svc = NewMediaProcessSvc(ts.logger, ts.repo, ts.fs).(*MediaProcessSvc)
 }
 
-func (ts *testSuite) TestPrepMediaPath_Show() {
+func (ts *testSuite) TestConstructPlexFilename() {
 	testCases := []struct {
-		name     string
-		req      *models.DownloadRequest
-		expected string
+		name             string
+		mediaName        string
+		episodeMeta      *tvdb.Episode
+		originalFileName string
+		expected         string
 	}{
 		{
-			name: "Single Digit Season/Episode",
-			req: &models.DownloadRequest{
-				MediaName: "TestShow",
-				Season:    "1",
-				Episode:   "2",
+			name:      "Anime Episode - Single Digit Season/Episode",
+			mediaName: "My Hero Academia",
+			episodeMeta: &tvdb.Episode{
+				SeasonNumber:   2,
+				Number:         1,
+				AbsoluteNumber: 14,
 			},
-			expected: "TestShow/Season 01/TestShow - S01E02",
+			originalFileName: "[SubsPlease] My Hero Academia - 14 (1080p).mkv",
+			expected:         "My Hero Academia - S02E01.mkv",
 		},
 		{
-			name: "Double Digit Season/Episode",
-			req: &models.DownloadRequest{
-				MediaName: "TestShow",
-				Season:    "10",
-				Episode:   "12",
+			name:      "Regular Show - Double Digit Season/Episode",
+			mediaName: "Breaking Bad",
+			episodeMeta: &tvdb.Episode{
+				SeasonNumber:   5,
+				Number:         16,
+				AbsoluteNumber: 0,
 			},
-			expected: "TestShow/Season 10/TestShow - S10E12",
+			originalFileName: "Breaking.Bad.S05E16.1080p.WEB.mkv",
+			expected:         "Breaking Bad - S05E16.mkv",
+		},
+		{
+			name:      "Anime Episode - MP4 Extension",
+			mediaName: "Attack on Titan",
+			episodeMeta: &tvdb.Episode{
+				SeasonNumber:   1,
+				Number:         5,
+				AbsoluteNumber: 5,
+			},
+			originalFileName: "[HorribleSubs] Attack on Titan - 05 [720p].mp4",
+			expected:         "Attack on Titan - S01E05.mp4",
+		},
+		{
+			name:      "Regular Show - AVI Extension",
+			mediaName: "The Office",
+			episodeMeta: &tvdb.Episode{
+				SeasonNumber:   3,
+				Number:         12,
+				AbsoluteNumber: 0,
+			},
+			originalFileName: "The.Office.S03E12.avi",
+			expected:         "The Office - S03E12.avi",
+		},
+		{
+			name:      "Episode with Special Characters in Title",
+			mediaName: "Show: The Series",
+			episodeMeta: &tvdb.Episode{
+				SeasonNumber:   1,
+				Number:         1,
+				AbsoluteNumber: 1,
+			},
+			originalFileName: "[Group] Show - 01 [1080p].mkv",
+			expected:         "Show: The Series - S01E01.mkv",
 		},
 	}
 
 	for _, tc := range testCases {
 		ts.Run(tc.name, func() {
-			path := ts.svc.prepMediaPath(tc.req)
-			ts.Equal(tc.expected, path)
+			result := ts.svc.constructPlexFilename(tc.mediaName, tc.episodeMeta, tc.originalFileName)
+			ts.Equal(tc.expected, result)
 		})
 	}
-}
-
-func (ts *testSuite) TestPrepMediaPath_Movie() {
-	req := &models.DownloadRequest{
-		MediaName:   "TestMovie",
-		ReleaseYear: "2023",
-	}
-	path := ts.svc.prepMediaPath(req)
-	ts.Equal("TestMovie (2023)", path)
 }
 
 func (ts *testSuite) TestGetFile_Valid() {
@@ -139,6 +170,10 @@ func (ts *testSuite) TestProcessDownloadedTorrent_Success() {
 			Season:    1,
 			Episode:   2,
 			TvdbId:    "12345",
+			EpisodeMeta: &tvdb.Episode{
+				SeasonNumber: 1,
+				Number:       2,
+			},
 		},
 	}
 	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.mkv"}, nil)
@@ -147,7 +182,8 @@ func (ts *testSuite) TestProcessDownloadedTorrent_Success() {
 	ts.repo.On("GetPreferredLibrary", mock.Anything, "show").Return(models.PlexLibrary{Path: "/shows"}, nil)
 	// Mock MkDir and HardLink for directory creation and hard linking
 	ts.fs.On("MkDir", "/shows/TestShow/Season 01").Return(nil)
-	ts.fs.On("HardLink", "/downloads/file.mkv", "/shows/TestShow/Season 01/file.mkv").Return(nil)
+	// Filename should now use Plex format: "ShowName - S##E##.ext"
+	ts.fs.On("HardLink", "/downloads/file.mkv", "/shows/TestShow/Season 01/TestShow - S01E02.mkv").Return(nil)
 	// Note: SetBaseDirectoryForTvdbId no longer exists - base directories are cached in-memory only
 	err := ts.svc.ProcessDownloadedTorrent(context.Background(), event)
 	ts.NoError(err)
@@ -203,6 +239,10 @@ func (ts *testSuite) TestProcessDownloadedTorrent_MkDirError() {
 			Season:    1,
 			Episode:   2,
 			TvdbId:    "12345",
+			EpisodeMeta: &tvdb.Episode{
+				SeasonNumber: 1,
+				Number:       2,
+			},
 		},
 	}
 	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.mkv"}, nil)
@@ -225,14 +265,18 @@ func (ts *testSuite) TestProcessDownloadedTorrent_HardLinkError() {
 			Season:    1,
 			Episode:   2,
 			TvdbId:    "12345",
+			EpisodeMeta: &tvdb.Episode{
+				SeasonNumber: 1,
+				Number:       2,
+			},
 		},
 	}
 	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.mkv"}, nil)
 	ts.repo.On("GetShowBaseDirectory", mock.Anything, "12345").Return("", errors.New("not found"))
 	ts.repo.On("GetPreferredLibrary", mock.Anything, "show").Return(models.PlexLibrary{Path: "/shows"}, nil)
 	ts.fs.On("MkDir", "/shows/TestShow/Season 01").Return(nil)
-	// Mock HardLink to return error
-	ts.fs.On("HardLink", "/downloads/file.mkv", "/shows/TestShow/Season 01/file.mkv").Return(errors.New("cross-device link"))
+	// Mock HardLink to return error - filename should now use Plex format
+	ts.fs.On("HardLink", "/downloads/file.mkv", "/shows/TestShow/Season 01/TestShow - S01E02.mkv").Return(errors.New("cross-device link"))
 	// Expect InsertDownloadHistory call when hard link fails
 	ts.repo.On("InsertDownloadHistory", mock.Anything, "TestShow", 1, 2, 0, "", "failure", mock.MatchedBy(func(reason string) bool {
 		return strings.Contains(reason, "symbolic link failed")

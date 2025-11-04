@@ -234,7 +234,7 @@ func tvDbGet(ctx context.Context, uri string) ([]byte, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.InfoContext(ctx, "Error making request to TVDB")
+		logger.InfoContext(ctx, "Error making request to TVDB", "error", err)
 		return nil, err
 	}
 	defer func() {
@@ -350,7 +350,7 @@ func getExtendedInformation(c *gin.Context) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.InfoContext(ctx, "Error making request to TVDB")
+		logger.InfoContext(ctx, "Error making request to TVDB", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Internal Server Error: Unable to get extended information for media ID %s", mediaId)})
 		return
 	}
