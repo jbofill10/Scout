@@ -76,6 +76,7 @@ func (q *QbittHandler) searchProwlarr(ctx context.Context, query, category strin
 	resp, err := q.p.SearchContext(ctx, prowlarr.SearchInput{
 		Query:      query,
 		IndexerIDs: q.calcIndexerIDs(category, isAnime),
+		Limit:      500,
 	})
 
 	if err != nil {
@@ -306,7 +307,11 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 			q.downloadTorrent(winningCtx, match.Torrent)
 			// watch torrent to complete
 			wg.Add(1)
-			go func(winningCtx context.Context, winningSpan trace.Span, episodeSpan trace.Span, match *models.TorrentMatch) {
+			go func(winningSpan trace.Span, episodeSpan trace.Span, match *models.TorrentMatch) {
+				// Create a background context independent of the HTTP request lifecycle
+				// Preserve the span context for trace correlation
+				monitorCtx := trace.ContextWithSpanContext(context.Background(), trace.SpanContextFromContext(winningCtx))
+
 				defer wg.Done()
 				defer winningSpan.End()
 				defer episodeSpan.End()
@@ -320,18 +325,18 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 					}
 
 					// Log the request details before making the API call
-					q.logger.InfoContext(winningCtx, "Fetching torrent status from qBittorrent",
-						telemetry.WithTraceContext(winningCtx,
+					q.logger.InfoContext(monitorCtx, "Fetching torrent status from qBittorrent",
+						telemetry.WithTraceContext(monitorCtx,
 							"torrent_title", match.Torrent.Title,
 							"torrent_hash", match.Torrent.InfoHash,
 							"category_filter", scoutTag,
 							"attempt", retries)...)
 
-					torrents, err := q.c.GetTorrentsCtx(winningCtx, filter)
+					torrents, err := q.c.GetTorrentsCtx(monitorCtx, filter)
 					if err != nil {
 						// Enhanced error logging with full context
-						q.logger.ErrorContext(winningCtx, "Error fetching torrents from qBittorrent API",
-							telemetry.WithTraceContext(winningCtx,
+						q.logger.ErrorContext(monitorCtx, "Error fetching torrents from qBittorrent API",
+							telemetry.WithTraceContext(monitorCtx,
 								"error", err.Error(),
 								"error_type", fmt.Sprintf("%T", err),
 								"torrent_title", match.Torrent.Title,
@@ -339,9 +344,9 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 								"category_filter", scoutTag,
 								"attempt", retries)...)
 						retries++
-						time.Sleep(6 * time.Second)
+						time.Sleep(1 * time.Minute)
 						if retries > 6 {
-							q.logger.WarnContext(winningCtx, "Max retries reached, stopping watch", "torrent", match.Torrent.Title)
+							q.logger.WarnContext(monitorCtx, "Max retries reached, stopping watch", "torrent", match.Torrent.Title)
 							winningSpan.SetStatus(codes.Error, "max retries reached")
 							episodeSpan.SetStatus(codes.Error, "download monitoring failed")
 							return
@@ -350,13 +355,13 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 					}
 
 					// Log successful response details
-					q.logger.InfoContext(winningCtx, "Successfully fetched torrent status",
-						telemetry.WithTraceContext(winningCtx,
+					q.logger.InfoContext(monitorCtx, "Successfully fetched torrent status",
+						telemetry.WithTraceContext(monitorCtx,
 							"torrent_title", match.Torrent.Title,
 							"torrent_hash", match.Torrent.InfoHash,
 							"torrents_returned", len(torrents))...)
 					if len(torrents) == 0 {
-						q.logger.InfoContext(winningCtx, "Torrent not found, continuing watch", "torrent", match.Torrent.Title)
+						q.logger.InfoContext(monitorCtx, "Torrent not found, continuing watch", "torrent", match.Torrent.Title)
 						continue
 					}
 					torrent := torrents[0]
@@ -364,25 +369,25 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 
 						if !ranRecheck {
 							ranRecheck = true
-							q.c.RecheckCtx(winningCtx, []string{torrent.Hash})
+							q.c.RecheckCtx(monitorCtx, []string{torrent.Hash})
 							continue
 						}
 
-						q.logger.InfoContext(winningCtx, "Torrent completed", "title", match.Torrent.Title)
+						q.logger.InfoContext(monitorCtx, "Torrent completed", "title", match.Torrent.Title)
 						winningSpan.SetStatus(codes.Ok, "torrent downloaded successfully")
 						episodeSpan.SetStatus(codes.Ok, "episode download completed")
 						done <- models.TorrentCompleteEvent{
 							SavePath:    torrent.SavePath,
 							Req:         match.Strategy,
 							Hash:        match.Torrent.InfoHash,
-							SpanContext: trace.SpanContextFromContext(winningCtx),
+							SpanContext: trace.SpanContextFromContext(monitorCtx),
 						}
 						break
 					} else {
-						q.logger.InfoContext(winningCtx, "Torrent downloading", "title", match.Torrent.Title, "progress", torrent.Progress*100)
+						q.logger.InfoContext(monitorCtx, "Torrent downloading", "title", match.Torrent.Title, "progress", torrent.Progress*100)
 					}
 				}
-			}(winningCtx, winningSpan, episodeSpan, match)
+			}(winningSpan, episodeSpan, match)
 
 		}
 
@@ -620,24 +625,6 @@ func (q *QbittHandler) validateTorrent(torrent *prowlarr.Search, strategy *model
 	}
 }
 
-// validateSeasonalFormatForAnime checks if a seasonal format torrent matches the expected absolute episode
-func (q *QbittHandler) validateSeasonalFormatForAnime(parsed *ParsedTorrent, strategy *models.SearchStrategy) bool {
-	if strategy.EpisodeMeta == nil {
-		// No metadata available, reject for safety
-		return false
-	}
-
-	// Check if the season and episode numbers from the torrent match the metadata
-	// The EpisodeMeta should have both AbsoluteNumber and SeasonNumber/Number
-	if strategy.EpisodeMeta.SeasonNumber == parsed.Season &&
-		strategy.EpisodeMeta.Number == parsed.Episode &&
-		strategy.EpisodeMeta.AbsoluteNumber == strategy.Episode {
-		return true
-	}
-
-	return false
-}
-
 // scoreNameMatch scores how well the parsed show name matches the expected name
 // Simplified to use substring matching since Prowlarr's search already filters relevant results
 func (q *QbittHandler) scoreNameMatch(parsedName, expectedName string) float64 {
@@ -800,12 +787,14 @@ func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.To
 		return nil
 	}
 
+	q.logger.InfoContext(ctx, "Picking the best torrent", "torrents", matches)
+
 	// Get preferred uploaders
 	preferred, err := q.repo.GetPreferredUploaders(ctx, mediaType, isAnime)
 	if err != nil {
 		q.logger.ErrorContext(ctx, "Error querying uploader preferences", "error", err)
 	}
-	preferred = append(preferred, "SubsPlease", "EMBER", "Erai-raws")
+	preferred = append(preferred, "SubsPlease", "Erai-raws")
 
 	// Score each match
 	scoredMatches := make([]*TorrentMatchWithScore, 0, len(matches))
