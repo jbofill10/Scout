@@ -15,7 +15,7 @@ import (
 	"shared/telemetry"
 	"torrenter/internal/models"
 
-	"github.com/superturkey650/go-qbittorrent/qbt"
+	qbittorrent "github.com/autobrr/go-qbittorrent"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -30,7 +30,7 @@ var (
 )
 
 type QbittHandler struct {
-	c      *qbt.Client
+	c      *qbittorrent.Client
 	p      *prowlarr.Prowlarr
 	repo   Repository
 	logger *slog.Logger
@@ -44,8 +44,16 @@ var (
 
 func NewQbittHandler(qCfg *models.QbittCfg, pCfg *models.ProwlarrCfg, repo Repository, logger *slog.Logger) (*QbittHandler, error) {
 	logger.Debug("QBittorrent config", "host", qCfg.Host, "user", qCfg.User)
-	qb := qbt.NewClient(qCfg.Host)
-	if err := qb.Login(qCfg.User, qCfg.Password); err != nil {
+
+	// Create new qBittorrent client with Config
+	qb := qbittorrent.NewClient(qbittorrent.Config{
+		Host:     qCfg.Host,
+		Username: qCfg.User,
+		Password: qCfg.Password,
+	})
+
+	// Authenticate with qBittorrent
+	if err := qb.Login(); err != nil {
 		return nil, fmt.Errorf("failed to login to qBittorrent: %w", err)
 	}
 
@@ -186,7 +194,7 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 				q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
 			}
 
-			q.downloadTorrent(match.Torrent)
+			q.downloadTorrent(ctx, match.Torrent)
 			// watch torrent to complete
 			wg.Add(1)
 			go func(ctx context.Context) {
@@ -195,12 +203,12 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 				retries := 1
 				for {
 					time.Sleep(10 * time.Second)
-					filter := qbt.TorrentsOptions{
-						Category: &scoutTag,
+					filter := qbittorrent.TorrentFilterOptions{
+						Category: scoutTag,
 						Hashes:   []string{match.Torrent.InfoHash},
 					}
 
-					torrents, err := q.c.Torrents(filter)
+					torrents, err := q.c.GetTorrentsCtx(ctx, filter)
 					if err != nil {
 						q.logger.ErrorContext(ctx, "Error fetching torrents", "error", err)
 						retries++
@@ -219,7 +227,7 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 
 						if !ranRecheck {
 							ranRecheck = true
-							q.c.Recheck([]string{torrent.Hash})
+							q.c.RecheckCtx(ctx, []string{torrent.Hash})
 							continue
 						}
 
@@ -302,7 +310,7 @@ func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episo
 	return ss
 }
 
-func (q *QbittHandler) didTorrentComplete(torrent *qbt.TorrentInfo) bool {
+func (q *QbittHandler) didTorrentComplete(torrent *qbittorrent.Torrent) bool {
 	fmt.Printf("Torrent State: %s\n", torrent.State)
 	if torrent.Completed == torrent.Size && torrent.State == "stalledUP" {
 		return true
@@ -348,23 +356,27 @@ func (q *QbittHandler) isCorrectTorrent(torrent *prowlarr.Search, strategy *mode
 	return foundEpisode && (strings.Contains(torTitleLowerCase, mediaNameLower))
 }
 
-func (q *QbittHandler) downloadTorrent(torrent *prowlarr.Search) error {
-	q.logger.Info("Downloading torrent", "filename", torrent.FileName, "hash", torrent.InfoHash, "guid", torrent.GUID)
+func (q *QbittHandler) downloadTorrent(ctx context.Context, torrent *prowlarr.Search) error {
+	q.logger.InfoContext(ctx, "Downloading torrent", "filename", torrent.FileName, "hash", torrent.InfoHash, "guid", torrent.GUID)
 
 	torrentSavePath := baseSavePath + "/" + torrent.Title
-	q.logger.Info("Torrent save path", "path", torrentSavePath)
+	q.logger.InfoContext(ctx, "Torrent save path", "path", torrentSavePath)
 
 	if err := os.Mkdir(torrentSavePath, 0777); err != nil && !os.IsExist(err) {
-		q.logger.Error("Error creating directory", "value", torrentSavePath, "error", err)
+		q.logger.ErrorContext(ctx, "Error creating directory", "value", torrentSavePath, "error", err)
 		return err
 	}
-	dlOpts := qbt.DownloadOptions{
-		Savepath: &torrentSavePath,
-		Category: &scoutTag,
-	}
 
-	if err := q.c.DownloadLinks([]string{torrent.GUID}, dlOpts); err != nil {
-		q.logger.Error("Error downloading torrent", "error", err)
+	// Prepare torrent add options using new library
+	addOpts := qbittorrent.TorrentAddOptions{
+		SavePath: torrentSavePath,
+		Category: scoutTag,
+	}
+	options := addOpts.Prepare()
+
+	// Add torrent using new library's context-aware method
+	if err := q.c.AddTorrentFromUrlCtx(ctx, torrent.GUID, options); err != nil {
+		q.logger.ErrorContext(ctx, "Error downloading torrent", "error", err)
 		return err
 	}
 

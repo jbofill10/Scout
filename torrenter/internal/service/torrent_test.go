@@ -8,7 +8,7 @@ import (
 	"torrenter/internal/models"
 
 	"github.com/stretchr/testify/suite"
-	"github.com/superturkey650/go-qbittorrent/qbt"
+	qbittorrent "github.com/autobrr/go-qbittorrent"
 	"golift.io/starr/prowlarr"
 )
 
@@ -378,7 +378,7 @@ func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithEmptyAliases() {
 }
 
 func (s *QbittHandlerTestSuite) TestDidTorrentComplete_Completed() {
-	torrent := &qbt.TorrentInfo{
+	torrent := &qbittorrent.Torrent{
 		State:     "stalledUP",
 		Completed: 1000,
 		Size:      1000,
@@ -389,7 +389,7 @@ func (s *QbittHandlerTestSuite) TestDidTorrentComplete_Completed() {
 }
 
 func (s *QbittHandlerTestSuite) TestDidTorrentComplete_Downloading() {
-	torrent := &qbt.TorrentInfo{
+	torrent := &qbittorrent.Torrent{
 		State:     "downloading",
 		Completed: 500,
 		Size:      1000,
@@ -400,7 +400,7 @@ func (s *QbittHandlerTestSuite) TestDidTorrentComplete_Downloading() {
 }
 
 func (s *QbittHandlerTestSuite) TestDidTorrentComplete_PartialStalled() {
-	torrent := &qbt.TorrentInfo{
+	torrent := &qbittorrent.Torrent{
 		State:     "stalledUP",
 		Completed: 500,
 		Size:      1000,
