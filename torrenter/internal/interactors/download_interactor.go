@@ -6,6 +6,8 @@ import (
 	tvdb "shared/media"
 	"torrenter/internal/models"
 	"torrenter/internal/service"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 type DownloadInteractor struct {
@@ -56,26 +58,26 @@ func (i *DownloadInteractor) InitiateDownload(ctx context.Context, req *tvdb.Med
 // handleDownloadCompletion processes the completed torrents
 // This runs in a goroutine and handles multiple completion events until the channel is closed
 func (i *DownloadInteractor) handleDownloadCompletion(ctx context.Context, dlComplete <-chan models.TorrentCompleteEvent) {
-	// Create a new background context since the original HTTP request context may be canceled
-	// by the time the torrent completes downloading
-	bgCtx := context.Background()
-
 	// Process all events until the channel is closed
 	for event := range dlComplete {
-		i.logger.InfoContext(bgCtx, "Processing completed torrent", "hash", event.Hash)
+		// Create a new background context with the span context from the event
+		// This allows us to continue the trace from the search strategy that initiated the download
+		eventCtx := trace.ContextWithSpanContext(context.Background(), event.SpanContext)
 
-		if err := i.mp.ProcessDownloadedTorrent(bgCtx, &event); err != nil {
-			i.logger.ErrorContext(bgCtx, "Error processing downloaded torrent", "error", err, "hash", event.Hash)
-			if err2 := i.repo.UpdateDownloadHistoryStatus(bgCtx, event.Hash, "failure", err.Error()); err2 != nil {
-				i.logger.ErrorContext(bgCtx, "Failed to update download history", "error", err2)
+		i.logger.InfoContext(eventCtx, "Processing completed torrent", "hash", event.Hash)
+
+		if err := i.mp.ProcessDownloadedTorrent(eventCtx, &event); err != nil {
+			i.logger.ErrorContext(eventCtx, "Error processing downloaded torrent", "error", err, "hash", event.Hash)
+			if err2 := i.repo.UpdateDownloadHistoryStatus(eventCtx, event.Hash, "failure", err.Error()); err2 != nil {
+				i.logger.ErrorContext(eventCtx, "Failed to update download history", "error", err2)
 			}
 			continue
 		}
 
-		if err := i.repo.UpdateDownloadHistoryStatus(bgCtx, event.Hash, "success", ""); err != nil {
-			i.logger.ErrorContext(bgCtx, "Failed to update download history", "error", err, "hash", event.Hash)
+		if err := i.repo.UpdateDownloadHistoryStatus(eventCtx, event.Hash, "success", ""); err != nil {
+			i.logger.ErrorContext(eventCtx, "Failed to update download history", "error", err, "hash", event.Hash)
 		}
 	}
 
-	i.logger.InfoContext(bgCtx, "Download completion handler exiting")
+	i.logger.InfoContext(ctx, "Download completion handler exiting")
 }

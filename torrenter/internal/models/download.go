@@ -4,6 +4,7 @@ import (
 	"fmt"
 	tvdb "shared/media"
 
+	"go.opentelemetry.io/otel/trace"
 	"golift.io/starr/prowlarr"
 )
 
@@ -24,9 +25,10 @@ func (d *DownloadRequest) String() string {
 }
 
 type TorrentCompleteEvent struct {
-	SavePath string
-	Req      *SearchStrategy
-	Hash     string
+	SavePath    string
+	Req         *SearchStrategy
+	Hash        string
+	SpanContext trace.SpanContext
 }
 
 type MediaExistsRequest struct {
