@@ -118,6 +118,12 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 			),
 		)
 
+		if episode.SeasonNumber == 0 {
+			// Temporary, skip specials
+			i.logger.InfoContext(episodeCtx, "Skipping special episode", "episode", episode.Number)
+			continue
+		}
+
 		episodeAired, err := time.Parse("2006-01-02", episode.Aired)
 		if err != nil {
 			i.logger.WarnContext(episodeCtx, "Failed to parse episode aired date", "error", err)

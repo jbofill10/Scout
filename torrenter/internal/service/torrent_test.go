@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	tvdb "shared/media"
 	"testing"
@@ -26,190 +27,197 @@ func (s *QbittHandlerTestSuite) SetupTest() {
 	buf := new(bytes.Buffer)
 	s.logger = slog.New(slog.NewTextHandler(buf, nil))
 	// For isCorrectTorrent, we don't need the full handler, but since it's a method, we need an instance
-	// We'll create a minimal handler with just logger
-	s.handler = &QbittHandler{logger: s.logger}
+	// We'll create a minimal handler with just logger and parser
+	s.handler = &QbittHandler{
+		logger: s.logger,
+		parser: NewTorrentParser(),
+	}
 }
 
 func (s *QbittHandlerTestSuite) TestIsCorrectTorrent_ExcludesBatch() {
 	torrent := &prowlarr.Search{
-		SortTitle: "Some Show Batch 01",
-		Title:     "Some Show",
+		Title:     "[Group] Some Show - Batch [1080p]",
+		SortTitle: "group some show batch 1080p",
 	}
 	strategy := &models.SearchStrategy{
 		MediaName: "Some Show",
 		Episode:   1,
+		Season:    1,
 		Exclude:   []string{},
 	}
 
-	result := s.handler.isCorrectTorrent(torrent, strategy)
-	s.False(result)
+	result := s.handler.isCorrectTorrent(context.Background(), torrent, strategy)
+	s.False(result, "Batch torrents should be rejected")
 }
 
 func (s *QbittHandlerTestSuite) TestIsCorrectTorrent_ExcludesByWord() {
 	torrent := &prowlarr.Search{
-		SortTitle: "Some Show Season 1",
-		Title:     "Some Show",
+		Title:     "[Group] Some Show - 01 Season 1 [1080p]",
+		SortTitle: "group some show 01 season 1 1080p",
 	}
 	strategy := &models.SearchStrategy{
 		MediaName: "Some Show",
 		Episode:   1,
-		Exclude:   []string{"season"},
+		Exclude:   []string{"season"}, // Anime exclusion
 	}
 
-	result := s.handler.isCorrectTorrent(torrent, strategy)
-	s.False(result)
+	result := s.handler.isCorrectTorrent(context.Background(), torrent, strategy)
+	s.False(result, "Torrents with excluded keywords should be rejected")
 }
 
 func (s *QbittHandlerTestSuite) TestIsCorrectTorrent_NoEpisode() {
 	torrent := &prowlarr.Search{
-		SortTitle: "Some Show Other Words",
-		Title:     "Some Show",
+		Title:     "Some Show Other Words No Episode Info",
+		SortTitle: "some show other words no episode info",
 	}
 	strategy := &models.SearchStrategy{
 		MediaName: "Some Show",
 		Episode:   1,
+		Season:    1,
 		Exclude:   []string{},
 	}
 
-	result := s.handler.isCorrectTorrent(torrent, strategy)
-	s.False(result)
+	result := s.handler.isCorrectTorrent(context.Background(), torrent, strategy)
+	s.False(result, "Torrents without parseable episode info should be rejected")
 }
 
 func (s *QbittHandlerTestSuite) TestIsCorrectTorrent_NoMediaName() {
 	torrent := &prowlarr.Search{
-		SortTitle: "Other Show 01",
-		Title:     "Other Show",
+		Title:     "[Group] Other Show - 01 [1080p]",
+		SortTitle: "group other show 01 1080p",
 	}
 	strategy := &models.SearchStrategy{
 		MediaName: "Some Show",
 		Episode:   1,
-		Exclude:   []string{},
+		Exclude:   []string{"season", "episode"}, // Anime
 	}
 
-	result := s.handler.isCorrectTorrent(torrent, strategy)
-	s.False(result)
+	result := s.handler.isCorrectTorrent(context.Background(), torrent, strategy)
+	s.False(result, "Torrents with mismatched show names should be rejected")
 }
 
 func (s *QbittHandlerTestSuite) TestIsCorrectTorrent_MediaNameWithSpacesRemoved() {
+	// Test for regular show with S##E## format
 	torrent := &prowlarr.Search{
-		SortTitle: "Some Show 01",
-		Title:     "Some Show",
+		Title:     "Some.Show.S01E01.1080p.WEB-DL",
+		SortTitle: "some show s01e01 1080p web dl",
 	}
 	strategy := &models.SearchStrategy{
 		MediaName: "Some Show",
 		Episode:   1,
-		Exclude:   []string{},
+		Season:    1,
+		Exclude:   []string{}, // Not anime
 	}
 
-	result := s.handler.isCorrectTorrent(torrent, strategy)
-	s.True(result)
+	result := s.handler.isCorrectTorrent(context.Background(), torrent, strategy)
+	s.True(result, "Should match show name even with dots/spaces")
 }
 
 func (s *QbittHandlerTestSuite) TestIsCorrectTorrent_CaseInsensitive() {
 	torrent := &prowlarr.Search{
-		SortTitle: "some show 01",
-		Title:     "some show",
+		Title:     "[group] some show - 01 [1080p]",
+		SortTitle: "group some show 01 1080p",
 	}
 	strategy := &models.SearchStrategy{
 		MediaName: "Some Show",
 		Episode:   1,
-		Exclude:   []string{},
+		Exclude:   []string{"season", "episode"}, // Anime
 	}
 
-	result := s.handler.isCorrectTorrent(torrent, strategy)
-	s.True(result)
+	result := s.handler.isCorrectTorrent(context.Background(), torrent, strategy)
+	s.True(result, "Matching should be case-insensitive")
 }
 
 func (s *QbittHandlerTestSuite) TestIsCorrectTorrent_ValidMatch() {
 	torrent := &prowlarr.Search{
-		SortTitle: "Some Show 01",
-		Title:     "Some Show Episode 1",
+		Title:     "[SubsPlease] Some Show - 01 [1080p][HASH].mkv",
+		SortTitle: "subsplease some show 01 1080p hash mkv",
 	}
 	strategy := &models.SearchStrategy{
 		MediaName: "Some Show",
 		Episode:   1,
-		Exclude:   []string{},
+		Exclude:   []string{"season", "episode"}, // Anime
 	}
 
-	result := s.handler.isCorrectTorrent(torrent, strategy)
-	s.True(result)
+	result := s.handler.isCorrectTorrent(context.Background(), torrent, strategy)
+	s.True(result, "Should match valid anime torrent")
 }
 
 func (s *QbittHandlerTestSuite) TestIsCorrectTorrent_EpisodeNotPadded() {
 	torrent := &prowlarr.Search{
-		SortTitle: "Some Show 1",
-		Title:     "Some Show",
+		Title:     "[Group] Some Show - 1 [1080p]",
+		SortTitle: "group some show 1 1080p",
 	}
 	strategy := &models.SearchStrategy{
 		MediaName: "Some Show",
 		Episode:   1,
-		Exclude:   []string{},
+		Exclude:   []string{"season", "episode"}, // Anime
 	}
 
-	result := s.handler.isCorrectTorrent(torrent, strategy)
-	s.True(result)
+	result := s.handler.isCorrectTorrent(context.Background(), torrent, strategy)
+	s.True(result, "Should match episodes whether padded or not")
 }
 
 func (s *QbittHandlerTestSuite) TestSortTorrentsByQuality() {
 	torrents := []*models.TorrentMatch{
-		{Torrent: &prowlarr.Search{SortTitle: "[SubsPlease] Dandadan - 01 (1080p) [2AB10B14].mkv"}},
-		{Torrent: &prowlarr.Search{SortTitle: "[SubsPlease] Dandadan - 01 (720p) [2ECB2F39].mkv"}},
-		{Torrent: &prowlarr.Search{SortTitle: "[SubsPlease] Dandadan - 01 (480p) [6A4E67F6].mkv"}},
-		{Torrent: &prowlarr.Search{SortTitle: "[Erai-raws] Dan Da Dan - 01 (NF) [720p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][JPN][POL][TUR][IND][THA][KOR][CHI][VIE][MAY][FIL]"}},
-		{Torrent: &prowlarr.Search{SortTitle: "[Erai-raws] Dan Da Dan - 01 [1080p][HEVC][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]"}},
-		{Torrent: &prowlarr.Search{SortTitle: "[Erai-raws] Dan Da Dan - 01 (NF) [1080p][HEVC][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][JPN][POL][TUR][IND][THA][KOR][CHI][VIE][MAY][FIL]"}},
-		{Torrent: &prowlarr.Search{SortTitle: "[Erai-raws] Dan Da Dan - 01 (EAC3 2.0) [1080p][HEVC][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]"}},
-		{Torrent: &prowlarr.Search{SortTitle: "[Erai-raws] Dan Da Dan - 01 (NF) [1080p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][JPN][POL][TUR][IND][THA][KOR][CHI][VIE][MAY][FIL]"}},
-		{Torrent: &prowlarr.Search{SortTitle: "[Erai-raws] Dan Da Dan - 01 [480p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]"}},
-		{Torrent: &prowlarr.Search{SortTitle: "[Erai-raws] Dan Da Dan - 01 [720p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]"}},
-		{Torrent: &prowlarr.Search{SortTitle: "[Erai-raws] Dan Da Dan - 01 [1080p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]"}},
-		{Torrent: &prowlarr.Search{SortTitle: "[Erai-raws] Dan Da Dan - 01 (EAC3 2.0) [1080p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]"}},
-		{Torrent: &prowlarr.Search{SortTitle: "[Erai-raws] Dan Da Dan - 01 (EAC3 2.0) [720p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]"}},
-		{Torrent: &prowlarr.Search{SortTitle: "[Erai-raws] Dan Da Dan - 01 (EAC3 2.0) [480p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]"}},
+		{Torrent: &prowlarr.Search{Title: "[SubsPlease] Dandadan - 01 (1080p) [2AB10B14].mkv"}},
+		{Torrent: &prowlarr.Search{Title: "[SubsPlease] Dandadan - 01 (720p) [2ECB2F39].mkv"}},
+		{Torrent: &prowlarr.Search{Title: "[SubsPlease] Dandadan - 01 (480p) [6A4E67F6].mkv"}},
+		{Torrent: &prowlarr.Search{Title: "[Erai-raws] Dan Da Dan - 01 (NF) [720p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][JPN][POL][TUR][IND][THA][KOR][CHI][VIE][MAY][FIL]"}},
+		{Torrent: &prowlarr.Search{Title: "[Erai-raws] Dan Da Dan - 01 [1080p][HEVC][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]"}},
+		{Torrent: &prowlarr.Search{Title: "[Erai-raws] Dan Da Dan - 01 (NF) [1080p][HEVC][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][JPN][POL][TUR][IND][THA][KOR][CHI][VIE][MAY][FIL]"}},
+		{Torrent: &prowlarr.Search{Title: "[Erai-raws] Dan Da Dan - 01 (EAC3 2.0) [1080p][HEVC][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]"}},
+		{Torrent: &prowlarr.Search{Title: "[Erai-raws] Dan Da Dan - 01 (NF) [1080p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][JPN][POL][TUR][IND][THA][KOR][CHI][VIE][MAY][FIL]"}},
+		{Torrent: &prowlarr.Search{Title: "[Erai-raws] Dan Da Dan - 01 [480p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]"}},
+		{Torrent: &prowlarr.Search{Title: "[Erai-raws] Dan Da Dan - 01 [720p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]"}},
+		{Torrent: &prowlarr.Search{Title: "[Erai-raws] Dan Da Dan - 01 [1080p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]"}},
+		{Torrent: &prowlarr.Search{Title: "[Erai-raws] Dan Da Dan - 01 (EAC3 2.0) [1080p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]"}},
+		{Torrent: &prowlarr.Search{Title: "[Erai-raws] Dan Da Dan - 01 (EAC3 2.0) [720p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]"}},
+		{Torrent: &prowlarr.Search{Title: "[Erai-raws] Dan Da Dan - 01 (EAC3 2.0) [480p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]"}},
 	}
 
 	s.handler.sortTorrentsByQuality(torrents)
 
 	// Check that 1080p torrents come first (indices 0-6)
 	for i := 0; i < 7; i++ {
-		s.Contains(torrents[i].Torrent.SortTitle, "1080p", "Torrent at index %d should be 1080p", i)
+		s.Contains(torrents[i].Torrent.Title, "1080p", "Torrent at index %d should be 1080p", i)
 	}
 
 	// Check that 720p torrents come next (indices 7-10)
 	for i := 7; i < 11; i++ {
-		s.Contains(torrents[i].Torrent.SortTitle, "720p", "Torrent at index %d should be 720p", i)
+		s.Contains(torrents[i].Torrent.Title, "720p", "Torrent at index %d should be 720p", i)
 	}
 
 	// Check that 480p torrents come last (indices 11-13)
 	for i := 11; i < 14; i++ {
-		s.Contains(torrents[i].Torrent.SortTitle, "480p", "Torrent at index %d should be 480p", i)
+		s.Contains(torrents[i].Torrent.Title, "480p", "Torrent at index %d should be 480p", i)
 	}
 }
 
 func (s *QbittHandlerTestSuite) TestSortTorrentsByQuality_4K() {
 	torrents := []*models.TorrentMatch{
-		{Torrent: &prowlarr.Search{SortTitle: "Show 720p"}},
-		{Torrent: &prowlarr.Search{SortTitle: "Show 4K"}},
-		{Torrent: &prowlarr.Search{SortTitle: "Show 1080p"}},
+		{Torrent: &prowlarr.Search{Title: "Show 720p"}},
+		{Torrent: &prowlarr.Search{Title: "Show 4K"}},
+		{Torrent: &prowlarr.Search{Title: "Show 1080p"}},
 	}
 
 	s.handler.sortTorrentsByQuality(torrents)
 
-	s.Contains(torrents[0].Torrent.SortTitle, "4K")
-	s.Contains(torrents[1].Torrent.SortTitle, "1080p")
-	s.Contains(torrents[2].Torrent.SortTitle, "720p")
+	s.Contains(torrents[0].Torrent.Title, "4K")
+	s.Contains(torrents[1].Torrent.Title, "1080p")
+	s.Contains(torrents[2].Torrent.Title, "720p")
 }
 
 func (s *QbittHandlerTestSuite) TestSortTorrentsByQuality_2160p() {
 	torrents := []*models.TorrentMatch{
-		{Torrent: &prowlarr.Search{SortTitle: "Show 720p"}},
-		{Torrent: &prowlarr.Search{SortTitle: "Show 2160p"}},
-		{Torrent: &prowlarr.Search{SortTitle: "Show 1080p"}},
+		{Torrent: &prowlarr.Search{Title: "Show 720p"}},
+		{Torrent: &prowlarr.Search{Title: "Show 2160p"}},
+		{Torrent: &prowlarr.Search{Title: "Show 1080p"}},
 	}
 
 	s.handler.sortTorrentsByQuality(torrents)
 
-	s.Contains(torrents[0].Torrent.SortTitle, "2160p")
+	s.Contains(torrents[0].Torrent.Title, "2160p")
 }
 
 func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_Anime() {
@@ -443,4 +451,92 @@ func (s *QbittHandlerTestSuite) TestStandardizeNumber() {
 		result := standardizeNumber(tc.input)
 		s.Equal(tc.expected, result, "standardizeNumber(%d) should be %s", tc.input, tc.expected)
 	}
+}
+
+// TestIsCorrectTorrent_AnimeAbsoluteNumbering tests anime with absolute episode numbering
+func (s *QbittHandlerTestSuite) TestIsCorrectTorrent_AnimeAbsoluteNumbering() {
+	torrent := &prowlarr.Search{
+		Title:     "[SubsPlease] Test Anime - 04 [1080p][HASH].mkv",
+		SortTitle: "subsplease test anime 04 1080p hash mkv",
+	}
+	strategy := &models.SearchStrategy{
+		MediaName: "Test Anime",
+		Episode:   4, // This is actually the absolute number for anime
+		Season:    1,
+		EpisodeMeta: &tvdb.Episode{
+			SeasonNumber:   1,
+			Number:         4,
+			AbsoluteNumber: 4,
+		},
+		Exclude: []string{"season", "episode"}, // Anime
+	}
+
+	result := s.handler.isCorrectTorrent(context.Background(), torrent, strategy)
+	s.True(result, "Anime torrent with absolute numbering should match when AbsoluteNumber matches")
+}
+
+// TestIsCorrectTorrent_RegularShowAbsoluteNumbering tests regular show with absolute episode numbering
+func (s *QbittHandlerTestSuite) TestIsCorrectTorrent_RegularShowAbsoluteNumbering() {
+	torrent := &prowlarr.Search{
+		Title:     "[Group] Test Show - 04 [1080p]",
+		SortTitle: "group test show 04 1080p",
+	}
+	strategy := &models.SearchStrategy{
+		MediaName: "Test Show",
+		Episode:   4, // Season episode number
+		Season:    1,
+		EpisodeMeta: &tvdb.Episode{
+			SeasonNumber:   1,
+			Number:         4,
+			AbsoluteNumber: 4, // Absolute and season episode happen to match
+		},
+		Exclude: []string{}, // Not anime
+	}
+
+	result := s.handler.isCorrectTorrent(context.Background(), torrent, strategy)
+	s.True(result, "Regular show torrent with absolute numbering should match when AbsoluteNumber matches")
+}
+
+// TestIsCorrectTorrent_AbsoluteNumberMismatch tests rejection when absolute numbers don't match
+func (s *QbittHandlerTestSuite) TestIsCorrectTorrent_AbsoluteNumberMismatch() {
+	torrent := &prowlarr.Search{
+		Title:     "[SubsPlease] Test Anime - 05 [1080p][HASH].mkv",
+		SortTitle: "subsplease test anime 05 1080p hash mkv",
+	}
+	strategy := &models.SearchStrategy{
+		MediaName: "Test Anime",
+		Episode:   4,
+		Season:    1,
+		EpisodeMeta: &tvdb.Episode{
+			SeasonNumber:   1,
+			Number:         4,
+			AbsoluteNumber: 4, // Mismatch: torrent is ep 5, we want ep 4
+		},
+		Exclude: []string{"season", "episode"}, // Anime
+	}
+
+	result := s.handler.isCorrectTorrent(context.Background(), torrent, strategy)
+	s.False(result, "Should reject torrent when absolute episode numbers don't match")
+}
+
+// TestIsCorrectTorrent_SeasonalFormatStillWorks tests that seasonal format validation still works
+func (s *QbittHandlerTestSuite) TestIsCorrectTorrent_SeasonalFormatStillWorks() {
+	torrent := &prowlarr.Search{
+		Title:     "Test.Show.S01E04.1080p.WEB-DL",
+		SortTitle: "test show s01e04 1080p web dl",
+	}
+	strategy := &models.SearchStrategy{
+		MediaName: "Test Show",
+		Episode:   4,
+		Season:    1,
+		EpisodeMeta: &tvdb.Episode{
+			SeasonNumber:   1,
+			Number:         4,
+			AbsoluteNumber: 4,
+		},
+		Exclude: []string{}, // Not anime
+	}
+
+	result := s.handler.isCorrectTorrent(context.Background(), torrent, strategy)
+	s.True(result, "Seasonal format should still work for regular shows")
 }

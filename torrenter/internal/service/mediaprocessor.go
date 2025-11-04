@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	tvdb "shared/media"
 	"strconv"
 	"sync"
 	"time"
@@ -111,13 +112,38 @@ func (mp *MediaProcessSvc) ProcessDownloadedTorrent(ctx context.Context, media *
 		req.Episode = ""
 	} else {
 		req.MediaType = "show"
-		req.Season = fmt.Sprint(media.Req.Season)
-		req.Episode = fmt.Sprint(media.Req.Episode)
+		// Always use seasonal format from EpisodeMeta (not SearchStrategy.Episode which could be absolute)
+		if media.Req.EpisodeMeta != nil {
+			req.Season = fmt.Sprint(media.Req.EpisodeMeta.SeasonNumber)
+			req.Episode = fmt.Sprint(media.Req.EpisodeMeta.Number)
+		} else {
+			// Fallback to SearchStrategy values if EpisodeMeta is not available
+			req.Season = fmt.Sprint(media.Req.Season)
+			req.Episode = fmt.Sprint(media.Req.Episode)
+		}
 	}
 
-	fileName, err := mp.getFile(media.SavePath)
+	// Get original filename from torrent download
+	originalFileName, err := mp.getFile(media.SavePath)
 	if err != nil {
 		return fmt.Errorf("failed to get file: %v", err)
+	}
+
+	// For shows, construct Plex-friendly filename (ShowName - S##E##.ext)
+	// For movies, keep the original filename
+	var fileName string
+	if media.Req.Episode != 0 && media.Req.EpisodeMeta != nil {
+		// Show: Always use seasonal format regardless of search strategy
+		fileName = mp.constructPlexFilename(media.Req.MediaName, media.Req.EpisodeMeta, originalFileName)
+		mp.Logger.InfoContext(ctx, "Constructed Plex filename",
+			"original", originalFileName,
+			"plex_format", fileName,
+			"season", media.Req.EpisodeMeta.SeasonNumber,
+			"episode", media.Req.EpisodeMeta.Number,
+		)
+	} else {
+		// Movie: Keep original filename
+		fileName = originalFileName
 	}
 
 	isShow := req.IsShow()
@@ -187,7 +213,7 @@ func (mp *MediaProcessSvc) ProcessDownloadedTorrent(ctx context.Context, media *
 	}
 
 	// Create source path (where qBittorrent saved the file)
-	sourcePath := filepath.Join(media.SavePath, fileName)
+	sourcePath := filepath.Join(media.SavePath, originalFileName)
 
 	// Extract target directory from full save path
 	targetDir := filepath.Dir(fullSavePath)
@@ -224,23 +250,27 @@ func (mp *MediaProcessSvc) ProcessDownloadedTorrent(ctx context.Context, media *
 	return nil
 }
 
-func (mp *MediaProcessSvc) prepMediaPath(req *models.DownloadRequest) string {
-	if req.IsShow() {
-		season, _ := strconv.Atoi(req.Season)
-		episode, _ := strconv.Atoi(req.Episode)
-		return fmt.Sprintf("%s/Season %s/%s - S%sE%s", req.MediaName, standardizeNumber(season),
-			req.MediaName, standardizeNumber(season), standardizeNumber(episode))
-	} else {
-		return req.MediaName + " (" + req.ReleaseYear + ")"
-	}
-}
-
 // Formats numbers less than 10 to be prefixed with a zero
 func standardizeNumber(num int) string {
 	if num < 10 {
 		return "0" + fmt.Sprintf("%d", num)
 	}
 	return fmt.Sprintf("%d", num)
+}
+
+// constructPlexFilename creates a Plex-friendly filename in the format "ShowName - S##E##.ext"
+// Always uses seasonal format (S##E##) regardless of which search strategy found the torrent
+func (mp *MediaProcessSvc) constructPlexFilename(mediaName string, episodeMeta *tvdb.Episode, originalFileName string) string {
+	// Extract file extension from original filename
+	ext := filepath.Ext(originalFileName)
+
+	// Always use seasonal formatting for consistency
+	return fmt.Sprintf("%s - S%sE%s%s",
+		mediaName,
+		standardizeNumber(episodeMeta.SeasonNumber),
+		standardizeNumber(episodeMeta.Number),
+		ext,
+	)
 }
 
 func (mp *MediaProcessSvc) getFile(dirPath string) (string, error) {
