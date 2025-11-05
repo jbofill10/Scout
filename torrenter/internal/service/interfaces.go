@@ -9,6 +9,7 @@ import (
 // TorrentService handles torrent search and download operations
 type TorrentService interface {
 	HandleDownload(ctx context.Context, req *tvdb.Media, done chan<- models.TorrentCompleteEvent) error
+	RemoveUUIDTag(ctx context.Context, hash string, uuid string) error
 }
 
 // MediaProcessor handles post-download processing

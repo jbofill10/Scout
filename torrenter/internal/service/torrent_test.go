@@ -428,8 +428,7 @@ func (s *QbittHandlerTestSuite) TestCalcIndexerIDs_Anime() {
 func (s *QbittHandlerTestSuite) TestCalcIndexerIDs_NonAnime() {
 	ids := s.handler.calcIndexerIDs("series", false)
 
-	s.Len(ids, 2)
-	s.Contains(ids, NYAA_ID)
+	s.Len(ids, 1)
 	s.Contains(ids, ONE337x_ID)
 }
 

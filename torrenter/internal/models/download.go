@@ -28,6 +28,7 @@ type TorrentCompleteEvent struct {
 	SavePath    string
 	Req         *SearchStrategy
 	Hash        string
+	UUID        string
 	SpanContext trace.SpanContext
 }
 

@@ -15,6 +15,7 @@ import (
 	"torrenter/internal/models"
 
 	qbittorrent "github.com/autobrr/go-qbittorrent"
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -40,7 +41,7 @@ type QbittHandler struct {
 // Indexer IDs
 var (
 	NYAA_ID    = int64(1) // Anime
-	ONE337x_ID = int64(5) // General
+	ONE337x_ID = int64(2) // General
 )
 
 func NewQbittHandler(qCfg *models.QbittCfg, pCfg *models.ProwlarrCfg, repo Repository, logger *slog.Logger) (*QbittHandler, error) {
@@ -77,6 +78,7 @@ func (q *QbittHandler) searchProwlarr(ctx context.Context, query, category strin
 		Query:      query,
 		IndexerIDs: q.calcIndexerIDs(category, isAnime),
 		Limit:      500,
+		Categories: q.calcCategories(category == "series"),
 	})
 
 	if err != nil {
@@ -304,10 +306,14 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 				q.logger.ErrorContext(winningCtx, "Failed to insert download history", "error", err)
 			}
 
-			q.downloadTorrent(winningCtx, match.Torrent)
+			infoHash, trackingUUID, err := q.downloadTorrent(winningCtx, match.Torrent)
+			if err != nil {
+				q.logger.ErrorContext(winningCtx, "Failed to download torrent", "error", err)
+				return err
+			}
 			// watch torrent to complete
 			wg.Add(1)
-			go func(winningSpan trace.Span, episodeSpan trace.Span, match *models.TorrentMatch) {
+			go func(winningSpan trace.Span, episodeSpan trace.Span, match *models.TorrentMatch, infoHash string, trackingUUID string) {
 				// Create a background context independent of the HTTP request lifecycle
 				// Preserve the span context for trace correlation
 				monitorCtx := trace.ContextWithSpanContext(context.Background(), trace.SpanContextFromContext(winningCtx))
@@ -316,50 +322,29 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 				defer winningSpan.End()
 				defer episodeSpan.End()
 				ranRecheck := false
-				retries := 1
 				for {
 					time.Sleep(10 * time.Second)
+					q.logger.InfoContext(monitorCtx, "Monitoring torrent status",
+						telemetry.WithTraceContext(monitorCtx,
+							"torrent_title", match.Torrent.Title,
+							"torrent_hash", infoHash)...)
+
 					filter := qbittorrent.TorrentFilterOptions{
 						Category: scoutTag,
-						Hashes:   []string{match.Torrent.InfoHash},
+						Hashes:   []string{infoHash},
 					}
 
-					// Log the request details before making the API call
-					q.logger.InfoContext(monitorCtx, "Fetching torrent status from qBittorrent",
-						telemetry.WithTraceContext(monitorCtx,
-							"torrent_title", match.Torrent.Title,
-							"torrent_hash", match.Torrent.InfoHash,
-							"category_filter", scoutTag,
-							"attempt", retries)...)
-
-					torrents, err := q.c.GetTorrentsCtx(monitorCtx, filter)
+					torrents, err := q.queryQbittorrentWithRetries(monitorCtx, filter, 6, 10*time.Second)
 					if err != nil {
-						// Enhanced error logging with full context
-						q.logger.ErrorContext(monitorCtx, "Error fetching torrents from qBittorrent API",
+						q.logger.WarnContext(monitorCtx, "Failed to monitor torrent after retries, stopping watch",
 							telemetry.WithTraceContext(monitorCtx,
-								"error", err.Error(),
-								"error_type", fmt.Sprintf("%T", err),
 								"torrent_title", match.Torrent.Title,
-								"torrent_hash", match.Torrent.InfoHash,
-								"category_filter", scoutTag,
-								"attempt", retries)...)
-						retries++
-						time.Sleep(1 * time.Minute)
-						if retries > 6 {
-							q.logger.WarnContext(monitorCtx, "Max retries reached, stopping watch", "torrent", match.Torrent.Title)
-							winningSpan.SetStatus(codes.Error, "max retries reached")
-							episodeSpan.SetStatus(codes.Error, "download monitoring failed")
-							return
-						}
-						continue
+								"torrent_hash", infoHash,
+								"error", err.Error())...)
+						winningSpan.SetStatus(codes.Error, "max retries reached")
+						episodeSpan.SetStatus(codes.Error, "download monitoring failed")
+						return
 					}
-
-					// Log successful response details
-					q.logger.InfoContext(monitorCtx, "Successfully fetched torrent status",
-						telemetry.WithTraceContext(monitorCtx,
-							"torrent_title", match.Torrent.Title,
-							"torrent_hash", match.Torrent.InfoHash,
-							"torrents_returned", len(torrents))...)
 					if len(torrents) == 0 {
 						q.logger.InfoContext(monitorCtx, "Torrent not found, continuing watch", "torrent", match.Torrent.Title)
 						continue
@@ -380,6 +365,7 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 							SavePath:    torrent.SavePath,
 							Req:         match.Strategy,
 							Hash:        match.Torrent.InfoHash,
+							UUID:        trackingUUID,
 							SpanContext: trace.SpanContextFromContext(monitorCtx),
 						}
 						break
@@ -387,8 +373,7 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 						q.logger.InfoContext(monitorCtx, "Torrent downloading", "title", match.Torrent.Title, "progress", torrent.Progress*100)
 					}
 				}
-			}(winningSpan, episodeSpan, match)
-
+			}(winningSpan, episodeSpan, match, infoHash, trackingUUID)
 		}
 
 		// Close the channel after all monitoring goroutines complete
@@ -463,11 +448,19 @@ func (q *QbittHandler) didTorrentComplete(torrent *qbittorrent.Torrent) bool {
 	return false
 }
 
+func (q *QbittHandler) calcCategories(show bool) []int64 {
+	if show {
+		return []int64{5000}
+	} else {
+		return []int64{2000}
+	}
+}
+
 func (q *QbittHandler) calcIndexerIDs(_ string, isAnime bool) []int64 {
 	if isAnime {
 		return []int64{NYAA_ID}
 	} else {
-		return []int64{NYAA_ID, ONE337x_ID}
+		return []int64{ONE337x_ID}
 	}
 
 }
@@ -685,21 +678,6 @@ func (q *QbittHandler) calculateConfidence(parsed *ParsedTorrent, strategy *mode
 	return confidence
 }
 
-// Helper functions
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 // sanitizeReasonKey converts rejection reason strings into valid log attribute keys
 // Examples: "show name mismatch: parsed=\"X\", expected=\"Y\"" -> "show_name_mismatch"
 func sanitizeReasonKey(reason string) string {
@@ -720,34 +698,175 @@ func sanitizeReasonKey(reason string) string {
 	return strings.ToLower(key)
 }
 
-func (q *QbittHandler) downloadTorrent(ctx context.Context, torrent *prowlarr.Search) error {
-	q.logger.InfoContext(ctx, "Downloading torrent", "filename", torrent.FileName, "hash", torrent.InfoHash, "guid", torrent.GUID)
+func (q *QbittHandler) downloadTorrent(ctx context.Context, torrent *prowlarr.Search) (string, string, error) {
+	// Generate UUID for torrent tracking
+	trackingUUID := uuid.New().String()
+
+	q.logger.InfoContext(ctx, "Downloading torrent",
+		"filename",
+		torrent.FileName,
+		"hash", torrent.InfoHash,
+		"guid", torrent.GUID,
+		"tracking_uuid", trackingUUID,
+		"torrent_meta", torrent)
 
 	torrentSavePath := baseSavePath + "/" + torrent.Title
 	q.logger.InfoContext(ctx, "Torrent save path", "path", torrentSavePath)
 
 	if err := os.Mkdir(torrentSavePath, 0777); err != nil && !os.IsExist(err) {
 		q.logger.ErrorContext(ctx, "Error creating directory", "value", torrentSavePath, "error", err)
-		return err
+		return "", "", err
 	}
 
 	// Prepare torrent add options using new library
 	addOpts := qbittorrent.TorrentAddOptions{
 		SavePath: torrentSavePath,
 		Category: scoutTag,
+		Tags:     trackingUUID,
 	}
 	options := addOpts.Prepare()
 
-	// Add torrent using new library's context-aware method
-	// Log exactly what we're sending to qBittorrent
-	q.logger.Info("Sending to qBittorrent", "magnet_link", torrent.GUID)
-
-	if err := q.c.AddTorrentFromUrlCtx(ctx, torrent.GUID, options); err != nil {
-		q.logger.ErrorContext(ctx, "Error downloading torrent", "error", err)
-		return err
+	var url string // If downloadURL is empty, that means we have a magnet
+	if torrent.DownloadURL == "" {
+		url = torrent.GUID
+	} else {
+		url = torrent.DownloadURL
 	}
 
-	return nil
+	if err := q.c.AddTorrentFromUrlCtx(ctx, url, options); err != nil {
+		q.logger.ErrorContext(ctx, "Error downloading torrent", "error", err)
+		return "", "", err
+	}
+
+	// If this was a .torrent file (not a magnet), resolve the InfoHash from qBittorrent
+	if torrent.InfoHash == "" {
+		q.logger.InfoContext(ctx, "Torrent file detected, resolving InfoHash from qBittorrent",
+			"torrent_title", torrent.Title,
+			"download_url", torrent.DownloadURL,
+			"prowlarr_hash", torrent.InfoHash,
+			"tracking_uuid", trackingUUID)
+
+		resolvedHash, err := q.resolveInfoHashFromQbittorrent(ctx, trackingUUID)
+		if err != nil {
+			q.logger.ErrorContext(ctx, "Failed to resolve InfoHash from qBittorrent via UUID tag",
+				"error", err,
+				"torrent_title", torrent.Title,
+				"tracking_uuid", trackingUUID)
+			return "", "", fmt.Errorf("failed to resolve InfoHash via UUID tag for torrent '%s': %w", torrent.Title, err)
+		}
+
+		q.logger.InfoContext(ctx, "Successfully resolved InfoHash for .torrent file",
+			"torrent_title", torrent.Title,
+			"resolved_hash", resolvedHash,
+			"tracking_uuid", trackingUUID)
+		return resolvedHash, trackingUUID, nil
+	}
+
+	// Magnet link - InfoHash already available from Prowlarr
+	q.logger.InfoContext(ctx, "Magnet link detected, using InfoHash from GUID",
+		"torrent_title", torrent.Title,
+		"infohash", torrent.InfoHash)
+	return torrent.InfoHash, trackingUUID, nil
+}
+
+func (q *QbittHandler) queryQbittorrentWithRetries(
+	ctx context.Context,
+	filter qbittorrent.TorrentFilterOptions,
+	maxRetries int,
+	retryDelay time.Duration) ([]qbittorrent.Torrent, error) {
+	var torrents []qbittorrent.Torrent
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		q.logger.InfoContext(ctx, "Querying qBittorrent",
+			telemetry.WithTraceContext(ctx,
+				"attempt", attempt,
+				"max_retries", maxRetries,
+				"filter_category", filter.Category,
+				"filter_hashes", filter.Hashes)...)
+
+		torrents, lastErr = q.c.GetTorrentsCtx(ctx, filter)
+		if lastErr == nil {
+			if len(torrents) > 0 {
+				q.logger.InfoContext(ctx, "Successfully queried qBittorrent",
+					telemetry.WithTraceContext(ctx,
+						"attempt", attempt,
+						"torrents", torrents,
+						"torrents_returned", len(torrents))...)
+				return torrents, nil
+			}
+
+			// API succeeded but no torrents found - retry
+			q.logger.InfoContext(ctx, "qBittorrent query returned empty results",
+				telemetry.WithTraceContext(ctx,
+					"attempt", attempt,
+					"max_retries", maxRetries,
+					"filter_category", filter.Category,
+					"filter_tag", filter.Tag)...)
+		} else {
+			// API error - retry
+			q.logger.WarnContext(ctx, "Failed to query qBittorrent",
+				telemetry.WithTraceContext(ctx,
+					"attempt", attempt,
+					"max_retries", maxRetries,
+					"error", lastErr.Error())...)
+		}
+
+		if attempt < maxRetries {
+			q.logger.InfoContext(ctx, "Retrying qBittorrent query",
+				telemetry.WithTraceContext(ctx,
+					"retry_delay", retryDelay.String(),
+					"next_attempt", attempt+1)...)
+			time.Sleep(retryDelay)
+		}
+	}
+
+	// All retries exhausted
+	if lastErr != nil {
+		q.logger.ErrorContext(ctx, "Max retries exhausted querying qBittorrent",
+			telemetry.WithTraceContext(ctx,
+				"max_retries", maxRetries,
+				"last_error", lastErr.Error())...)
+		return nil, fmt.Errorf("failed to query qBittorrent after %d attempts: %w", maxRetries, lastErr)
+	}
+
+	// API succeeded but no torrents found after all retries
+	q.logger.ErrorContext(ctx, "Max retries exhausted querying qBittorrent",
+		telemetry.WithTraceContext(ctx,
+			"max_retries", maxRetries,
+			"reason", "empty results")...)
+	return nil, fmt.Errorf("no torrents found in qBittorrent after %d attempts with filter: category=%s, tag=%s",
+		maxRetries, filter.Category, filter.Tag)
+}
+
+func (q *QbittHandler) resolveInfoHashFromQbittorrent(ctx context.Context, trackingUUID string) (string, error) {
+	q.logger.InfoContext(ctx, "Resolving InfoHash from qBittorrent", "tracking_uuid", trackingUUID)
+
+	// Query torrent by UUID tag with retries
+	filter := qbittorrent.TorrentFilterOptions{
+		Category: scoutTag,
+		Tag:      trackingUUID,
+	}
+
+	torrents, err := q.queryQbittorrentWithRetries(ctx, filter, 10, 5*time.Second)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve hash from qBittorrent: %w", err)
+	}
+
+	if len(torrents) == 0 {
+		q.logger.WarnContext(ctx, "Could not find torrent in qBittorrent with UUID tag",
+			"tracking_uuid", trackingUUID)
+		return "", fmt.Errorf("torrent not found in qBittorrent with UUID: %s", trackingUUID)
+	}
+
+	// Should only be one torrent with this unique UUID tag
+	torrent := torrents[0]
+	q.logger.InfoContext(ctx, "Successfully resolved InfoHash from qBittorrent",
+		"tracking_uuid", trackingUUID,
+		"qbittorrent_name", torrent.Name,
+		"resolved_hash", torrent.Hash)
+
+	return torrent.Hash, nil
 }
 
 func (h *QbittHandler) sortTorrentsByQuality(matches []*models.TorrentMatch) {
@@ -794,7 +913,10 @@ func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.To
 	if err != nil {
 		q.logger.ErrorContext(ctx, "Error querying uploader preferences", "error", err)
 	}
-	preferred = append(preferred, "SubsPlease", "Erai-raws")
+
+	if isAnime {
+		preferred = append(preferred, "SubsPlease", "Erai-raws")
+	}
 
 	// Score each match
 	scoredMatches := make([]*TorrentMatchWithScore, 0, len(matches))
@@ -860,4 +982,25 @@ func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.To
 	)
 
 	return bestMatch.TorrentMatch
+}
+
+// RemoveUUIDTag removes the UUID tracking tag from a torrent after processing is complete
+func (q *QbittHandler) RemoveUUIDTag(ctx context.Context, hash string, uuid string) error {
+	q.logger.InfoContext(ctx, "Removing UUID tag from torrent",
+		"hash", hash,
+		"uuid", uuid)
+
+	err := q.c.RemoveTagsCtx(ctx, []string{hash}, uuid)
+	if err != nil {
+		q.logger.WarnContext(ctx, "Failed to remove UUID tag from torrent",
+			"hash", hash,
+			"uuid", uuid,
+			"error", err)
+		return err
+	}
+
+	q.logger.InfoContext(ctx, "Successfully removed UUID tag from torrent",
+		"hash", hash,
+		"uuid", uuid)
+	return nil
 }

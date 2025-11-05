@@ -1,5 +1,6 @@
 -- PostgreSQL setup script for Scout database
 -- Run this script to initialize the database tables
+-- This script includes all migrations and can be used to set up a fresh database
 
 -- Webserver tables
 -- Stores complete tvdb.Media objects ready to be sent to torrenter.Download()
@@ -59,6 +60,8 @@ CREATE TABLE IF NOT EXISTS Movies (
 
 CREATE INDEX IF NOT EXISTS idx_movies_tvdb_id ON Movies(tvdb_id);
 
+COMMENT ON COLUMN Movies.tvdb_id IS 'TVDB series ID for matching';
+
 CREATE TABLE IF NOT EXISTS MovieMedia (
     id SERIAL PRIMARY KEY,
     parentId TEXT REFERENCES Movies(id),
@@ -87,6 +90,8 @@ CREATE TABLE IF NOT EXISTS Seasons (
 
 CREATE INDEX IF NOT EXISTS idx_seasons_tvdb_id ON Seasons(tvdb_id);
 
+COMMENT ON COLUMN Seasons.tvdb_id IS 'TVDB season ID for matching';
+
 CREATE TABLE IF NOT EXISTS Episodes (
     id TEXT PRIMARY KEY,
     parentId TEXT REFERENCES Seasons(id),
@@ -94,6 +99,10 @@ CREATE TABLE IF NOT EXISTS Episodes (
     episode_number INTEGER,
     tvdb_id TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_episodes_tvdb_id ON Episodes(tvdb_id);
+
+COMMENT ON COLUMN Episodes.tvdb_id IS 'TVDB episode ID for matching';
 
 CREATE INDEX IF NOT EXISTS idx_episodes_tvdb_id ON Episodes(tvdb_id);
 
@@ -144,13 +153,16 @@ ON MovieDownloadHistory(trace_id)
 WHERE trace_id IS NOT NULL;
 
 -- Index for finding a specific movie's span in traces
-CREATE INDEX IF NOT EXISTS idx_movie_download_history_span
-ON MovieDownloadHistory(span_id)
-WHERE span_id IS NOT NULL;
-
 CREATE TABLE IF NOT EXISTS UploaderPreferences (
     id SERIAL PRIMARY KEY,
     mediaType TEXT NOT NULL,
     isAnime BOOLEAN NOT NULL,
     uploaderName TEXT NOT NULL
 );
+
+-- Note: After running this script, restart the torrenter service to trigger
+-- syncPlexLibrary() which will populate the tvdb_id values from Plex's external metadata.
+
+-- Note: After running this script on a fresh database or applying migrations,
+-- restart the torrenter service to trigger syncPlexLibrary() which will
+-- populate the tvdb_id values from Plex's external metadata.

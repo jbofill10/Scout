@@ -77,6 +77,11 @@ func (i *DownloadInteractor) handleDownloadCompletion(ctx context.Context, dlCom
 		if err := i.repo.UpdateDownloadHistoryStatus(eventCtx, event.Hash, "success", ""); err != nil {
 			i.logger.ErrorContext(eventCtx, "Failed to update download history", "error", err, "hash", event.Hash)
 		}
+
+		// Remove UUID tracking tag to prevent tag bloat
+		if err := i.qbitt.RemoveUUIDTag(eventCtx, event.Hash, event.UUID); err != nil {
+			i.logger.WarnContext(eventCtx, "Failed to remove UUID tag (non-fatal)", "error", err, "hash", event.Hash, "uuid", event.UUID)
+		}
 	}
 
 	i.logger.InfoContext(ctx, "Download completion handler exiting")

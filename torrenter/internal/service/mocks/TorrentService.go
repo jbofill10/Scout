@@ -34,6 +34,24 @@ func (_m *TorrentService) HandleDownload(ctx context.Context, req *media.Media, 
 	return r0
 }
 
+// RemoveUUIDTag provides a mock function with given fields: ctx, hash, uuid
+func (_m *TorrentService) RemoveUUIDTag(ctx context.Context, hash string, uuid string) error {
+	ret := _m.Called(ctx, hash, uuid)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RemoveUUIDTag")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) error); ok {
+		r0 = rf(ctx, hash, uuid)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // NewTorrentService creates a new instance of TorrentService. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewTorrentService(t interface {
