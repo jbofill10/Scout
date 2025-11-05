@@ -273,6 +273,8 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 
 			}
 
+			// Pre-sort by seeders DESC to prioritize healthy torrents
+			q.sortBySeedersDESC(bestMatches)
 			q.sortTorrentsByQuality(bestMatches)
 			match := q.pickBestTorrent(episodeCtx, bestMatches, req.Category, req.Anime)
 
@@ -894,6 +896,14 @@ func (h *QbittHandler) sortTorrentsByQuality(matches []*models.TorrentMatch) {
 	})
 }
 
+// sortBySeedersDESC sorts torrent matches by seeder count in descending order
+// This pre-sorts torrents to prioritize healthy torrents with more seeders
+func (h *QbittHandler) sortBySeedersDESC(matches []*models.TorrentMatch) {
+	sort.SliceStable(matches, func(i, j int) bool {
+		return matches[i].Torrent.Seeders > matches[j].Torrent.Seeders
+	})
+}
+
 // TorrentMatchWithScore extends TorrentMatch with confidence scoring
 type TorrentMatchWithScore struct {
 	*models.TorrentMatch
@@ -927,34 +937,35 @@ func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.To
 			continue // Skip invalid matches
 		}
 
-		// Calculate final score with uploader preference
+		// Calculate final score with quality as highest priority
 		finalScore := validationResult.Confidence
 
-		// Boost score for preferred uploaders (50% weight)
+		// Quality boost (highest priority) - ensures quality dominates selection
+		// Weights increased to ensure 2160p always beats 1080p even with preferred uploader
+		qualityBoost := 0.0
+		switch validationResult.Parsed.GetQualityTier() {
+		case 5: // 4K/2160p
+			qualityBoost = 2.0
+		case 4: // 1080p
+			qualityBoost = 0.6
+		case 3: // 720p
+			qualityBoost = 0.3
+		}
+		finalScore += qualityBoost
+
+		// Uploader preference boost (second priority) - reduced weight to prioritize quality
 		uploaderBoost := 0.0
 		for i, uploader := range preferred {
 			if strings.Contains(strings.ToLower(match.Torrent.Title), strings.ToLower(uploader)) {
 				// Higher boost for earlier uploaders in the list
-				uploaderBoost = 0.5 * (1.0 - float64(i)*0.1)
-				if uploaderBoost < 0 {
+				uploaderBoost = 0.25 * (1.0 - float64(i)*0.1)
+				if uploaderBoost < 0.1 {
 					uploaderBoost = 0.1
 				}
 				break
 			}
 		}
 		finalScore += uploaderBoost
-
-		// Additional quality boost (25% weight on top of existing quality scoring)
-		qualityBoost := 0.0
-		switch validationResult.Parsed.GetQualityTier() {
-		case 5: // 4K/2160p
-			qualityBoost = 0.25
-		case 4: // 1080p
-			qualityBoost = 0.20
-		case 3: // 720p
-			qualityBoost = 0.15
-		}
-		finalScore += qualityBoost
 
 		scoredMatches = append(scoredMatches, &TorrentMatchWithScore{
 			TorrentMatch:     match,

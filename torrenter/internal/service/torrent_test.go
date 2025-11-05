@@ -539,3 +539,80 @@ func (s *QbittHandlerTestSuite) TestIsCorrectTorrent_SeasonalFormatStillWorks() 
 	result := s.handler.isCorrectTorrent(context.Background(), torrent, strategy)
 	s.True(result, "Seasonal format should still work for regular shows")
 }
+
+// TestSortBySeedersDESC tests that torrents are sorted by seeder count in descending order
+func (s *QbittHandlerTestSuite) TestSortBySeedersDESC() {
+	torrents := []*models.TorrentMatch{
+		{Torrent: &prowlarr.Search{Title: "Show 1080p", Seeders: 10}},
+		{Torrent: &prowlarr.Search{Title: "Show 720p", Seeders: 50}},
+		{Torrent: &prowlarr.Search{Title: "Show 2160p", Seeders: 5}},
+		{Torrent: &prowlarr.Search{Title: "Show 1080p v2", Seeders: 100}},
+		{Torrent: &prowlarr.Search{Title: "Show 480p", Seeders: 25}},
+	}
+
+	s.handler.sortBySeedersDESC(torrents)
+
+	// Verify descending order by seeders
+	s.Equal(100, torrents[0].Torrent.Seeders, "First torrent should have 100 seeders")
+	s.Equal(50, torrents[1].Torrent.Seeders, "Second torrent should have 50 seeders")
+	s.Equal(25, torrents[2].Torrent.Seeders, "Third torrent should have 25 seeders")
+	s.Equal(10, torrents[3].Torrent.Seeders, "Fourth torrent should have 10 seeders")
+	s.Equal(5, torrents[4].Torrent.Seeders, "Fifth torrent should have 5 seeders")
+}
+
+// TestSortBySeedersDESC_EmptyList tests handling of empty list
+func (s *QbittHandlerTestSuite) TestSortBySeedersDESC_EmptyList() {
+	torrents := []*models.TorrentMatch{}
+
+	// Should not panic
+	s.handler.sortBySeedersDESC(torrents)
+	s.Empty(torrents)
+}
+
+// TestSortBySeedersDESC_SingleItem tests handling of single item
+func (s *QbittHandlerTestSuite) TestSortBySeedersDESC_SingleItem() {
+	torrents := []*models.TorrentMatch{
+		{Torrent: &prowlarr.Search{Title: "Show 1080p", Seeders: 42}},
+	}
+
+	s.handler.sortBySeedersDESC(torrents)
+
+	s.Len(torrents, 1)
+	s.Equal(42, torrents[0].Torrent.Seeders)
+}
+
+// TestSortBySeedersDESC_SameSeeders tests stable sort with same seeder counts
+func (s *QbittHandlerTestSuite) TestSortBySeedersDESC_SameSeeders() {
+	torrents := []*models.TorrentMatch{
+		{Torrent: &prowlarr.Search{Title: "Show A", Seeders: 10}},
+		{Torrent: &prowlarr.Search{Title: "Show B", Seeders: 10}},
+		{Torrent: &prowlarr.Search{Title: "Show C", Seeders: 10}},
+	}
+
+	s.handler.sortBySeedersDESC(torrents)
+
+	// All should have same seeders
+	s.Equal(10, torrents[0].Torrent.Seeders)
+	s.Equal(10, torrents[1].Torrent.Seeders)
+	s.Equal(10, torrents[2].Torrent.Seeders)
+
+	// Stable sort should maintain relative order
+	s.Equal("Show A", torrents[0].Torrent.Title)
+	s.Equal("Show B", torrents[1].Torrent.Title)
+	s.Equal("Show C", torrents[2].Torrent.Title)
+}
+
+// TestSortBySeedersDESC_ZeroSeeders tests handling of zero seeders
+func (s *QbittHandlerTestSuite) TestSortBySeedersDESC_ZeroSeeders() {
+	torrents := []*models.TorrentMatch{
+		{Torrent: &prowlarr.Search{Title: "Show with seeders", Seeders: 50}},
+		{Torrent: &prowlarr.Search{Title: "Dead torrent", Seeders: 0}},
+		{Torrent: &prowlarr.Search{Title: "Popular torrent", Seeders: 100}},
+	}
+
+	s.handler.sortBySeedersDESC(torrents)
+
+	s.Equal(100, torrents[0].Torrent.Seeders)
+	s.Equal(50, torrents[1].Torrent.Seeders)
+	s.Equal(0, torrents[2].Torrent.Seeders, "Zero seeder torrent should be last")
+}
