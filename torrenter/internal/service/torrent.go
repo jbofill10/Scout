@@ -244,7 +244,7 @@ func (q *QbittHandler) processEpisodeDownload(
 
 	// Download the torrent and start monitoring
 	winningCtx := strategyContexts[match.Strategy]
-	return q.initiateDownloadAndMonitor(match, winningCtx, done, wg)
+	return q.initiateDownloadAndMonitor(winningCtx, match, done, wg)
 }
 
 // executeSearchStrategies runs all search strategies and collects matching torrents
@@ -360,14 +360,14 @@ func (q *QbittHandler) logFilteringSummary(ctx context.Context, total, valid int
 
 // initiateDownloadAndMonitor starts the download and begins monitoring for completion
 func (q *QbittHandler) initiateDownloadAndMonitor(
+	ctx context.Context,
 	match *models.TorrentMatch,
-	winningCtx context.Context,
 	done chan<- models.TorrentCompleteEvent,
 	wg *sync.WaitGroup,
 ) error {
 	ss := match.Strategy
 	err := q.repo.InsertDownloadHistory(
-		winningCtx,
+		ctx,
 		ss.MediaName,
 		ss.Season,
 		ss.Episode,
@@ -376,25 +376,25 @@ func (q *QbittHandler) initiateDownloadAndMonitor(
 		"downloading",
 		"")
 	if err != nil {
-		q.logger.ErrorContext(winningCtx, "Failed to insert download history", "error", err)
+		q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
 	}
 
-	infoHash, trackingUUID, err := q.downloadTorrent(winningCtx, match.Torrent)
+	infoHash, trackingUUID, err := q.downloadTorrent(ctx, match.Torrent)
 	if err != nil {
-		q.logger.ErrorContext(winningCtx, "Failed to download torrent", "error", err)
+		q.logger.ErrorContext(ctx, "Failed to download torrent", "error", err)
 		return err
 	}
 
 	// Start monitoring goroutine
 	wg.Add(1)
-	go q.monitorTorrentCompletion(winningCtx, match, infoHash, trackingUUID, done, wg)
+	go q.monitorTorrentCompletion(ctx, match, infoHash, trackingUUID, done, wg)
 
 	return nil
 }
 
 // monitorTorrentCompletion watches a torrent until it completes and sends the completion event
 func (q *QbittHandler) monitorTorrentCompletion(
-	parentCtx context.Context,
+	ctx context.Context,
 	match *models.TorrentMatch,
 	infoHash string,
 	trackingUUID string,
@@ -402,10 +402,9 @@ func (q *QbittHandler) monitorTorrentCompletion(
 	wg *sync.WaitGroup,
 ) {
 	// Extract span from context
-	winningSpan := trace.SpanFromContext(parentCtx)
-
+	winningSpan := trace.SpanFromContext(ctx)
 	// Create a background context independent of the HTTP request lifecycle
-	monitorCtx := trace.ContextWithSpanContext(context.Background(), trace.SpanContextFromContext(parentCtx))
+	monitorCtx := trace.ContextWithSpanContext(context.Background(), trace.SpanContextFromContext(ctx))
 
 	defer wg.Done()
 	defer winningSpan.End()
