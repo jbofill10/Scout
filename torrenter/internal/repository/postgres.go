@@ -30,6 +30,7 @@ type Repository interface {
 	GetShowBaseDirectory(ctx context.Context, tvdbId string) (string, error)
 	GetMovieBaseDirectory(ctx context.Context, tvdbId string) (string, error)
 	EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season, episode int) (bool, error)
+	MovieExistsByTvdbId(ctx context.Context, tvdbId string) (bool, error)
 	MediaExists(ctx context.Context, id string) (bool, error)
 	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
 	UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error
@@ -174,6 +175,22 @@ func (r *Repo) EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season,
 	err := r.db.QueryRowContext(ctx, query, tvdbId, season, episode).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("failed to check episode existence by tvdb id: %w", err)
+	}
+
+	return exists, nil
+}
+
+// MovieExistsByTvdbId checks if a movie exists in the Plex library by its TVDB ID
+func (r *Repo) MovieExistsByTvdbId(ctx context.Context, tvdbId string) (bool, error) {
+	if tvdbId == "" {
+		return false, nil
+	}
+
+	var exists bool
+	query := `SELECT EXISTS(SELECT 1 FROM Movies WHERE tvdb_id = $1)`
+	err := r.db.QueryRowContext(ctx, query, tvdbId).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check movie existence by tvdb id: %w", err)
 	}
 
 	return exists, nil

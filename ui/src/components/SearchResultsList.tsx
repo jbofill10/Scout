@@ -24,9 +24,10 @@ export interface SearchResult {
 
 interface SearchResultsListProps {
   results: SearchResult[];
+  mediaType: 'series' | 'movie';
 }
 
-const SearchResultsList: React.FC<SearchResultsListProps> = ({ results }) => {
+const SearchResultsList: React.FC<SearchResultsListProps> = ({ results, mediaType }) => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
 
@@ -41,7 +42,10 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({ results }) => {
   };
 
   const handleDownload = (result: SearchResult) => {
-    fetch('/api/shows', {
+    // Route to correct endpoint based on media type
+    const endpoint = mediaType === 'movie' ? '/api/movies' : '/api/shows';
+
+    fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -88,6 +92,7 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({ results }) => {
         onClose={handleClose}
         result={selectedResult}
         onDownload={handleDownload}
+        mediaType={mediaType}
       />
     </>
   );

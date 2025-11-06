@@ -418,17 +418,30 @@ func (s *QbittHandlerTestSuite) TestDidTorrentComplete_PartialStalled() {
 	s.False(result)
 }
 
-func (s *QbittHandlerTestSuite) TestCalcIndexerIDs_Anime() {
-	anime := true
-	ids := s.handler.calcIndexerIDs(anime)
+func (s *QbittHandlerTestSuite) TestCalcIndexerIDs_AnimeShow() {
+	ids := s.handler.calcIndexerIDs("series", true)
 
 	s.Len(ids, 1)
 	s.Equal(NYAA_ID, ids[0])
 }
 
-func (s *QbittHandlerTestSuite) TestCalcIndexerIDs_NonAnime() {
-	anime := false
-	ids := s.handler.calcIndexerIDs(anime)
+func (s *QbittHandlerTestSuite) TestCalcIndexerIDs_NonAnimeShow() {
+	ids := s.handler.calcIndexerIDs("series", false)
+
+	s.Len(ids, 1)
+	s.Contains(ids, ONE337x_ID)
+}
+
+func (s *QbittHandlerTestSuite) TestCalcIndexerIDs_AnimeMovie() {
+	ids := s.handler.calcIndexerIDs("movie", true)
+
+	s.Len(ids, 2)
+	s.Contains(ids, NYAA_ID)
+	s.Contains(ids, ONE337x_ID)
+}
+
+func (s *QbittHandlerTestSuite) TestCalcIndexerIDs_NonAnimeMovie() {
+	ids := s.handler.calcIndexerIDs("movie", false)
 
 	s.Len(ids, 1)
 	s.Contains(ids, ONE337x_ID)

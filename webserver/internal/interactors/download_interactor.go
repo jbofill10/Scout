@@ -93,7 +93,7 @@ func (i *DownloadInteractor) extractAliases(aliases []tvdb.Alias) []string {
 
 // DownloadShow handles the download request for a TV show
 func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) error {
-	extendedInfo, err := i.getExtendedInformation(ctx, req.Id)
+	extendedInfo, err := i.getExtendedInformation(ctx, req.Id, "series")
 	if err != nil {
 		i.logger.ErrorContext(ctx, "Failed to get extended information", "error", err)
 		return err
@@ -219,9 +219,69 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 	return nil
 }
 
-func (i *DownloadInteractor) getExtendedInformation(ctx context.Context, mediaId string) (tvdb.TVDBSeriesExtendedResponse, error) {
-	i.logger.DebugContext(ctx, "Requesting extended info", "media_id", mediaId)
-	seriesInfo, err := i.tvdbClient.GetExtendedInfo(ctx, mediaId)
+// DownloadMovie handles the download request for a movie
+func (i *DownloadInteractor) DownloadMovie(ctx context.Context, req tvdb.Media) error {
+	// Get extended info to determine anime classification
+	extendedInfo, err := i.getExtendedInformation(ctx, req.Id, "movie")
+	if err != nil {
+		i.logger.ErrorContext(ctx, "Failed to get extended information", "error", err)
+		return err
+	}
+
+	// Set anime status based on TVDB genres
+	isAnime := isMediaAnime(extendedInfo)
+	req.Anime = isAnime
+
+	// Parse release date from FirstAired field
+	releaseDate, err := time.Parse("2006-01-02", req.Metadata.FirstAired)
+	if err != nil {
+		// If parse fails or date is invalid, treat as already released
+		i.logger.WarnContext(ctx, "Failed to parse movie release date, treating as released",
+			"error", err, "first_aired", req.Metadata.FirstAired)
+		// Download immediately
+		err = i.torrenterClient.Download(ctx, req)
+		if err != nil {
+			i.logger.ErrorContext(ctx, "Failed to download movie", "error", err)
+			return err
+		}
+		i.logger.InfoContext(ctx, "Sent movie to torrenter", "movie", req.Name)
+		return nil
+	}
+
+	// Check if release date is in the future
+	today := time.Now()
+	if releaseDate.After(today) {
+		// Schedule for future download
+		traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
+		err := i.repo.Schedule(req, releaseDate, traceID, spanID)
+		if err != nil {
+			if err == repository.ErrDuplicateScheduled {
+				i.logger.InfoContext(ctx, "Movie already scheduled, skipping", "movie", req.Name)
+				return err
+			}
+			i.logger.ErrorContext(ctx, "Failed to schedule movie", "error", err)
+			return err
+		}
+		i.logger.InfoContext(ctx, "Scheduled movie for future release",
+			"movie", req.Name, "release_date", releaseDate.Format("2006-01-02"))
+		return nil
+	}
+
+	// Movie has already been released - download immediately
+	err = i.torrenterClient.Download(ctx, req)
+	if err != nil {
+		i.logger.ErrorContext(ctx, "Failed to download movie", "error", err)
+		return err
+	}
+	i.logger.InfoContext(ctx, "Sent movie to torrenter", "movie", req.Name)
+	return nil
+}
+
+func (i *DownloadInteractor) getExtendedInformation(
+	ctx context.Context, mediaId, mediaType string,
+) (tvdb.TVDBSeriesExtendedResponse, error) {
+	i.logger.DebugContext(ctx, "Requesting extended info", "media_id", mediaId, "media_type", mediaType)
+	seriesInfo, err := i.tvdbClient.GetExtendedInfo(ctx, mediaId, mediaType)
 	if err != nil {
 		i.logger.ErrorContext(ctx, "Failed to get extended info from TVDBProxyClient", "error", err)
 		return tvdb.TVDBSeriesExtendedResponse{}, err

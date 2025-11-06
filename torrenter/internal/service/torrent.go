@@ -76,7 +76,7 @@ func (q *QbittHandler) searchProwlarr(ctx context.Context, query, category strin
 
 	resp, err := q.p.SearchContext(ctx, prowlarr.SearchInput{
 		Query:      query,
-		IndexerIDs: q.calcIndexerIDs(isAnime),
+		IndexerIDs: q.calcIndexerIDs(category, isAnime),
 		Limit:      500,
 		Categories: q.calcCategories(category == "series"),
 	})
@@ -90,50 +90,95 @@ func (q *QbittHandler) searchProwlarr(ctx context.Context, query, category strin
 }
 
 func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done chan<- models.TorrentCompleteEvent) error {
-	if req.Category != "series" {
-		return nil
-	}
-
-	// Filter out episodes that already exist in Plex
-	episodesToDownload, err := q.filterExistingEpisodes(ctx, req)
-	if err != nil {
-		return err
-	}
-
-	if len(episodesToDownload) == 0 {
-		q.logger.InfoContext(ctx, "All episodes already exist in Plex, nothing to download", telemetry.WithTraceContext(ctx, "show", req.Name)...)
-		return nil
-	}
-
-	q.logger.InfoContext(ctx, "Episodes to download after filtering", telemetry.WithTraceContext(ctx, "show", req.Name,
-		"total", len(req.Metadata.Episodes), "to_download", len(episodesToDownload), "show_aliases", req.Aliases)...)
-
-	// Build search strategies for each episode
-	searchStrategies := q.buildSearchStrategies(ctx, req, episodesToDownload)
-
-	// Process all episodes concurrently
-	var wg sync.WaitGroup
-	ctx, searchSpan := torrentTracer.Start(ctx, "searchForEpisodes")
-	searchSpan.SetAttributes(
-		attribute.String("show_name", req.Name),
-		attribute.String("tvdb_id", req.Id),
-		attribute.Int("episode_count", len(searchStrategies)),
-		attribute.Bool("is_anime", req.Anime),
-	)
-	defer searchSpan.End()
-
-	for episodeIdx, strategies := range searchStrategies {
-		if err := q.processEpisodeDownload(ctx, episodeIdx, strategies, req, done, &wg); err != nil {
-			return err
+	// Handle movies: check if movie already exists in Plex
+	if req.Category == "movie" {
+		exists, err := q.repo.MovieExistsByTvdbId(ctx, req.Id)
+		if err != nil {
+			q.logger.WarnContext(ctx, "Failed to check movie existence by TVDB ID",
+				telemetry.WithTraceContext(ctx, "tvdb_id", req.Id, "movie", req.Name, "error", err.Error())...)
+		}
+		if exists {
+			q.logger.InfoContext(ctx, "Movie already exists in Plex, skipping",
+				telemetry.WithTraceContext(ctx, "movie", req.Name, "tvdb_id", req.Id)...)
+			return nil
 		}
 	}
 
-	// Close the channel after all monitoring goroutines complete
-	go func() {
-		wg.Wait()
-		close(done)
-		q.logger.InfoContext(ctx, "All torrents processed, channel closed")
-	}()
+	// Handle series: Filter out episodes that already exist in Plex
+	if req.Category == "series" {
+		episodesToDownload, err := q.filterExistingEpisodes(ctx, req)
+		if err != nil {
+			return err
+		}
+
+		if len(episodesToDownload) == 0 {
+			q.logger.InfoContext(ctx, "All episodes already exist in Plex, nothing to download",
+				telemetry.WithTraceContext(ctx, "show", req.Name)...)
+			return nil
+		}
+
+		q.logger.InfoContext(ctx, "Episodes to download after filtering",
+			telemetry.WithTraceContext(ctx, "show", req.Name,
+				"total", len(req.Metadata.Episodes), "to_download", len(episodesToDownload),
+				"show_aliases", req.Aliases)...)
+
+		// Build search strategies for each episode
+		searchStrategies := q.buildSearchStrategies(ctx, req, episodesToDownload)
+
+		// Process all episodes concurrently
+		var wg sync.WaitGroup
+		ctx, searchSpan := torrentTracer.Start(ctx, "searchForEpisodes")
+		searchSpan.SetAttributes(
+			attribute.String("show_name", req.Name),
+			attribute.String("tvdb_id", req.Id),
+			attribute.Int("episode_count", len(searchStrategies)),
+			attribute.Bool("is_anime", req.Anime),
+		)
+		defer searchSpan.End()
+
+		for episodeIdx, strategies := range searchStrategies {
+			if err := q.processEpisodeDownload(ctx, episodeIdx, strategies, req, done, &wg); err != nil {
+				return err
+			}
+		}
+
+		// Close the channel after all monitoring goroutines complete
+		go func() {
+			wg.Wait()
+			close(done)
+			q.logger.InfoContext(ctx, "All torrents processed, channel closed")
+		}()
+
+		return nil
+	}
+
+	// Handle movies: create movie search strategy and process
+	if req.Category == "movie" {
+		movieStrategy := q.createMovieSearchStrategy(req)
+
+		var wg sync.WaitGroup
+		ctx, searchSpan := torrentTracer.Start(ctx, "searchForMovie")
+		searchSpan.SetAttributes(
+			attribute.String("movie_name", req.Name),
+			attribute.String("tvdb_id", req.Id),
+			attribute.Bool("is_anime", req.Anime),
+		)
+		defer searchSpan.End()
+
+		// Process movie download using existing episode download logic
+		if err := q.processEpisodeDownload(ctx, 0, movieStrategy, req, done, &wg); err != nil {
+			return err
+		}
+
+		// Close the channel after monitoring goroutine completes
+		go func() {
+			wg.Wait()
+			close(done)
+			q.logger.InfoContext(ctx, "Movie torrent processed, channel closed")
+		}()
+
+		return nil
+	}
 
 	return nil
 }
@@ -516,6 +561,31 @@ func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episo
 	return ss
 }
 
+// createMovieSearchStrategy generates search strategies for movie downloads
+// Returns array of SearchStrategy with single movie query
+// Note: Indexer selection is handled by calcIndexerIDs() based on req.Anime flag
+func (q *QbittHandler) createMovieSearchStrategy(req *tvdb.Media) []*models.SearchStrategy {
+	var ss []*models.SearchStrategy
+
+	// Create query: "{MovieName} {Year}"
+	query := req.Name
+	if req.Year != "" {
+		query = fmt.Sprintf("%s %s", req.Name, req.Year)
+	}
+
+	ss = append(ss, &models.SearchStrategy{
+		Query:       query,
+		MediaName:   req.Name,
+		Season:      0,        // Movies have no season
+		Episode:     0,        // Movies have no episode (used to detect movie vs show)
+		EpisodeMeta: nil,      // Movies have no episode metadata
+		TvdbId:      req.Id,
+		ReleaseYear: req.Year,
+	})
+
+	return ss
+}
+
 func (q *QbittHandler) didTorrentComplete(torrent *qbittorrent.Torrent) bool {
 	fmt.Printf("Torrent State: %s\n", torrent.State)
 	if torrent.Completed == torrent.Size && torrent.State == "stalledUP" {
@@ -532,13 +602,25 @@ func (q *QbittHandler) calcCategories(show bool) []int64 {
 	}
 }
 
-func (q *QbittHandler) calcIndexerIDs(isAnime bool) []int64 {
-	if isAnime {
-		return []int64{NYAA_ID}
-	} else {
+// calcIndexerIDs determines which Prowlarr indexers to use based on media type and anime status
+// Anime shows: NYAA only
+// Regular shows: 1337x only
+// Anime movies: NYAA + 1337x (both indexers for better coverage)
+// Regular movies: 1337x only
+func (q *QbittHandler) calcIndexerIDs(category string, isAnime bool) []int64 {
+	if category == "movie" {
+		// Movies: anime uses both NYAA and 1337x, regular uses 1337x only
+		if isAnime {
+			return []int64{NYAA_ID, ONE337x_ID}
+		}
 		return []int64{ONE337x_ID}
 	}
 
+	// Shows (series): anime uses NYAA, regular uses 1337x
+	if isAnime {
+		return []int64{NYAA_ID}
+	}
+	return []int64{ONE337x_ID}
 }
 
 // TorrentValidationResult holds the result of torrent validation

@@ -16,9 +16,10 @@ interface SearchResultDialogProps {
   onClose: () => void;
   result: SearchResult | null;
   onDownload: (result: SearchResult) => void;
+  mediaType: 'series' | 'movie';
 }
 
-const SearchResultDialog: React.FC<SearchResultDialogProps> = ({ open, onClose, result, onDownload }) => {
+const SearchResultDialog: React.FC<SearchResultDialogProps> = ({ open, onClose, result, onDownload, mediaType }) => {
   if (!result) return null;
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
@@ -38,7 +39,11 @@ const SearchResultDialog: React.FC<SearchResultDialogProps> = ({ open, onClose, 
           />
           {result.metadata && (
             <Box>
-              <Typography variant="body2">Episodes: {result.metadata.episodes?.length ?? 0}</Typography>
+              {mediaType === 'series' ? (
+                <Typography variant="body2">Episodes: {result.metadata.episodes?.length ?? 0}</Typography>
+              ) : (
+                <Typography variant="body2">Movie</Typography>
+              )}
             </Box>
           )}
         </Box>

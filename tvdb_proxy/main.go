@@ -144,13 +144,25 @@ func queryShow(ctx context.Context, showName, mediaType string) ([]tvdb.Media, e
 			Year:         item.Year,
 		}
 		ch <- struct{}{}
-		logger.InfoContext(ctx, "Processing series data...")
+		logger.InfoContext(ctx, "Processing media data...")
 
 		go func(ctx context.Context, mediaData tvdb.Media) {
 			defer wg.Done()
+
+			// Skip episode metadata fetching for movies
+			if mediaData.Category == "movie" {
+				// Set empty metadata for movies
+				mediaData.Metadata = tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{}}
+				results = append(results, mediaData)
+				<-ch
+				return
+			}
+
+			// Fetch episode metadata for series
 			seriesResponse, err := querySeriesMetadata(ctx, mediaData.Id)
 			if err != nil {
 				logger.InfoContext(ctx, "Unable to process media", "value", err)
+				<-ch
 				return
 			}
 
@@ -275,8 +287,14 @@ func querySeriesMetadata(ctx context.Context, seriesId string) (tvdb.TVDBSeriesR
 
 // fetchTranslations fetches translation data for a given media ID and language code
 // Returns a slice of aliases from the translation endpoint, or an empty slice on error
-func fetchTranslations(ctx context.Context, mediaId string, language string) []tvdb.Alias {
-	translationURL := tvDbConfig.Host + fmt.Sprintf("/series/%s/translations/%s", mediaId, language)
+func fetchTranslations(ctx context.Context, mediaId string, language string, mediaType string) []tvdb.Alias {
+	// Conditional translations endpoint based on media type
+	var translationURL string
+	if mediaType == "movie" {
+		translationURL = tvDbConfig.Host + fmt.Sprintf("/movies/%s/translations/%s", mediaId, language)
+	} else {
+		translationURL = tvDbConfig.Host + fmt.Sprintf("/series/%s/translations/%s", mediaId, language)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", translationURL, nil)
 	if err != nil {
@@ -329,8 +347,17 @@ func fetchTranslations(ctx context.Context, mediaId string, language string) []t
 
 func getExtendedInformation(c *gin.Context) {
 	mediaId := c.Param("id")
-	fmt.Printf("Fetching extended information for media ID: %s\n", mediaId)
-	url := tvDbConfig.Host + fmt.Sprintf("/series/%s/extended", mediaId)
+	mediaType := c.Query("mediaType")
+	fmt.Printf("Fetching extended information for media ID: %s, type: %s\n", mediaId, mediaType)
+
+	// Conditional endpoint logic based on media type
+	var url string
+	if mediaType == "movie" {
+		url = tvDbConfig.Host + fmt.Sprintf("/movies/%s/extended", mediaId)
+	} else {
+		// Default to series for backwards compatibility
+		url = tvDbConfig.Host + fmt.Sprintf("/series/%s/extended", mediaId)
+	}
 
 	// Extract context for trace propagation
 	ctx := c.Request.Context()
@@ -380,24 +407,33 @@ func getExtendedInformation(c *gin.Context) {
 		return
 	}
 
-	// Determine if the show is anime by checking genres
+	// Determine if the media is anime by checking genres
+	// For movies: check both "Anime" and "Animation" genres
+	// For series: check only "Anime" genre (existing behavior)
 	isAnime := false
 	for _, genre := range info.Data.Genres {
-		if genre.Name == "Anime" {
-			isAnime = true
-			break
+		if mediaType == "movie" {
+			if genre.Name == "Anime" || genre.Name == "Animation" {
+				isAnime = true
+				break
+			}
+		} else {
+			if genre.Name == "Anime" {
+				isAnime = true
+				break
+			}
 		}
 	}
 
 	// Always fetch English translations
 	logger.InfoContext(ctx, "Fetching English translations", "media_id", mediaId)
-	engAliases := fetchTranslations(ctx, mediaId, "eng")
+	engAliases := fetchTranslations(ctx, mediaId, "eng", mediaType)
 	info.Data.Aliases = append(info.Data.Aliases, engAliases...)
 
 	// If anime, also fetch Japanese translations
 	if isAnime {
-		logger.InfoContext(ctx, "Show is anime, fetching Japanese translations", "media_id", mediaId)
-		jpnAliases := fetchTranslations(ctx, mediaId, "jpn")
+		logger.InfoContext(ctx, "Media is anime, fetching Japanese translations", "media_id", mediaId)
+		jpnAliases := fetchTranslations(ctx, mediaId, "jpn", mediaType)
 		info.Data.Aliases = append(info.Data.Aliases, jpnAliases...)
 	}
 

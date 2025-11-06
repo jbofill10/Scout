@@ -48,8 +48,10 @@ func (c *TVDBProxyClient) Search(ctx context.Context, mediaType, mediaName strin
 	return results, nil
 }
 
-func (c *TVDBProxyClient) GetExtendedInfo(ctx context.Context, mediaId string) (tvdb.TVDBSeriesExtendedResponse, error) {
-	url := fmt.Sprintf("http://%s/series/%s/extended", c.Host, mediaId)
+func (c *TVDBProxyClient) GetExtendedInfo(
+	ctx context.Context, mediaId, mediaType string,
+) (tvdb.TVDBSeriesExtendedResponse, error) {
+	url := fmt.Sprintf("http://%s/series/%s/extended?mediaType=%s", c.Host, mediaId, mediaType)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return tvdb.TVDBSeriesExtendedResponse{}, err

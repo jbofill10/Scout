@@ -202,6 +202,34 @@ func (_m *Repository) InsertDownloadHistory(ctx context.Context, mediaTitle stri
 	return r0
 }
 
+// MovieExistsByTvdbId provides a mock function with given fields: ctx, tvdbId
+func (_m *Repository) MovieExistsByTvdbId(ctx context.Context, tvdbId string) (bool, error) {
+	ret := _m.Called(ctx, tvdbId)
+
+	if len(ret) == 0 {
+		panic("no return value specified for MovieExistsByTvdbId")
+	}
+
+	var r0 bool
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (bool, error)); ok {
+		return rf(ctx, tvdbId)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string) bool); ok {
+		r0 = rf(ctx, tvdbId)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, tvdbId)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // MediaExists provides a mock function with given fields: ctx, id
 func (_m *Repository) MediaExists(ctx context.Context, id string) (bool, error) {
 	ret := _m.Called(ctx, id)

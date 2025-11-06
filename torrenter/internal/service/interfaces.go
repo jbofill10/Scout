@@ -30,6 +30,7 @@ type Repository interface {
 	GetShowBaseDirectory(ctx context.Context, tvdbId string) (string, error)
 	GetMovieBaseDirectory(ctx context.Context, tvdbId string) (string, error)
 	EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season, episode int) (bool, error)
+	MovieExistsByTvdbId(ctx context.Context, tvdbId string) (bool, error)
 	MediaExists(ctx context.Context, id string) (bool, error)
 	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
 	UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error

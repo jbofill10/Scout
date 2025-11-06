@@ -37,6 +37,7 @@ usage() {
     echo ""
     echo "Usage:"
     echo "  ./dev.sh rebuild <service>     - Rebuild and restart a service"
+    echo "  ./dev.sh rebuild-all           - Rebuild and restart all services"
     echo "  ./dev.sh logs <service>        - Follow logs for a service"
     echo "  ./dev.sh shell <service>       - Open shell in service container"
     echo "  ./dev.sh restart <service>     - Restart a service (no rebuild)"
@@ -48,6 +49,7 @@ usage() {
     echo ""
     echo "Examples:"
     echo "  ./dev.sh rebuild webserver     # Quick rebuild after code changes"
+    echo "  ./dev.sh rebuild-all           # Rebuild everything"
     echo "  ./dev.sh logs torrenter        # Watch torrenter logs"
     echo "  ./dev.sh shell webserver       # Debug inside container"
     exit 0
@@ -85,6 +87,21 @@ rebuild() {
 
     log_success "$service rebuilt and restarted!"
     log_info "View logs with: ./dev.sh logs $service"
+}
+
+# Rebuild all services
+rebuild_all() {
+    check_config
+
+    log_info "Rebuilding all services..."
+    docker compose build
+
+    log_info "Restarting all services..."
+    docker compose up -d
+
+    log_success "All services rebuilt and restarted!"
+    log_info "View status with: ./dev.sh ps"
+    log_info "View logs with: ./dev.sh logs"
 }
 
 # View logs
@@ -173,6 +190,9 @@ up() {
 case "$1" in
     rebuild)
         rebuild "$2"
+        ;;
+    rebuild-all)
+        rebuild_all
         ;;
     logs)
         logs "$2"

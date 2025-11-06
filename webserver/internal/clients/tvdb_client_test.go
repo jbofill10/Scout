@@ -129,6 +129,7 @@ func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_Success() {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.Equal("/series/123/extended", r.URL.Path)
+		s.Equal("series", r.URL.Query().Get("mediaType"))
 
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(expectedInfo)
@@ -137,7 +138,7 @@ func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_Success() {
 
 	client := NewTVDBProxyClient(server.URL[7:])
 
-	info, err := client.GetExtendedInfo(context.Background(), "123")
+	info, err := client.GetExtendedInfo(context.Background(), "123", "series")
 
 	s.NoError(err)
 	s.Equal("test-show", info.Data.Slug)
@@ -153,7 +154,7 @@ func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_HTTPError() {
 
 	client := NewTVDBProxyClient(server.URL[7:])
 
-	info, err := client.GetExtendedInfo(context.Background(), "999")
+	info, err := client.GetExtendedInfo(context.Background(), "999", "series")
 
 	// JSON decoder returns EOF on empty body
 	s.Error(err)
@@ -169,7 +170,7 @@ func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_InvalidJSON() {
 
 	client := NewTVDBProxyClient(server.URL[7:])
 
-	info, err := client.GetExtendedInfo(context.Background(), "123")
+	info, err := client.GetExtendedInfo(context.Background(), "123", "series")
 
 	s.Error(err)
 	s.Equal(tvdb.TVDBSeriesExtendedResponse{}, info)
@@ -178,7 +179,7 @@ func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_InvalidJSON() {
 func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_NetworkError() {
 	client := NewTVDBProxyClient("invalid-host:9999")
 
-	info, err := client.GetExtendedInfo(context.Background(), "123")
+	info, err := client.GetExtendedInfo(context.Background(), "123", "series")
 
 	s.Error(err)
 	s.Equal(tvdb.TVDBSeriesExtendedResponse{}, info)
@@ -203,7 +204,7 @@ func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_DifferentMediaIDs() {
 			defer server.Close()
 
 			client := NewTVDBProxyClient(server.URL[7:])
-			_, err := client.GetExtendedInfo(context.Background(), tc.mediaID)
+			_, err := client.GetExtendedInfo(context.Background(), tc.mediaID, "series")
 
 			s.NoError(err)
 		})
