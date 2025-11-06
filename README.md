@@ -2,6 +2,9 @@
 
 Over-engineered microservices architecture for automated media torrenting with a web interface.
 
+![Scout Architecture](ScoutArchitecture.png)
+
+
 ## ⚠️ Security Notice
 
 **Before deploying Scout, you must configure environment variables properly.** This repository does not include actual credentials.

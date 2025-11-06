@@ -76,7 +76,7 @@ func (q *QbittHandler) searchProwlarr(ctx context.Context, query, category strin
 
 	resp, err := q.p.SearchContext(ctx, prowlarr.SearchInput{
 		Query:      query,
-		IndexerIDs: q.calcIndexerIDs(category, isAnime),
+		IndexerIDs: q.calcIndexerIDs(isAnime),
 		Limit:      500,
 		Categories: q.calcCategories(category == "series"),
 	})
@@ -90,302 +90,377 @@ func (q *QbittHandler) searchProwlarr(ctx context.Context, query, category strin
 }
 
 func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done chan<- models.TorrentCompleteEvent) error {
+	if req.Category != "series" {
+		return nil
+	}
 
+	// Filter out episodes that already exist in Plex
+	episodesToDownload, err := q.filterExistingEpisodes(ctx, req)
+	if err != nil {
+		return err
+	}
+
+	if len(episodesToDownload) == 0 {
+		q.logger.InfoContext(ctx, "All episodes already exist in Plex, nothing to download", telemetry.WithTraceContext(ctx, "show", req.Name)...)
+		return nil
+	}
+
+	q.logger.InfoContext(ctx, "Episodes to download after filtering", telemetry.WithTraceContext(ctx, "show", req.Name,
+		"total", len(req.Metadata.Episodes), "to_download", len(episodesToDownload), "show_aliases", req.Aliases)...)
+
+	// Build search strategies for each episode
+	searchStrategies := q.buildSearchStrategies(ctx, req, episodesToDownload)
+
+	// Process all episodes concurrently
+	var wg sync.WaitGroup
+	ctx, searchSpan := torrentTracer.Start(ctx, "searchForEpisodes")
+	searchSpan.SetAttributes(
+		attribute.String("show_name", req.Name),
+		attribute.String("tvdb_id", req.Id),
+		attribute.Int("episode_count", len(searchStrategies)),
+		attribute.Bool("is_anime", req.Anime),
+	)
+	defer searchSpan.End()
+
+	for episodeIdx, strategies := range searchStrategies {
+		if err := q.processEpisodeDownload(ctx, episodeIdx, strategies, req, done, &wg); err != nil {
+			return err
+		}
+	}
+
+	// Close the channel after all monitoring goroutines complete
+	go func() {
+		wg.Wait()
+		close(done)
+		q.logger.InfoContext(ctx, "All torrents processed, channel closed")
+	}()
+
+	return nil
+}
+
+// filterExistingEpisodes checks which episodes already exist in Plex and returns only those that need downloading
+func (q *QbittHandler) filterExistingEpisodes(ctx context.Context, req *tvdb.Media) ([]tvdb.Episode, error) {
+	ctx, span := torrentTracer.Start(ctx, "filterExistingEpisodes")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("show_name", req.Name),
+		attribute.String("tvdb_id", req.Id),
+		attribute.Int("total_episodes", len(req.Metadata.Episodes)),
+	)
+
+	episodesToDownload := []tvdb.Episode{}
+	for _, episode := range req.Metadata.Episodes {
+		exists, err := q.repo.EpisodeExistsByTvdbId(ctx, req.Id, episode.SeasonNumber, episode.Number)
+		if err != nil {
+			q.logger.WarnContext(ctx, "Failed to check episode existence by TVDB ID",
+				telemetry.WithTraceContext(ctx, "tvdb_id", req.Id, "season", episode.SeasonNumber, "episode", episode.Number, "error", err.Error())...)
+		}
+
+		if exists {
+			q.logger.InfoContext(ctx, "Episode already exists in Plex, skipping",
+				telemetry.WithTraceContext(ctx, "name", req.Name, "season", episode.SeasonNumber, "episode", episode.Number)...)
+			continue
+		}
+
+		episodesToDownload = append(episodesToDownload, episode)
+	}
+
+	episodesFiltered := len(req.Metadata.Episodes) - len(episodesToDownload)
+	span.SetAttributes(
+		attribute.Int("episodes_filtered", episodesFiltered),
+		attribute.Int("episodes_to_download", len(episodesToDownload)),
+	)
+	span.SetStatus(codes.Ok, "Episode filtering complete")
+
+	return episodesToDownload, nil
+}
+
+// buildSearchStrategies creates search strategies for all episodes that need downloading
+func (q *QbittHandler) buildSearchStrategies(ctx context.Context, req *tvdb.Media, episodes []tvdb.Episode) [][]*models.SearchStrategy {
 	searchStrategies := [][]*models.SearchStrategy{}
-	if req.Category == "series" {
-		// Pre-download filtering: Check if episodes already exist in Plex
-		ctx, span := torrentTracer.Start(ctx, "filterExistingEpisodes")
-		span.SetAttributes(
-			attribute.String("show_name", req.Name),
-			attribute.String("tvdb_id", req.Id),
-			attribute.Int("total_episodes", len(req.Metadata.Episodes)),
+	for _, episode := range episodes {
+		q.logger.InfoContext(ctx, "Processing episode", telemetry.WithTraceContext(ctx, "name", req.Name, "season", episode.SeasonNumber,
+			"episode", episode.Number)...)
+		searchStrategies = append(searchStrategies, q.createSearchStrategy(req, &episode))
+	}
+	return searchStrategies
+}
+
+// processEpisodeDownload handles the complete download workflow for a single episode
+func (q *QbittHandler) processEpisodeDownload(
+	ctx context.Context,
+	episodeIdx int,
+	strategies []*models.SearchStrategy,
+	req *tvdb.Media,
+	done chan<- models.TorrentCompleteEvent,
+	wg *sync.WaitGroup,
+) error {
+	// Create episode-level parent span
+	episodeCtx, episodeSpan := torrentTracer.Start(ctx, "searchEpisode")
+	if len(strategies) > 0 {
+		episodeSpan.SetAttributes(
+			attribute.Int("episode_index", episodeIdx),
+			attribute.Int("season", strategies[0].Season),
+			attribute.Int("episode", strategies[0].Episode),
+			attribute.Int("strategy_count", len(strategies)),
+			attribute.String("media_name", strategies[0].MediaName),
 		)
+	}
 
-		episodesToDownload := []tvdb.Episode{}
-		for _, episode := range req.Metadata.Episodes {
-			// First try matching by TVDB ID (most reliable)
-			exists, err := q.repo.EpisodeExistsByTvdbId(ctx, req.Id, episode.SeasonNumber, episode.Number)
-			if err != nil {
-				q.logger.WarnContext(ctx, "Failed to check episode existence by TVDB ID, falling back to title match",
-					telemetry.WithTraceContext(ctx, "tvdb_id", req.Id, "season", episode.SeasonNumber, "episode", episode.Number, "error", err.Error())...)
-				// Fallback to name-based matching if TVDB ID check fails
-			}
+	// Execute all search strategies for this episode
+	bestMatches, strategyContexts, err := q.executeSearchStrategies(episodeCtx, strategies, req)
+	if err != nil {
+		episodeSpan.SetStatus(codes.Error, "search failed")
+		episodeSpan.End()
+		return err
+	}
 
-			if exists {
-				q.logger.InfoContext(ctx, "Episode already exists in Plex, skipping",
-					telemetry.WithTraceContext(ctx, "name", req.Name, "season", episode.SeasonNumber, "episode", episode.Number)...)
-				continue
-			}
+	// Select the best torrent from all matches
+	q.sortBySeedersDESC(bestMatches)
+	q.sortTorrentsByQuality(bestMatches)
+	match := q.pickBestTorrent(episodeCtx, bestMatches, req.Category, req.Anime)
 
-			episodesToDownload = append(episodesToDownload, episode)
+	// End all non-winning strategy spans
+	for ss, strategyCtx := range strategyContexts {
+		if match == nil || ss != match.Strategy {
+			span := trace.SpanFromContext(strategyCtx)
+			span.SetStatus(codes.Ok, "strategy not selected")
+			span.End()
 		}
+	}
 
-		episodesFiltered := len(req.Metadata.Episodes) - len(episodesToDownload)
-
-		span.SetAttributes(
-			attribute.Int("episodes_filtered", episodesFiltered),
-			attribute.Int("episodes_to_download", len(episodesToDownload)),
-		)
-		span.SetStatus(codes.Ok, "Episode filtering complete")
-		span.End()
-
-		if len(episodesToDownload) == 0 {
-			q.logger.InfoContext(ctx, "All episodes already exist in Plex, nothing to download", telemetry.WithTraceContext(ctx, "show", req.Name)...)
-			return nil
+	if match == nil {
+		q.logger.WarnContext(episodeCtx, "No suitable torrent found", "show", req.Name)
+		ss := strategies[0]
+		err := q.repo.InsertDownloadHistory(episodeCtx, req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, "", "failure", "no suitable torrent found")
+		if err != nil {
+			q.logger.ErrorContext(episodeCtx, "Failed to insert download history", "error", err)
 		}
+		episodeSpan.SetStatus(codes.Ok, "no suitable torrent found")
+		episodeSpan.End()
+		return nil
+	}
 
-		q.logger.InfoContext(ctx, "Episodes to download after filtering", telemetry.WithTraceContext(ctx, "show", req.Name,
-			"total", len(req.Metadata.Episodes), "to_download", len(episodesToDownload), "show_aliases", req.Aliases)...)
+	// Download the torrent and start monitoring
+	winningCtx := strategyContexts[match.Strategy]
+	return q.initiateDownloadAndMonitor(match, winningCtx, done, wg)
+}
 
-		for _, episode := range episodesToDownload {
-			q.logger.InfoContext(ctx, "Processing episode", telemetry.WithTraceContext(ctx, "name", req.Name, "season", episode.SeasonNumber,
-				"episode", episode.Number)...)
+// executeSearchStrategies runs all search strategies and collects matching torrents
+func (q *QbittHandler) executeSearchStrategies(
+	ctx context.Context,
+	strategies []*models.SearchStrategy,
+	req *tvdb.Media,
+) ([]*models.TorrentMatch, map[*models.SearchStrategy]context.Context, error) {
+	bestMatches := []*models.TorrentMatch{}
+	strategyContexts := make(map[*models.SearchStrategy]context.Context)
 
-			searchStrategies = append(searchStrategies, q.createSearchStrategy(req, &episode))
-		}
-
-		// Use WaitGroup to track all monitoring goroutines
-		var wg sync.WaitGroup
-
-		// Create parent span for the entire search operation
-		ctx, searchSpan := torrentTracer.Start(ctx, "searchForEpisodes")
-		searchSpan.SetAttributes(
-			attribute.String("show_name", req.Name),
-			attribute.String("tvdb_id", req.Id),
-			attribute.Int("episode_count", len(searchStrategies)),
+	for strategyIdx, ss := range strategies {
+		strategyCtx, strategySpan := torrentTracer.Start(ctx, "searchStrategy")
+		strategySpan.SetAttributes(
+			attribute.Int("strategy_index", strategyIdx),
+			attribute.String("query", ss.Query),
+			attribute.String("media_name", ss.MediaName),
+			attribute.Int("season", ss.Season),
+			attribute.Int("episode", ss.Episode),
 			attribute.Bool("is_anime", req.Anime),
 		)
-		defer searchSpan.End()
 
-		for episodeIdx, strategies := range searchStrategies {
-			// Create episode-level parent span
-			episodeCtx, episodeSpan := torrentTracer.Start(ctx, "searchEpisode")
-			if len(strategies) > 0 {
-				episodeSpan.SetAttributes(
-					attribute.Int("episode_index", episodeIdx),
-					attribute.Int("season", strategies[0].Season),
-					attribute.Int("episode", strategies[0].Episode),
-					attribute.Int("strategy_count", len(strategies)),
-					attribute.String("media_name", strategies[0].MediaName),
-				)
+		q.logger.InfoContext(strategyCtx, "Search Query", telemetry.WithTraceContext(strategyCtx, "query", ss.Query)...)
+		pResp, err := q.searchProwlarr(strategyCtx, ss.Query, req.Category, req.Anime)
+		if err != nil {
+			strategySpan.SetStatus(codes.Error, "failed to search Prowlarr")
+			strategySpan.RecordError(err)
+			strategySpan.End()
+			return nil, nil, fmt.Errorf("failed to search Prowlarr: %w", err)
+		}
+
+		strategySpan.SetAttributes(attribute.Int("results_found", len(pResp)))
+
+		if len(pResp) == 0 {
+			q.logger.InfoContext(strategyCtx, "no results found", "query", ss.Query)
+			strategySpan.SetAttributes(
+				attribute.Int("valid_matches", 0),
+				attribute.Bool("success", false),
+			)
+			strategySpan.SetStatus(codes.Ok, "no results found")
+			strategySpan.End()
+			continue
+		}
+
+		// Filter and validate torrents
+		possibleTorrents, rejectionReasons := q.filterTorrents(strategyCtx, pResp, ss)
+		q.logFilteringSummary(strategyCtx, len(pResp), len(possibleTorrents), rejectionReasons, ss.Query)
+
+		strategySpan.SetAttributes(
+			attribute.Int("valid_matches", len(possibleTorrents)),
+			attribute.Int("rejected_matches", len(pResp)-len(possibleTorrents)),
+		)
+
+		if len(possibleTorrents) == 0 {
+			q.logger.InfoContext(strategyCtx, "no matching torrents found", "query", ss.Query)
+			err := q.repo.InsertDownloadHistory(strategyCtx, req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, "", "failure", "no matching torrents found")
+			if err != nil {
+				q.logger.ErrorContext(strategyCtx, "Failed to insert download history", "error", err)
 			}
+			strategySpan.SetAttributes(attribute.Bool("success", false))
+			strategySpan.SetStatus(codes.Ok, "no matching torrents found")
+			strategySpan.End()
+		} else {
+			bestMatches = append(bestMatches, possibleTorrents...)
+			strategySpan.SetAttributes(attribute.Bool("success", true))
+			strategySpan.SetStatus(codes.Ok, "found matching torrents")
+			// Don't end the span yet - store context for the winning strategy
+			strategyContexts[ss] = strategyCtx
+		}
+	}
 
-			bestMatches := []*models.TorrentMatch{}
-			// Map to track successful strategy spans that should continue through download
-			strategySpans := make(map[*models.SearchStrategy]trace.Span)
-			strategyContexts := make(map[*models.SearchStrategy]context.Context)
+	return bestMatches, strategyContexts, nil
+}
 
-			for strategyIdx, ss := range strategies {
-				// Create span for each search strategy attempt (child of episode span)
-				strategyCtx, strategySpan := torrentTracer.Start(episodeCtx, "searchStrategy")
-				strategySpan.SetAttributes(
-					attribute.Int("episode_index", episodeIdx),
-					attribute.Int("strategy_index", strategyIdx),
-					attribute.String("query", ss.Query),
-					attribute.String("media_name", ss.MediaName),
-					attribute.Int("season", ss.Season),
-					attribute.Int("episode", ss.Episode),
-					attribute.Bool("is_anime", req.Anime),
-				)
+// filterTorrents validates torrents and returns those that pass validation along with rejection reasons
+func (q *QbittHandler) filterTorrents(
+	ctx context.Context,
+	torrents []*prowlarr.Search,
+	strategy *models.SearchStrategy,
+) ([]*models.TorrentMatch, map[string]int) {
+	possibleTorrents := []*models.TorrentMatch{}
+	rejectionReasons := make(map[string]int)
 
-				q.logger.InfoContext(strategyCtx, "Search Query", telemetry.WithTraceContext(strategyCtx, "query", ss.Query)...)
-				pResp, err := q.searchProwlarr(strategyCtx, ss.Query, req.Category, req.Anime)
-				if err != nil {
-					strategySpan.SetStatus(codes.Error, "failed to search Prowlarr")
-					strategySpan.RecordError(err)
-					strategySpan.End()
-					episodeSpan.SetStatus(codes.Error, "search failed")
-					episodeSpan.End()
-					return fmt.Errorf("failed to search Prowlarr: %w", err)
-				}
+	for _, torrent := range torrents {
+		if q.isCorrectTorrent(ctx, torrent, strategy) {
+			possibleTorrents = append(possibleTorrents, &models.TorrentMatch{Strategy: strategy, Torrent: torrent})
+		} else {
+			result := q.validateTorrent(torrent, strategy)
+			rejectionReasons[result.Reason]++
+		}
+	}
 
-				strategySpan.SetAttributes(attribute.Int("results_found", len(pResp)))
+	return possibleTorrents, rejectionReasons
+}
 
-				if len(pResp) == 0 {
-					q.logger.InfoContext(strategyCtx, "no results found", "query", ss.Query)
-					strategySpan.SetAttributes(
-						attribute.Int("valid_matches", 0),
-						attribute.Bool("success", false),
-					)
-					strategySpan.SetStatus(codes.Ok, "no results found")
-					strategySpan.End()
-					// TODO: Store in DB
-					continue
-				}
+// logFilteringSummary logs statistics about torrent filtering with rejection breakdown
+func (q *QbittHandler) logFilteringSummary(ctx context.Context, total, valid int, rejectionReasons map[string]int, query string) {
+	summaryAttrs := []any{
+		"total_torrents", total,
+		"valid_torrents", valid,
+		"rejected_torrents", total - valid,
+		"query", query,
+	}
 
-				// Track filtering statistics
-				totalTorrents := len(pResp)
-				rejectionReasons := make(map[string]int)
+	if total-valid > 0 {
+		for reason, count := range rejectionReasons {
+			summaryAttrs = append(summaryAttrs, fmt.Sprintf("rejected_%s", sanitizeReasonKey(reason)), count)
+		}
+	}
 
-				possibleTorrents := []*models.TorrentMatch{}
-				for _, torrent := range pResp {
-					if q.isCorrectTorrent(strategyCtx, torrent, ss) {
-						possibleTorrents = append(possibleTorrents, &models.TorrentMatch{Strategy: ss, Torrent: torrent})
-					} else {
-						// Track rejection reason for statistics
-						result := q.validateTorrent(torrent, ss)
-						rejectionReasons[result.Reason]++
-					}
-				}
+	q.logger.InfoContext(ctx, "Torrent filtering summary", telemetry.WithTraceContext(ctx, summaryAttrs...)...)
+}
 
-				validTorrents := len(possibleTorrents)
-				rejectedTorrents := totalTorrents - validTorrents
+// initiateDownloadAndMonitor starts the download and begins monitoring for completion
+func (q *QbittHandler) initiateDownloadAndMonitor(
+	match *models.TorrentMatch,
+	winningCtx context.Context,
+	done chan<- models.TorrentCompleteEvent,
+	wg *sync.WaitGroup,
+) error {
+	ss := match.Strategy
+	err := q.repo.InsertDownloadHistory(
+		winningCtx,
+		ss.MediaName,
+		ss.Season,
+		ss.Episode,
+		ss.EpisodeMeta.AbsoluteNumber,
+		match.Torrent.InfoHash,
+		"downloading",
+		"")
+	if err != nil {
+		q.logger.ErrorContext(winningCtx, "Failed to insert download history", "error", err)
+	}
 
-				// Log filtering summary with rejection breakdown
-				summaryAttrs := []any{
-					"total_torrents", totalTorrents,
-					"valid_torrents", validTorrents,
-					"rejected_torrents", rejectedTorrents,
-					"query", ss.Query,
-				}
+	infoHash, trackingUUID, err := q.downloadTorrent(winningCtx, match.Torrent)
+	if err != nil {
+		q.logger.ErrorContext(winningCtx, "Failed to download torrent", "error", err)
+		return err
+	}
 
-				// Add rejection reason breakdown if any torrents were rejected
-				if rejectedTorrents > 0 {
-					for reason, count := range rejectionReasons {
-						summaryAttrs = append(summaryAttrs, fmt.Sprintf("rejected_%s", sanitizeReasonKey(reason)), count)
-					}
-				}
+	// Start monitoring goroutine
+	wg.Add(1)
+	go q.monitorTorrentCompletion(winningCtx, match, infoHash, trackingUUID, done, wg)
 
-				q.logger.InfoContext(strategyCtx, "Torrent filtering summary", telemetry.WithTraceContext(strategyCtx, summaryAttrs...)...)
+	return nil
+}
 
-				strategySpan.SetAttributes(
-					attribute.Int("valid_matches", validTorrents),
-					attribute.Int("rejected_matches", rejectedTorrents),
-				)
+// monitorTorrentCompletion watches a torrent until it completes and sends the completion event
+func (q *QbittHandler) monitorTorrentCompletion(
+	parentCtx context.Context,
+	match *models.TorrentMatch,
+	infoHash string,
+	trackingUUID string,
+	done chan<- models.TorrentCompleteEvent,
+	wg *sync.WaitGroup,
+) {
+	// Extract span from context
+	winningSpan := trace.SpanFromContext(parentCtx)
 
-				if len(possibleTorrents) == 0 {
-					q.logger.InfoContext(strategyCtx, "no matching torrents found", "query", ss.Query)
-					err := q.repo.InsertDownloadHistory(strategyCtx, req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, "", "failure", "no matching torrents found")
-					if err != nil {
-						q.logger.ErrorContext(strategyCtx, "Failed to insert download history", "error", err)
-					}
-					strategySpan.SetAttributes(attribute.Bool("success", false))
-					strategySpan.SetStatus(codes.Ok, "no matching torrents found")
-					strategySpan.End()
-				} else {
-					bestMatches = append(bestMatches, possibleTorrents...)
-					strategySpan.SetAttributes(attribute.Bool("success", true))
-					strategySpan.SetStatus(codes.Ok, "found matching torrents")
-					// Don't end the span yet - store it for the winning strategy
-					strategySpans[ss] = strategySpan
-					strategyContexts[ss] = strategyCtx
-				}
+	// Create a background context independent of the HTTP request lifecycle
+	monitorCtx := trace.ContextWithSpanContext(context.Background(), trace.SpanContextFromContext(parentCtx))
 
-			}
+	defer wg.Done()
+	defer winningSpan.End()
 
-			// Pre-sort by seeders DESC to prioritize healthy torrents
-			q.sortBySeedersDESC(bestMatches)
-			q.sortTorrentsByQuality(bestMatches)
-			match := q.pickBestTorrent(episodeCtx, bestMatches, req.Category, req.Anime)
+	ranRecheck := false
+	for {
+		time.Sleep(10 * time.Second)
+		q.logger.InfoContext(monitorCtx, "Monitoring torrent status",
+			telemetry.WithTraceContext(monitorCtx,
+				"torrent_title", match.Torrent.Title,
+				"torrent_hash", infoHash)...)
 
-			// End all non-winning strategy spans
-			for ss, span := range strategySpans {
-				if match == nil || ss != match.Strategy {
-					span.SetStatus(codes.Ok, "strategy not selected")
-					span.End()
-				}
-			}
+		filter := qbittorrent.TorrentFilterOptions{
+			Category: scoutTag,
+			Hashes:   []string{infoHash},
+		}
 
-			if match == nil {
-				q.logger.WarnContext(episodeCtx, "No suitable torrent found", "show", req.Name)
-				ss := strategies[0]
-				err := q.repo.InsertDownloadHistory(episodeCtx, req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, "", "failure", "no suitable torrent found")
-				if err != nil {
-					q.logger.ErrorContext(episodeCtx, "Failed to insert download history", "error", err)
-				}
-				episodeSpan.SetStatus(codes.Ok, "no suitable torrent found")
-				episodeSpan.End()
+		torrents, err := q.queryQbittorrentWithRetries(monitorCtx, filter, 6, 10*time.Second)
+		if err != nil {
+			q.logger.WarnContext(monitorCtx, "Failed to monitor torrent after retries, stopping watch",
+				telemetry.WithTraceContext(monitorCtx,
+					"torrent_title", match.Torrent.Title,
+					"torrent_hash", infoHash,
+					"error", err.Error())...)
+			winningSpan.SetStatus(codes.Error, "max retries reached")
+			return
+		}
+
+		if len(torrents) == 0 {
+			q.logger.InfoContext(monitorCtx, "Torrent not found, continuing watch", "torrent", match.Torrent.Title)
+			continue
+		}
+
+		torrent := torrents[0]
+		if q.didTorrentComplete(&torrent) {
+			if !ranRecheck {
+				ranRecheck = true
+				q.c.RecheckCtx(monitorCtx, []string{torrent.Hash})
 				continue
 			}
 
-			// Get the winning strategy's context and span
-			winningCtx := strategyContexts[match.Strategy]
-			winningSpan := strategySpans[match.Strategy]
-
-			ss := match.Strategy
-			err := q.repo.InsertDownloadHistory(winningCtx, req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, match.Torrent.InfoHash, "downloading", "")
-			if err != nil {
-				q.logger.ErrorContext(winningCtx, "Failed to insert download history", "error", err)
+			q.logger.InfoContext(monitorCtx, "Torrent completed", "title", match.Torrent.Title)
+			winningSpan.SetStatus(codes.Ok, "torrent downloaded successfully")
+			done <- models.TorrentCompleteEvent{
+				SavePath:    torrent.SavePath,
+				Req:         match.Strategy,
+				Hash:        match.Torrent.InfoHash,
+				UUID:        trackingUUID,
+				SpanContext: trace.SpanContextFromContext(monitorCtx),
 			}
-
-			infoHash, trackingUUID, err := q.downloadTorrent(winningCtx, match.Torrent)
-			if err != nil {
-				q.logger.ErrorContext(winningCtx, "Failed to download torrent", "error", err)
-				return err
-			}
-			// watch torrent to complete
-			wg.Add(1)
-			go func(winningSpan trace.Span, episodeSpan trace.Span, match *models.TorrentMatch, infoHash string, trackingUUID string) {
-				// Create a background context independent of the HTTP request lifecycle
-				// Preserve the span context for trace correlation
-				monitorCtx := trace.ContextWithSpanContext(context.Background(), trace.SpanContextFromContext(winningCtx))
-
-				defer wg.Done()
-				defer winningSpan.End()
-				defer episodeSpan.End()
-				ranRecheck := false
-				for {
-					time.Sleep(10 * time.Second)
-					q.logger.InfoContext(monitorCtx, "Monitoring torrent status",
-						telemetry.WithTraceContext(monitorCtx,
-							"torrent_title", match.Torrent.Title,
-							"torrent_hash", infoHash)...)
-
-					filter := qbittorrent.TorrentFilterOptions{
-						Category: scoutTag,
-						Hashes:   []string{infoHash},
-					}
-
-					torrents, err := q.queryQbittorrentWithRetries(monitorCtx, filter, 6, 10*time.Second)
-					if err != nil {
-						q.logger.WarnContext(monitorCtx, "Failed to monitor torrent after retries, stopping watch",
-							telemetry.WithTraceContext(monitorCtx,
-								"torrent_title", match.Torrent.Title,
-								"torrent_hash", infoHash,
-								"error", err.Error())...)
-						winningSpan.SetStatus(codes.Error, "max retries reached")
-						episodeSpan.SetStatus(codes.Error, "download monitoring failed")
-						return
-					}
-					if len(torrents) == 0 {
-						q.logger.InfoContext(monitorCtx, "Torrent not found, continuing watch", "torrent", match.Torrent.Title)
-						continue
-					}
-					torrent := torrents[0]
-					if q.didTorrentComplete(&torrent) {
-
-						if !ranRecheck {
-							ranRecheck = true
-							q.c.RecheckCtx(monitorCtx, []string{torrent.Hash})
-							continue
-						}
-
-						q.logger.InfoContext(monitorCtx, "Torrent completed", "title", match.Torrent.Title)
-						winningSpan.SetStatus(codes.Ok, "torrent downloaded successfully")
-						episodeSpan.SetStatus(codes.Ok, "episode download completed")
-						done <- models.TorrentCompleteEvent{
-							SavePath:    torrent.SavePath,
-							Req:         match.Strategy,
-							Hash:        match.Torrent.InfoHash,
-							UUID:        trackingUUID,
-							SpanContext: trace.SpanContextFromContext(monitorCtx),
-						}
-						break
-					} else {
-						q.logger.InfoContext(monitorCtx, "Torrent downloading", "title", match.Torrent.Title, "progress", torrent.Progress*100)
-					}
-				}
-			}(winningSpan, episodeSpan, match, infoHash, trackingUUID)
+			break
+		} else {
+			q.logger.InfoContext(monitorCtx, "Torrent downloading", "title", match.Torrent.Title, "progress", torrent.Progress*100)
 		}
-
-		// Close the channel after all monitoring goroutines complete
-		go func() {
-			wg.Wait()
-			close(done)
-			q.logger.InfoContext(ctx, "All torrents processed, channel closed")
-		}()
 	}
-	return nil
 }
 
 func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episode) []*models.SearchStrategy {
@@ -458,7 +533,7 @@ func (q *QbittHandler) calcCategories(show bool) []int64 {
 	}
 }
 
-func (q *QbittHandler) calcIndexerIDs(_ string, isAnime bool) []int64 {
+func (q *QbittHandler) calcIndexerIDs(isAnime bool) []int64 {
 	if isAnime {
 		return []int64{NYAA_ID}
 	} else {

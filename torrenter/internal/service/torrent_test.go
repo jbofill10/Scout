@@ -8,8 +8,8 @@ import (
 	"testing"
 	"torrenter/internal/models"
 
-	"github.com/stretchr/testify/suite"
 	qbittorrent "github.com/autobrr/go-qbittorrent"
+	"github.com/stretchr/testify/suite"
 	"golift.io/starr/prowlarr"
 )
 
@@ -419,14 +419,16 @@ func (s *QbittHandlerTestSuite) TestDidTorrentComplete_PartialStalled() {
 }
 
 func (s *QbittHandlerTestSuite) TestCalcIndexerIDs_Anime() {
-	ids := s.handler.calcIndexerIDs("series", true)
+	anime := true
+	ids := s.handler.calcIndexerIDs(anime)
 
 	s.Len(ids, 1)
 	s.Equal(NYAA_ID, ids[0])
 }
 
 func (s *QbittHandlerTestSuite) TestCalcIndexerIDs_NonAnime() {
-	ids := s.handler.calcIndexerIDs("series", false)
+	anime := false
+	ids := s.handler.calcIndexerIDs(anime)
 
 	s.Len(ids, 1)
 	s.Contains(ids, ONE337x_ID)
