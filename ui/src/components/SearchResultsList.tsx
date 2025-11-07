@@ -58,8 +58,8 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({ results, mediaTyp
         }
         return response.json();
       })
-      .then(data => {
-        console.log('Download initiated successfully:', data);
+      .then(() => {
+        // Download initiated successfully
       })
       .catch(error => {
         console.error('Error initiating download:', error);

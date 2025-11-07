@@ -21,11 +21,23 @@ const (
 	StatusQueued  = "queued"
 )
 
+// ScheduledDownload represents a scheduled download with UI-relevant fields
+type ScheduledDownload struct {
+	ID          int       `json:"id"`
+	Title       string    `json:"title"`
+	Season      int       `json:"season"`
+	Episode     int       `json:"episode"`
+	ReleaseTime time.Time `json:"releaseTime"`
+	PosterUrl   string    `json:"posterUrl"`
+	IsAnime     bool      `json:"isAnime"`
+}
+
 // SchedulerRepository defines DB operations for scheduled shows
 type SchedulerRepository interface {
 	Schedule(media tvdb.Media, releaseTime time.Time, scheduledTraceID, scheduledSpanID string) error
 	GetDueMedia() ([]tvdb.Media, error)
 	InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, status, reason, traceID, spanID string) error
+	GetWeeklySchedule() ([]ScheduledDownload, error)
 }
 
 type SchedulerRepo struct {
@@ -131,4 +143,70 @@ func (r *SchedulerRepo) InsertDownloadHistory(mediaTitle string, season, episode
 		return fmt.Errorf("failed to insert download history: %w", err)
 	}
 	return nil
+}
+
+func (r *SchedulerRepo) GetWeeklySchedule() ([]ScheduledDownload, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	now := time.Now()
+	oneWeekFromNow := now.Add(7 * 24 * time.Hour)
+
+	stmt := `SELECT id, media, release_time FROM ScheduledDownloads
+			 WHERE schedule_status = $1 AND release_time BETWEEN $2 AND $3
+			 ORDER BY release_time ASC`
+
+	rows, err := r.db.Query(stmt, StatusPending, now.Format(time.RFC3339), oneWeekFromNow.Format(time.RFC3339))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query weekly schedule: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			r.logger.Error("Failed to close rows", "error", err)
+		}
+	}()
+
+	var results []ScheduledDownload
+	for rows.Next() {
+		var id int
+		var mediaJSON []byte
+		var releaseTimeStr string
+
+		if err := rows.Scan(&id, &mediaJSON, &releaseTimeStr); err != nil {
+			r.logger.Error("Failed to scan row", "error", err)
+			continue
+		}
+
+		var media tvdb.Media
+		if err := json.Unmarshal(mediaJSON, &media); err != nil {
+			r.logger.Error("Failed to unmarshal media", "id", id, "error", err)
+			continue
+		}
+
+		releaseTime, err := time.Parse(time.RFC3339, releaseTimeStr)
+		if err != nil {
+			r.logger.Error("Failed to parse release time", "id", id, "error", err)
+			continue
+		}
+
+		// Extract season and episode from the first episode in metadata
+		season := 0
+		episode := 0
+		if len(media.Metadata.Episodes) > 0 {
+			season = media.Metadata.Episodes[0].SeasonNumber
+			episode = media.Metadata.Episodes[0].Number
+		}
+
+		results = append(results, ScheduledDownload{
+			ID:          id,
+			Title:       media.Name,
+			Season:      season,
+			Episode:     episode,
+			ReleaseTime: releaseTime,
+			PosterUrl:   media.ImageUrl,
+			IsAnime:     media.Anime,
+		})
+	}
+
+	return results, nil
 }

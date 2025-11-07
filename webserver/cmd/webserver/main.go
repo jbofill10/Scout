@@ -84,6 +84,8 @@ func main() {
 	// Initialize handlers
 	searchHandler := handlers.NewSearchHandler(searchInteractor, logger)
 	downloadHandler := handlers.NewDownloadHandler(downloadInteractor, logger)
+	popularHandler := handlers.NewPopularHandler(tvdbClient, logger)
+	scheduleHandler := handlers.NewScheduleHandler(repo, logger)
 
 	// Setup routes
 	r := gin.Default()
@@ -92,6 +94,10 @@ func main() {
 	r.GET("/search", searchHandler.HandleSearch)
 	r.POST("/shows", downloadHandler.DownloadShow)
 	r.POST("/movies", downloadHandler.DownloadMovie)
+	r.GET("/popular/shows", popularHandler.GetPopularShows)
+	r.GET("/popular/movies", popularHandler.GetPopularMovies)
+	r.GET("/genres", popularHandler.GetGenres)
+	r.GET("/schedule/weekly", scheduleHandler.GetWeeklySchedule)
 
 	// Start server
 	logger.Info("Starting webserver", "address", cfg.BindAddress)

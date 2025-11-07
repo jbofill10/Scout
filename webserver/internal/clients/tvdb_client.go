@@ -72,3 +72,84 @@ func (c *TVDBProxyClient) GetExtendedInfo(
 	}
 	return info, nil
 }
+
+func (c *TVDBProxyClient) GetPopularShows(ctx context.Context, genre string, limit int) ([]tvdb.Media, error) {
+	url := fmt.Sprintf("http://%s/series/popular?limit=%d", c.Host, limit)
+	if genre != "" {
+		url = fmt.Sprintf("%s&genre=%s", url, genre)
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.WarnContext(ctx, "Failed to close response body", "error", cerr)
+		}
+	}()
+	var shows []tvdb.Media
+	decoder := json.NewDecoder(resp.Body)
+	if err := decoder.Decode(&shows); err != nil {
+		return nil, err
+	}
+	return shows, nil
+}
+
+func (c *TVDBProxyClient) GetPopularMovies(ctx context.Context, genre string, limit int) ([]tvdb.Media, error) {
+	url := fmt.Sprintf("http://%s/movies/popular?limit=%d", c.Host, limit)
+	if genre != "" {
+		url = fmt.Sprintf("%s&genre=%s", url, genre)
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.WarnContext(ctx, "Failed to close response body", "error", cerr)
+		}
+	}()
+	var movies []tvdb.Media
+	decoder := json.NewDecoder(resp.Body)
+	if err := decoder.Decode(&movies); err != nil {
+		return nil, err
+	}
+	return movies, nil
+}
+
+type Genre struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+func (c *TVDBProxyClient) GetGenres(ctx context.Context) ([]Genre, error) {
+	url := fmt.Sprintf("http://%s/genres", c.Host)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.WarnContext(ctx, "Failed to close response body", "error", cerr)
+		}
+	}()
+	var genres []Genre
+	decoder := json.NewDecoder(resp.Body)
+	if err := decoder.Decode(&genres); err != nil {
+		return nil, err
+	}
+	return genres, nil
+}

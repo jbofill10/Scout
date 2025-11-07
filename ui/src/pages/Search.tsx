@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import InfiniteScroll from 'react-infinite-scroll-component/dist/index.js';
-import SearchResultsList from './SearchResultsList';
-import type { SearchResult } from './SearchResultsList';
+import SearchResultsList from '../components/SearchResultsList';
+import type { SearchResult } from '../components/SearchResultsList';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
 import Paper from '@mui/material/Paper';

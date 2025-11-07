@@ -9,7 +9,10 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	tvdb "shared/media"
 	"shared/telemetry"
@@ -29,6 +32,20 @@ type TvDbConfig struct {
 var tvDbConfig TvDbConfig
 
 var logger *slog.Logger
+
+// Genre cache structures
+type genreCache struct {
+	mu           sync.RWMutex
+	genres       []tvdb.Genres
+	nameToID     map[string]int
+	lastRefresh  time.Time
+	refreshEvery time.Duration
+}
+
+var cache = &genreCache{
+	nameToID:     make(map[string]int),
+	refreshEvery: 7 * 24 * time.Hour, // Refresh weekly as per design.md
+}
 
 func main() {
 	// Initialize OpenTelemetry
@@ -62,11 +79,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize genre cache on startup
+	ctx := context.Background()
+	if err := cache.refresh(ctx); err != nil {
+		logger.Warn("Failed to initialize genre cache on startup", "error", err)
+	} else {
+		logger.Info("Genre cache initialized", "genres_count", len(cache.genres))
+	}
+
 	router := gin.Default()
 	router.Use(otelgin.Middleware("tvdb-proxy"))
 
 	router.GET("/series", getSeries)
 	router.GET("/series/:id/extended", getExtendedInformation)
+	router.GET("/genres", getGenres)
+	router.GET("/series/popular", getPopularSeries)
+	router.GET("/movies/popular", getPopularMovies)
 
 	addr := os.Getenv("BIND_ADDRESS")
 	if addr == "" {
@@ -451,4 +479,255 @@ func getExtendedInformation(c *gin.Context) {
 	logger.InfoContext(ctx, "Filtered aliases", "media_id", mediaId, "is_anime", isAnime, "aliases", info.Data.Aliases)
 
 	c.JSON(http.StatusOK, info)
+}
+
+// Genre cache methods
+func (gc *genreCache) refresh(ctx context.Context) error {
+	logger.InfoContext(ctx, "Refreshing genre cache")
+
+	// Call TVDB API to fetch genres
+	result, err := tvDbGet(ctx, "/genres")
+	if err != nil {
+		logger.ErrorContext(ctx, "Failed to fetch genres from TVDB", "error", err)
+		return err
+	}
+
+	// Parse response
+	var genresResponse struct {
+		Status string        `json:"status"`
+		Data   []tvdb.Genres `json:"data"`
+	}
+
+	if err := json.Unmarshal(result, &genresResponse); err != nil {
+		logger.ErrorContext(ctx, "Failed to unmarshal genres response", "error", err)
+		return err
+	}
+
+	// Update cache with write lock
+	gc.mu.Lock()
+	defer gc.mu.Unlock()
+
+	gc.genres = genresResponse.Data
+	gc.lastRefresh = time.Now()
+
+	// Build name → ID mapping with case-insensitive keys
+	gc.nameToID = make(map[string]int)
+	for _, genre := range gc.genres {
+		// Store by lowercase name for case-insensitive lookup
+		gc.nameToID[strings.ToLower(genre.Name)] = genre.Id
+		// Also store by slug
+		gc.nameToID[strings.ToLower(genre.Slug)] = genre.Id
+	}
+
+	// Add "Sci-Fi" → "Science Fiction" alias as per design.md
+	if id, ok := gc.nameToID["science fiction"]; ok {
+		gc.nameToID["sci-fi"] = id
+	}
+
+	logger.InfoContext(ctx, "Genre cache refreshed", "genres_count", len(gc.genres))
+	return nil
+}
+
+func (gc *genreCache) getGenres() []tvdb.Genres {
+	gc.mu.RLock()
+	defer gc.mu.RUnlock()
+	return gc.genres
+}
+
+func (gc *genreCache) needsRefresh() bool {
+	gc.mu.RLock()
+	defer gc.mu.RUnlock()
+	return time.Since(gc.lastRefresh) > gc.refreshEvery
+}
+
+func (gc *genreCache) lookupGenreID(name string) (int, bool) {
+	gc.mu.RLock()
+	defer gc.mu.RUnlock()
+	id, ok := gc.nameToID[strings.ToLower(name)]
+	return id, ok
+}
+
+// Handler: GET /genres
+func getGenres(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	// Refresh cache if needed
+	if cache.needsRefresh() {
+		logger.InfoContext(ctx, "Genre cache is stale, refreshing")
+		if err := cache.refresh(ctx); err != nil {
+			logger.ErrorContext(ctx, "Failed to refresh genre cache, returning cached data", "error", err)
+			// Continue with cached data if available
+		}
+	}
+
+	genres := cache.getGenres()
+	if len(genres) == 0 {
+		// Try to refresh if cache is empty
+		if err := cache.refresh(ctx); err != nil {
+			logger.ErrorContext(ctx, "Genre cache is empty and refresh failed", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch genres"})
+			return
+		}
+		genres = cache.getGenres()
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": genres})
+}
+
+// Handler: GET /series/popular
+func getPopularSeries(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	// Parse query parameters
+	genreName := c.Query("genre")
+	limitStr := c.DefaultQuery("limit", "20")
+
+	// Parse and validate limit
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50 // Enforce maximum as per spec
+	}
+
+	// Build TVDB filter query
+	query := "/series/filter?country=usa&lang=eng&sort=score&sortType=desc"
+
+	// Add genre filter if provided
+	if genreName != "" {
+		genreID, ok := cache.lookupGenreID(genreName)
+		if !ok {
+			logger.WarnContext(ctx, "Genre not found in cache", "genre", genreName)
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Genre '%s' not found", genreName)})
+			return
+		}
+		query += fmt.Sprintf("&genre=%d", genreID)
+		logger.InfoContext(ctx, "Filtering by genre", "genre_name", genreName, "genre_id", genreID)
+	}
+
+	logger.InfoContext(ctx, "Fetching popular series", "query", query, "limit", limit)
+
+	// Call TVDB API
+	result, err := tvDbGet(ctx, query)
+	if err != nil {
+		logger.ErrorContext(ctx, "Failed to fetch popular series from TVDB", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch popular series"})
+		return
+	}
+
+	// Parse response
+	var filterResponse struct {
+		Status string                `json:"status"`
+		Data   []tvdb.TVDBSearchItem `json:"data"`
+	}
+
+	if err := json.Unmarshal(result, &filterResponse); err != nil {
+		logger.ErrorContext(ctx, "Failed to unmarshal popular series response", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse TVDB response"})
+		return
+	}
+
+	// Convert to Media objects (NO episode enrichment for performance)
+	results := []tvdb.Media{}
+	for i, item := range filterResponse.Data {
+		if i >= limit {
+			break
+		}
+		media := tvdb.Media{
+			Id:           item.Id,
+			Name:         item.Translations.Eng,
+			Category:     "series",
+			ImageUrl:     item.ImageUrl,
+			OriginalName: item.OriginalName,
+			Status:       item.Status,
+			Overview:     item.Overviews.Eng,
+			Year:         item.Year,
+			Slug:         item.Slug,
+			Metadata:     tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{}}, // Empty metadata
+		}
+		results = append(results, media)
+	}
+
+	logger.InfoContext(ctx, "Returning popular series", "count", len(results))
+	c.JSON(http.StatusOK, results)
+}
+
+// Handler: GET /movies/popular
+func getPopularMovies(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	// Parse query parameters
+	genreName := c.Query("genre")
+	limitStr := c.DefaultQuery("limit", "20")
+
+	// Parse and validate limit
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50 // Enforce maximum as per spec
+	}
+
+	// Build TVDB filter query
+	query := "/movies/filter?country=usa&lang=eng&sort=score&sortType=desc"
+
+	// Add genre filter if provided
+	if genreName != "" {
+		genreID, ok := cache.lookupGenreID(genreName)
+		if !ok {
+			logger.WarnContext(ctx, "Genre not found in cache", "genre", genreName)
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Genre '%s' not found", genreName)})
+			return
+		}
+		query += fmt.Sprintf("&genre=%d", genreID)
+		logger.InfoContext(ctx, "Filtering by genre", "genre_name", genreName, "genre_id", genreID)
+	}
+
+	logger.InfoContext(ctx, "Fetching popular movies", "query", query, "limit", limit)
+
+	// Call TVDB API
+	result, err := tvDbGet(ctx, query)
+	if err != nil {
+		logger.ErrorContext(ctx, "Failed to fetch popular movies from TVDB", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch popular movies"})
+		return
+	}
+
+	// Parse response
+	var filterResponse struct {
+		Status string                `json:"status"`
+		Data   []tvdb.TVDBSearchItem `json:"data"`
+	}
+
+	if err := json.Unmarshal(result, &filterResponse); err != nil {
+		logger.ErrorContext(ctx, "Failed to unmarshal popular movies response", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse TVDB response"})
+		return
+	}
+
+	// Convert to Media objects
+	results := []tvdb.Media{}
+	for i, item := range filterResponse.Data {
+		if i >= limit {
+			break
+		}
+		media := tvdb.Media{
+			Id:           item.Id,
+			Name:         item.Translations.Eng,
+			Category:     "movie",
+			ImageUrl:     item.ImageUrl,
+			OriginalName: item.OriginalName,
+			Status:       item.Status,
+			Overview:     item.Overviews.Eng,
+			Year:         item.Year,
+			Slug:         item.Slug,
+			Metadata:     tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{}}, // Empty metadata for movies
+		}
+		results = append(results, media)
+	}
+
+	logger.InfoContext(ctx, "Returning popular movies", "count", len(results))
+	c.JSON(http.StatusOK, results)
 }
