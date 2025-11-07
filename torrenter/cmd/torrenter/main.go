@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
+	"runtime/debug"
 
 	"shared/telemetry"
 	"torrenter/internal/config"
@@ -16,6 +18,36 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
+
+// RecoveryMiddleware catches panics and logs them with full context to structured logger
+func RecoveryMiddleware(logger *slog.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			if err := recover(); err != nil {
+				// Get context for trace correlation
+				ctx := c.Request.Context()
+
+				// Get stack trace
+				stack := debug.Stack()
+
+				// Log panic with full context including trace_id and span_id
+				logger.ErrorContext(ctx, "PANIC RECOVERED",
+					"error", err,
+					"method", c.Request.Method,
+					"path", c.Request.URL.Path,
+					"query", c.Request.URL.RawQuery,
+					"stack_trace", string(stack))
+
+				// Return 500 error
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+					"error": "Internal server error",
+				})
+			}
+		}()
+
+		c.Next()
+	}
+}
 
 func main() {
 	// Initialize OpenTelemetry
@@ -83,6 +115,7 @@ func main() {
 	// Setup routes
 	r := gin.Default()
 	r.Use(otelgin.Middleware("torrenter"))
+	r.Use(RecoveryMiddleware(logger)) // Custom recovery middleware with trace logging
 	r.POST("/download", downloadHandler.DownloadTorrent)
 	r.GET("/media/:hash", mediaHandler.MediaExists)
 

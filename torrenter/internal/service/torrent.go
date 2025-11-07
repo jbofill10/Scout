@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -410,19 +411,20 @@ func (q *QbittHandler) initiateDownloadAndMonitor(
 	done chan<- models.TorrentCompleteEvent,
 	wg *sync.WaitGroup,
 ) error {
-	ss := match.Strategy
-	err := q.repo.InsertDownloadHistory(
-		ctx,
-		ss.MediaName,
-		ss.Season,
-		ss.Episode,
-		ss.EpisodeMeta.AbsoluteNumber,
-		match.Torrent.InfoHash,
-		"downloading",
-		"")
-	if err != nil {
-		q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
-	}
+	// TODO: Come back and fix this
+	// ss := match.Strategy
+	// err := q.repo.InsertDownloadHistory(
+	// 	ctx,
+	// 	ss.MediaName,
+	// 	ss.Season,
+	// 	ss.Episode,
+	// 	ss.EpisodeMeta.AbsoluteNumber,
+	// 	match.Torrent.InfoHash,
+	// 	"downloading",
+	// 	"")
+	// if err != nil {
+	// 	q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
+	// }
 
 	infoHash, trackingUUID, err := q.downloadTorrent(ctx, match.Torrent)
 	if err != nil {
@@ -576,11 +578,12 @@ func (q *QbittHandler) createMovieSearchStrategy(req *tvdb.Media) []*models.Sear
 	ss = append(ss, &models.SearchStrategy{
 		Query:       query,
 		MediaName:   req.Name,
-		Season:      0,        // Movies have no season
-		Episode:     0,        // Movies have no episode (used to detect movie vs show)
-		EpisodeMeta: nil,      // Movies have no episode metadata
+		Season:      0,   // Movies have no season
+		Episode:     0,   // Movies have no episode (used to detect movie vs show)
+		EpisodeMeta: nil, // Movies have no episode metadata
 		TvdbId:      req.Id,
 		ReleaseYear: req.Year,
+		IsMovie:     true, // Flag this as a movie search strategy
 	})
 
 	return ss
@@ -625,10 +628,11 @@ func (q *QbittHandler) calcIndexerIDs(category string, isAnime bool) []int64 {
 
 // TorrentValidationResult holds the result of torrent validation
 type TorrentValidationResult struct {
-	IsValid    bool
-	Confidence float64
-	Reason     string
-	Parsed     *ParsedTorrent
+	IsValid     bool
+	Confidence  float64
+	Reason      string
+	Parsed      *ParsedTorrent // For TV show torrents
+	ParsedMovie *ParsedMovie   // For movie torrents
 }
 
 // isCorrectTorrent performs layered validation on a torrent with logging
@@ -673,6 +677,14 @@ func (q *QbittHandler) isCorrectTorrent(ctx context.Context, torrent *prowlarr.S
 
 // validateTorrent performs comprehensive layered validation with confidence scoring
 func (q *QbittHandler) validateTorrent(torrent *prowlarr.Search, strategy *models.SearchStrategy) TorrentValidationResult {
+	if strategy.IsMovie {
+		return q.validateMovieTorrent(torrent, strategy)
+	}
+	return q.validateShowTorrent(torrent, strategy)
+}
+
+// validateShowTorrent performs TV show-specific validation with layered checks
+func (q *QbittHandler) validateShowTorrent(torrent *prowlarr.Search, strategy *models.SearchStrategy) TorrentValidationResult {
 	// Layer 1: Parse torrent title
 	parsed := q.parser.Parse(torrent.Title)
 	if parsed == nil {
@@ -776,19 +788,139 @@ func (q *QbittHandler) validateTorrent(torrent *prowlarr.Search, strategy *model
 	}
 }
 
+// validateMovieTorrent performs movie-specific validation using the movie parser
+func (q *QbittHandler) validateMovieTorrent(torrent *prowlarr.Search, strategy *models.SearchStrategy) TorrentValidationResult {
+	// Layer 1: Parse movie torrent title
+	parsedMovie := q.parser.ParseMovie(torrent.Title)
+	if parsedMovie == nil {
+		return TorrentValidationResult{
+			IsValid:    false,
+			Confidence: 0.0,
+			Reason:     "failed to parse movie torrent title",
+		}
+	}
+
+	// Layer 2: Validate movie name match (fuzzy matching like TV shows)
+	nameMatchScore := q.scoreNameMatch(parsedMovie.MovieName, strategy.MediaName)
+	if nameMatchScore < 0.3 { // Same threshold as TV shows
+		return TorrentValidationResult{
+			IsValid:     false,
+			Confidence:  0.0,
+			Reason:      fmt.Sprintf("movie name mismatch: parsed=%q, expected=%q", parsedMovie.MovieName, strategy.MediaName),
+			ParsedMovie: parsedMovie,
+		}
+	}
+
+	// Layer 3: Validate year if available (optional but helps with confidence)
+	yearMismatch := false
+	if parsedMovie.Year > 0 && strategy.ReleaseYear != "" {
+		expectedYear, err := strconv.Atoi(strategy.ReleaseYear)
+		if err == nil && parsedMovie.Year != expectedYear {
+			// Allow +/- 1 year tolerance for re-releases and regional variations
+			yearDiff := parsedMovie.Year - expectedYear
+			if yearDiff < -1 || yearDiff > 1 {
+				yearMismatch = true
+			}
+		}
+	}
+
+	// Layer 4: Validate quality tier (reject if below minimum acceptable quality)
+	qualityTier := parsedMovie.GetQualityTier()
+	if qualityTier < 2 { // Reject anything below 480p
+		return TorrentValidationResult{
+			IsValid:     false,
+			Confidence:  0.0,
+			Reason:      fmt.Sprintf("quality too low: %s", parsedMovie.Quality),
+			ParsedMovie: parsedMovie,
+		}
+	}
+
+	// Calculate confidence score for movie
+	confidence := q.calculateMovieConfidence(parsedMovie, strategy, nameMatchScore, yearMismatch)
+
+	return TorrentValidationResult{
+		IsValid:     true,
+		Confidence:  confidence,
+		Reason:      "movie validation passed",
+		ParsedMovie: parsedMovie,
+	}
+}
+
+// calculateMovieConfidence calculates overall confidence score for a movie match
+func (q *QbittHandler) calculateMovieConfidence(parsed *ParsedMovie, strategy *models.SearchStrategy, nameMatchScore float64, yearMismatch bool) float64 {
+	// Weighted factors:
+	// - Name match: 40%
+	// - Year match: 20%
+	// - Parse confidence: 20%
+	// - Quality: 20%
+
+	confidence := 0.0
+
+	// Name match score (40% - most important for movies)
+	confidence += nameMatchScore * 0.40
+
+	// Year match (20%)
+	if !yearMismatch && parsed.Year > 0 && strategy.ReleaseYear != "" {
+		confidence += 0.20
+	} else if parsed.Year == 0 || strategy.ReleaseYear == "" {
+		confidence += 0.10 // Partial credit if year unknown
+	}
+
+	// Parse confidence (20%)
+	confidence += parsed.MatchConfidence * 0.20
+
+	// Quality tier (20%)
+	qualityScore := float64(parsed.GetQualityTier()) / 5.0
+	confidence += qualityScore * 0.20
+
+	return confidence
+}
+
+// normalizeMovieName normalizes movie/show names for more lenient matching
+// Handles variations like "Movie & Title" vs "Movie and Title" vs "Movie&Title"
+func normalizeMovieName(name string) string {
+	// Convert to lowercase
+	normalized := strings.ToLower(name)
+
+	// Replace " & " with " and " (space-delimited ampersand)
+	normalized = strings.ReplaceAll(normalized, " & ", " and ")
+
+	// Replace "&" with " and " to ensure spaces around "and"
+	// This handles cases like "Movie&Title" -> "Movie and Title"
+	normalized = strings.ReplaceAll(normalized, "&", " and ")
+
+	// Remove all special characters except spaces and alphanumerics
+	// Keep spaces to preserve word boundaries
+	var builder strings.Builder
+	for _, ch := range normalized {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == ' ' {
+			builder.WriteRune(ch)
+		}
+	}
+	normalized = builder.String()
+
+	// Collapse multiple spaces to single space
+	normalized = strings.Join(strings.Fields(normalized), " ")
+
+	// Trim leading/trailing spaces
+	return strings.TrimSpace(normalized)
+}
+
 // scoreNameMatch scores how well the parsed show name matches the expected name
 // Simplified to use substring matching since Prowlarr's search already filters relevant results
 func (q *QbittHandler) scoreNameMatch(parsedName, expectedName string) float64 {
-	parsedLower := strings.ToLower(parsedName)
-	expectedLower := strings.ToLower(expectedName)
+	// Normalize both names for more lenient matching
+	normalizedParsed := normalizeMovieName(parsedName)
+	normalizedExpected := normalizeMovieName(expectedName)
 
-	// Exact match
-	if parsedLower == expectedLower {
+	// Exact match after normalization
+	if normalizedParsed == normalizedExpected {
 		return 1.0
 	}
 
 	// Substring match (bidirectional)
-	if strings.Contains(parsedLower, expectedLower) || strings.Contains(expectedLower, parsedLower) {
+	if strings.Contains(normalizedParsed, normalizedExpected) ||
+		strings.Contains(normalizedExpected, normalizedParsed) {
 		return 0.8
 	}
 
@@ -1067,12 +1199,33 @@ type TorrentMatchWithScore struct {
 	FinalScore       float64
 }
 
+// formatTorrentMatches converts a slice of matches into a readable string representation
+func formatTorrentMatches(matches []*models.TorrentMatch) string {
+	if len(matches) == 0 {
+		return "[]"
+	}
+
+	result := "["
+	for i, m := range matches {
+		if i > 0 {
+			result += ", "
+		}
+		result += fmt.Sprintf("{Title: %s, Seeders: %d}", m.Torrent.Title, m.Torrent.Seeders)
+	}
+	result += "]"
+	return result
+}
+
 func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.TorrentMatch, mediaType string, isAnime bool) *models.TorrentMatch {
 	if len(matches) == 0 {
 		return nil
 	}
 
-	q.logger.InfoContext(ctx, "Picking the best torrent", "torrents", matches)
+	q.logger.InfoContext(ctx, "Picking the best torrent",
+		"total_matches", len(matches),
+		"media_type", mediaType,
+		"is_anime", isAnime,
+		"torrents", formatTorrentMatches(matches))
 
 	// Get preferred uploaders
 	preferred, err := q.repo.GetPreferredUploaders(ctx, mediaType, isAnime)
@@ -1084,33 +1237,77 @@ func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.To
 		preferred = append(preferred, "SubsPlease", "Erai-raws")
 	}
 
+	if mediaType == "movie" {
+		preferred = append(preferred, "QxR", "YIFY", "GalaxyRG")
+	}
+
+	q.logger.InfoContext(ctx, "Using preferred uploaders", "uploaders", preferred)
+
 	// Score each match
 	scoredMatches := make([]*TorrentMatchWithScore, 0, len(matches))
-	for _, match := range matches {
+	for i, match := range matches {
+		q.logger.InfoContext(ctx, "Evaluating torrent for selection",
+			"index", i+1,
+			"total", len(matches),
+			"torrent_title", match.Torrent.Title,
+			"seeders", match.Torrent.Seeders,
+			"strategy_is_movie", match.Strategy.IsMovie)
+
 		// Re-validate to get confidence score and parsed info
 		validationResult := q.validateTorrent(match.Torrent, match.Strategy)
+
+		q.logger.InfoContext(ctx, "Re-validation result",
+			"torrent_title", match.Torrent.Title,
+			"is_valid", validationResult.IsValid,
+			"confidence", validationResult.Confidence,
+			"reason", validationResult.Reason,
+			"has_parsed_torrent", validationResult.Parsed != nil,
+			"has_parsed_movie", validationResult.ParsedMovie != nil)
+
 		if !validationResult.IsValid {
+			q.logger.WarnContext(ctx, "Torrent failed re-validation, skipping",
+				"torrent_title", match.Torrent.Title,
+				"reason", validationResult.Reason)
 			continue // Skip invalid matches
 		}
 
 		// Calculate final score with quality as highest priority
 		finalScore := validationResult.Confidence
 
-		// Quality boost (highest priority) - ensures quality dominates selection
-		// Weights increased to ensure 2160p always beats 1080p even with preferred uploader
+		// Quality boost (highest priority) - year-aware quality selection
+		// Recognizes that 4K didn't exist before 2012, prefers native HD for older content
 		qualityBoost := 0.0
-		switch validationResult.Parsed.GetQualityTier() {
-		case 5: // 4K/2160p
-			qualityBoost = 2.0
-		case 4: // 1080p
-			qualityBoost = 0.6
-		case 3: // 720p
-			qualityBoost = 0.3
+		qualityTier := 0
+		quality := ""
+
+		// Get quality from the appropriate parsed object
+		if validationResult.ParsedMovie != nil {
+			qualityTier = validationResult.ParsedMovie.GetQualityTier()
+			quality = validationResult.ParsedMovie.Quality
+		} else if validationResult.Parsed != nil {
+			qualityTier = validationResult.Parsed.GetQualityTier()
+			quality = validationResult.Parsed.Quality
 		}
+
+		// Calculate year-aware quality boost
+		releaseYear := ""
+		if match.Strategy != nil {
+			releaseYear = match.Strategy.ReleaseYear
+		}
+		qualityBoost = calculateYearAwareQualityBoost(qualityTier, releaseYear)
 		finalScore += qualityBoost
+
+		q.logger.InfoContext(ctx, "Calculated year-aware quality boost",
+			"torrent_title", match.Torrent.Title,
+			"quality", quality,
+			"quality_tier", qualityTier,
+			"release_year", releaseYear,
+			"quality_boost", qualityBoost,
+			"confidence", validationResult.Confidence)
 
 		// Uploader preference boost (second priority) - reduced weight to prioritize quality
 		uploaderBoost := 0.0
+		matchedUploader := ""
 		for i, uploader := range preferred {
 			if strings.Contains(strings.ToLower(match.Torrent.Title), strings.ToLower(uploader)) {
 				// Higher boost for earlier uploaders in the list
@@ -1118,10 +1315,17 @@ func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.To
 				if uploaderBoost < 0.1 {
 					uploaderBoost = 0.1
 				}
+				matchedUploader = uploader
 				break
 			}
 		}
 		finalScore += uploaderBoost
+
+		q.logger.InfoContext(ctx, "Calculated final score",
+			"torrent_title", match.Torrent.Title,
+			"final_score", finalScore,
+			"uploader_boost", uploaderBoost,
+			"matched_uploader", matchedUploader)
 
 		scoredMatches = append(scoredMatches, &TorrentMatchWithScore{
 			TorrentMatch:     match,
@@ -1130,7 +1334,13 @@ func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.To
 		})
 	}
 
+	q.logger.InfoContext(ctx, "Torrent scoring complete",
+		"total_evaluated", len(matches),
+		"total_scored", len(scoredMatches),
+		"total_rejected", len(matches)-len(scoredMatches))
+
 	if len(scoredMatches) == 0 {
+		q.logger.WarnContext(ctx, "No torrents passed re-validation, cannot select best torrent")
 		return nil
 	}
 
@@ -1140,15 +1350,102 @@ func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.To
 	})
 
 	bestMatch := scoredMatches[0]
+
+	// Get quality and release group from appropriate parsed object
+	quality := ""
+	releaseGroup := ""
+	if bestMatch.ValidationResult.ParsedMovie != nil {
+		quality = bestMatch.ValidationResult.ParsedMovie.Quality
+		releaseGroup = bestMatch.ValidationResult.ParsedMovie.ReleaseGroup
+	} else if bestMatch.ValidationResult.Parsed != nil {
+		quality = bestMatch.ValidationResult.Parsed.Quality
+		releaseGroup = bestMatch.ValidationResult.Parsed.ReleaseGroup
+	}
+
 	q.logger.InfoContext(ctx, "Selected best torrent",
 		"title", bestMatch.Torrent.Title,
 		"score", bestMatch.FinalScore,
 		"confidence", bestMatch.ValidationResult.Confidence,
-		"quality", bestMatch.ValidationResult.Parsed.Quality,
-		"releaseGroup", bestMatch.ValidationResult.Parsed.ReleaseGroup,
+		"quality", quality,
+		"releaseGroup", releaseGroup,
+		"seeders", bestMatch.Torrent.Seeders,
 	)
 
 	return bestMatch.TorrentMatch
+}
+
+// calculateYearAwareQualityBoost adjusts quality preferences based on media release year.
+// This recognizes that 4K content didn't exist before 2012, and "4K" versions of older content
+// are upscaled from lower resolution sources, making native HD releases superior.
+//
+// Year tiers:
+//   - Pre-2012: 4K didn't exist - penalize 4K, strongly prefer native 1080p
+//   - 2012-2016: Early 4K era - moderate 4K preference, most content still 1080p
+//   - 2017+: Modern era - strong 4K preference, native 4K production common
+//
+// Returns quality boost value to be added to the torrent's score.
+func calculateYearAwareQualityBoost(qualityTier int, releaseYear string) float64 {
+	// Parse release year, default to 0 if invalid/missing (triggers modern logic)
+	year := 0
+	if releaseYear != "" {
+		if parsed, err := strconv.Atoi(releaseYear); err == nil {
+			year = parsed
+		}
+	}
+
+	// Default to modern logic if year is missing or invalid
+	if year == 0 {
+		switch qualityTier {
+		case 5: // 4K/2160p
+			return 2.0
+		case 4: // 1080p
+			return 0.6
+		case 3: // 720p
+			return 0.3
+		default:
+			return 0.0
+		}
+	}
+
+	// Pre-2012: 4K didn't exist, penalize upscaled content
+	if year < 2012 {
+		switch qualityTier {
+		case 5: // 4K/2160p - upscaled, inferior to native HD
+			return -0.5
+		case 4: // 1080p - best quality for this era
+			return 1.0
+		case 3: // 720p - acceptable, original may have been SD anyway
+			return 0.5
+		default:
+			return 0.0
+		}
+	}
+
+	// 2012-2016: Early 4K era, limited native 4K content
+	if year >= 2012 && year < 2017 {
+		switch qualityTier {
+		case 5: // 4K/2160p - some native content, moderate preference
+			return 1.0
+		case 4: // 1080p - still the standard for most content
+			return 0.6
+		case 3: // 720p - acceptable
+			return 0.3
+		default:
+			return 0.0
+		}
+	}
+
+	// 2017+: Modern era, native 4K production common
+	switch qualityTier {
+	case 5: // 4K/2160p - strong preference for modern content
+		return 2.0
+	case 4: // 1080p - still good quality
+		return 0.6
+	case 3: // 720p - acceptable
+		return 0.3
+	default:
+		return 0.0
+	}
 }
 
 // RemoveUUIDTag removes the UUID tracking tag from a torrent after processing is complete

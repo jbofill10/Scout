@@ -45,9 +45,20 @@ type SearchStrategy struct {
 	Exclude     []string
 	ReleaseYear string
 	TvdbId      string
+	IsMovie     bool // True if this is a movie search strategy
 }
 
 type TorrentMatch struct {
 	Strategy *SearchStrategy
 	Torrent  *prowlarr.Search
+}
+
+func (tm *TorrentMatch) String() string {
+	if tm == nil {
+		return "<nil>"
+	}
+	if tm.Torrent == nil || tm.Strategy == nil {
+		return fmt.Sprintf("TorrentMatch{Strategy: %v, Torrent: %v}", tm.Strategy, tm.Torrent)
+	}
+	return fmt.Sprintf("TorrentMatch{Title: %s, Query: %s, Seeders: %d}", tm.Torrent.Title, tm.Strategy.Query, tm.Torrent.Seeders)
 }
