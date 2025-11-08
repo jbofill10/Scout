@@ -9,6 +9,13 @@ bruno*
 sample_*.json
 *.mcp*
 
+# Go workspace files (local developer preference)
+go.work
+go.work.sum
+
+# Go vendor directory (regenerate with: go work vendor)
+vendor/
+
 # Secrets and sensitive configs
 **/*.toml
 *.env

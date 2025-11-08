@@ -97,9 +97,9 @@ preflight_checks() {
         "docker-compose.yml"
         "nginx/nginx.conf"
         "sql/setup-postgres.sql"
-        "webserver/Dockerfile"
-        "tvdb_proxy/Dockerfile"
-        "torrenter/Dockerfile"
+        "backend/Dockerfile.webserver"
+        "backend/Dockerfile.tvdb-proxy"
+        "backend/Dockerfile.torrenter"
         "ui/Dockerfile"
     )
 
