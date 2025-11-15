@@ -8,12 +8,12 @@ import (
 	"os"
 	"runtime/debug"
 
-	"github.com/jbofill10/scout/backend/pkg/telemetry"
 	"github.com/jbofill10/scout/backend/internal/torrenter/config"
 	"github.com/jbofill10/scout/backend/internal/torrenter/handlers"
 	"github.com/jbofill10/scout/backend/internal/torrenter/interactors"
 	"github.com/jbofill10/scout/backend/internal/torrenter/repository"
 	"github.com/jbofill10/scout/backend/internal/torrenter/service"
+	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"

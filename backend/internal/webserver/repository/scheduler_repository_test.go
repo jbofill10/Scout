@@ -2,6 +2,7 @@ package repository
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log/slog"
@@ -63,7 +64,7 @@ func (s *SchedulerRepoTestSuite) TestSchedule_Success() {
 		WithArgs(mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 
-	err := s.repo.Schedule(media, releaseTime, "test-trace-id", "test-span-id")
+	err := s.repo.Schedule(context.Background(), media, releaseTime, "test-trace-id", "test-span-id")
 
 	s.NoError(err)
 	s.NoError(s.mock.ExpectationsWereMet())
@@ -84,7 +85,7 @@ func (s *SchedulerRepoTestSuite) TestSchedule_DuplicateContent() {
 		WithArgs(mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(sql.ErrNoRows)
 
-	err := s.repo.Schedule(media, releaseTime, "test-trace-id", "test-span-id")
+	err := s.repo.Schedule(context.Background(), media, releaseTime, "test-trace-id", "test-span-id")
 
 	s.Equal(ErrDuplicateScheduled, err)
 	s.NoError(s.mock.ExpectationsWereMet())
@@ -104,7 +105,7 @@ func (s *SchedulerRepoTestSuite) TestSchedule_DatabaseError() {
 		WithArgs(mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
 
-	err := s.repo.Schedule(media, releaseTime, "test-trace-id", "test-span-id")
+	err := s.repo.Schedule(context.Background(), media, releaseTime, "test-trace-id", "test-span-id")
 
 	s.Error(err)
 	s.NoError(s.mock.ExpectationsWereMet())

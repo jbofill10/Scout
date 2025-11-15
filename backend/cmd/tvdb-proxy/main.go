@@ -161,12 +161,24 @@ func queryShow(ctx context.Context, showName, mediaType string) ([]tvdb.Media, e
 	logger.InfoContext(ctx, "Search results count", "count", len(searchResponse.Data))
 	for _, item := range searchResponse.Data {
 		wg.Add(1)
+		// Normalize image URL - prepend domain if relative path
+		var imageUrl string
+		if item.ImageUrl != "" && !strings.Contains(item.ImageUrl, "https") {
+			imageUrl = "https://artworks.thetvdb.com" + item.ImageUrl
+		} else {
+			imageUrl = item.ImageUrl
+		}
+
+		// TODO: Remove later
+		logger.InfoContext(ctx, "Is the URL here?", "image_url", item.ImageUrl)
+
 		mediaData := tvdb.Media{
-			Id:           item.Id,
+			Id:           strings.Split(item.Id, "-")[1],
 			Name:         item.Translations.Eng,
 			Category:     item.Category,
-			ImageUrl:     item.ImageUrl,
+			ImageUrl:     imageUrl,
 			OriginalName: item.OriginalName,
+			Slug:         item.Slug,
 			Status:       item.Status,
 			Overview:     item.Overviews.Eng,
 			Year:         item.Year,
@@ -189,7 +201,13 @@ func queryShow(ctx context.Context, showName, mediaType string) ([]tvdb.Media, e
 			// Fetch episode metadata for series
 			seriesResponse, err := querySeriesMetadata(ctx, mediaData.Id)
 			if err != nil {
-				logger.InfoContext(ctx, "Unable to process media", "value", err)
+				logger.WarnContext(ctx, "Failed to fetch episode metadata, returning partial result",
+					"media_id", mediaData.Id,
+					"media_name", mediaData.Name,
+					"error", err)
+				// Still add the media with empty metadata rather than dropping it
+				mediaData.Metadata = tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{}}
+				results = append(results, mediaData)
 				<-ch
 				return
 			}
@@ -258,7 +276,7 @@ func loadConfig() error {
 
 func tvDbGet(ctx context.Context, uri string) ([]byte, error) {
 	// Create a new HTTP request
-	logger.InfoContext(ctx, "Config", "host", tvDbConfig.Host)
+	logger.InfoContext(ctx, "Making TVDB API request", "uri", uri)
 	req, err := http.NewRequestWithContext(ctx, "GET", tvDbConfig.Host+uri, nil)
 	if err != nil {
 		logger.InfoContext(ctx, "Error making request")
@@ -283,11 +301,29 @@ func tvDbGet(ctx context.Context, uri string) ([]byte, error) {
 		}
 	}()
 
-	// Read and print the response body
+	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logger.InfoContext(ctx, "Error reading response body", "value", err)
 		return nil, err
+	}
+
+	// Log response details for debugging
+	preview := string(body)
+	if len(body) > 500 {
+		preview = string(body[:500]) + "..."
+	}
+	logger.InfoContext(ctx, "TVDB API response",
+		"status_code", resp.StatusCode,
+		"body_length", len(body),
+		"body_preview", preview)
+
+	// Check HTTP status code
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		logger.ErrorContext(ctx, "TVDB API returned error",
+			"status_code", resp.StatusCode,
+			"response_body", string(body))
+		return nil, fmt.Errorf("TVDB API error: status %d", resp.StatusCode)
 	}
 
 	return body, nil
@@ -309,6 +345,10 @@ func querySeriesMetadata(ctx context.Context, seriesId string) (tvdb.TVDBSeriesR
 		return seriesResponse, err
 	}
 
+	logger.InfoContext(
+		ctx,
+		"Series metadata querried",
+		"seriesId", seriesId)
 	return seriesResponse, nil
 
 }
@@ -616,14 +656,34 @@ func getPopularSeries(c *gin.Context) {
 		return
 	}
 
-	// Parse response
+	// Parse response - TVDB /filter endpoints return SeriesBaseRecord objects
 	var filterResponse struct {
-		Status string                `json:"status"`
-		Data   []tvdb.TVDBSearchItem `json:"data"`
+		Status string `json:"status"`
+		Data   []struct {
+			Id     int      `json:"id"`
+			Name   string   `json:"name"`
+			Image  string   `json:"image"`
+			Slug   string   `json:"slug"`
+			Year   string   `json:"year"`
+			Status struct { // Status is an object with name, id, etc.
+				Id   int    `json:"id"`
+				Name string `json:"name"`
+			} `json:"status"`
+			FirstAired           string   `json:"firstAired"`
+			LastAired            string   `json:"lastAired"`
+			Country              string   `json:"country"`
+			OriginalCountry      string   `json:"originalCountry"`
+			OriginalLanguage     string   `json:"originalLanguage"`
+			NameTranslations     []string `json:"nameTranslations"`
+			OverviewTranslations []string `json:"overviewTranslations"`
+			Score                float64  `json:"score"`
+		} `json:"data"`
 	}
 
 	if err := json.Unmarshal(result, &filterResponse); err != nil {
-		logger.ErrorContext(ctx, "Failed to unmarshal popular series response", "error", err)
+		logger.ErrorContext(ctx, "Failed to unmarshal popular series response",
+			"error", err,
+			"response_body", string(result))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse TVDB response"})
 		return
 	}
@@ -634,17 +694,29 @@ func getPopularSeries(c *gin.Context) {
 		if i >= limit {
 			break
 		}
+
+		// Normalize image URL - prepend domain if relative path
+		var imageUrl string
+		if item.Image != "" && !strings.Contains(item.Image, "https") {
+			imageUrl = "https://artworks.thetvdb.com" + item.Image
+		} else {
+			imageUrl = item.Image
+		}
+
 		media := tvdb.Media{
-			Id:           item.Id,
-			Name:         item.Translations.Eng,
+			Id:           strconv.Itoa(item.Id),
+			Name:         item.Name,
 			Category:     "series",
-			ImageUrl:     item.ImageUrl,
-			OriginalName: item.OriginalName,
-			Status:       item.Status,
-			Overview:     item.Overviews.Eng,
-			Year:         item.Year,
-			Slug:         item.Slug,
-			Metadata:     tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{}}, // Empty metadata
+			ImageUrl:     imageUrl,
+			OriginalName: item.Name, // SeriesBaseRecord doesn't have separate original name
+			Status: tvdb.Status{ // Convert inline Status struct to media.Status
+				Id:   item.Status.Id,
+				Name: item.Status.Name,
+			},
+			Overview: "", // Filter endpoint doesn't return full overview text
+			Year:     item.Year,
+			Slug:     item.Slug,
+			Metadata: tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{}}, // Empty metadata
 		}
 		results = append(results, media)
 	}
@@ -695,14 +767,34 @@ func getPopularMovies(c *gin.Context) {
 		return
 	}
 
-	// Parse response
+	// Parse response - TVDB /filter endpoints return MovieBaseRecord objects (similar structure to SeriesBaseRecord)
 	var filterResponse struct {
-		Status string                `json:"status"`
-		Data   []tvdb.TVDBSearchItem `json:"data"`
+		Status string `json:"status"`
+		Data   []struct {
+			Id     int      `json:"id"`
+			Name   string   `json:"name"`
+			Image  string   `json:"image"`
+			Slug   string   `json:"slug"`
+			Year   string   `json:"year"`
+			Status struct { // Status is an object with name, id, etc.
+				Id   int    `json:"id"`
+				Name string `json:"name"`
+			} `json:"status"`
+			FirstAired           string   `json:"firstAired"`
+			LastAired            string   `json:"lastAired"`
+			Country              string   `json:"country"`
+			OriginalCountry      string   `json:"originalCountry"`
+			OriginalLanguage     string   `json:"originalLanguage"`
+			NameTranslations     []string `json:"nameTranslations"`
+			OverviewTranslations []string `json:"overviewTranslations"`
+			Score                float64  `json:"score"`
+		} `json:"data"`
 	}
 
 	if err := json.Unmarshal(result, &filterResponse); err != nil {
-		logger.ErrorContext(ctx, "Failed to unmarshal popular movies response", "error", err)
+		logger.ErrorContext(ctx, "Failed to unmarshal popular movies response",
+			"error", err,
+			"response_body", string(result))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse TVDB response"})
 		return
 	}
@@ -713,17 +805,29 @@ func getPopularMovies(c *gin.Context) {
 		if i >= limit {
 			break
 		}
+
+		var imageUrl string
+
+		if !strings.Contains(item.Image, "https") {
+			imageUrl = "https://artworks.thetvdb.com" + item.Image
+		} else {
+			imageUrl = item.Image
+		}
+
 		media := tvdb.Media{
-			Id:           item.Id,
-			Name:         item.Translations.Eng,
+			Id:           strconv.Itoa(item.Id),
+			Name:         item.Name,
 			Category:     "movie",
-			ImageUrl:     item.ImageUrl,
-			OriginalName: item.OriginalName,
-			Status:       item.Status,
-			Overview:     item.Overviews.Eng,
-			Year:         item.Year,
-			Slug:         item.Slug,
-			Metadata:     tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{}}, // Empty metadata for movies
+			ImageUrl:     imageUrl,
+			OriginalName: item.Name, // MovieBaseRecord doesn't have separate original name
+			Status: tvdb.Status{ // Convert inline Status struct to media.Status
+				Id:   item.Status.Id,
+				Name: item.Status.Name,
+			},
+			Overview: "", // Filter endpoint doesn't return full overview text
+			Year:     item.Year,
+			Slug:     item.Slug,
+			Metadata: tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{}}, // Empty metadata for movies
 		}
 		results = append(results, media)
 	}

@@ -6,12 +6,12 @@ import (
 	"log/slog"
 	"time"
 
-	tvdb "github.com/jbofill10/scout/backend/pkg/media"
-	status "github.com/jbofill10/scout/backend/pkg/status"
-	"github.com/jbofill10/scout/backend/pkg/telemetry"
 	"github.com/jbofill10/scout/backend/internal/webserver/clients"
 	"github.com/jbofill10/scout/backend/internal/webserver/repository"
 	"github.com/jbofill10/scout/backend/internal/webserver/scheduler"
+	tvdb "github.com/jbofill10/scout/backend/pkg/media"
+	status "github.com/jbofill10/scout/backend/pkg/status"
+	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -102,9 +102,13 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 	isAnime := isMediaAnime(extendedInfo)
 
 	today := time.Now()
-	i.logger.InfoContext(ctx, "Download request", "media", extendedInfo)
+	i.logger.InfoContext(ctx, "Download request",
+		"media_id", req.Id,
+		"media_name", req.Name,
+		"category", req.Category,
+		"anime", isAnime,
+		"episode_count", len(req.Metadata.Episodes))
 	mediaToDownload := []tvdb.Episode{}
-	absoluteNumber := 1
 
 	for _, episode := range req.Metadata.Episodes {
 		// Create a child span for each episode
@@ -115,6 +119,7 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 				attribute.Int("episode.number", episode.Number),
 				attribute.String("episode.aired", episode.Aired),
 				attribute.Bool("anime", isAnime),
+				attribute.Int("episode.count", len(req.Metadata.Episodes)),
 			),
 		)
 
@@ -132,8 +137,6 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 		}
 
 		if isAnime {
-			episode.AbsoluteNumber = absoluteNumber
-			absoluteNumber++
 			episodeSpan.SetAttributes(attribute.Int("episode.absolute", episode.AbsoluteNumber))
 		}
 
@@ -168,7 +171,7 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 			}
 			scheduledMedia.Metadata.Episodes = []tvdb.Episode{episode}
 
-			err := i.repo.Schedule(scheduledMedia, episodeAired, traceID, spanID)
+			err := i.repo.Schedule(ctx, scheduledMedia, episodeAired, traceID, spanID)
 			if err != nil {
 				// Check if it's a duplicate (already scheduled)
 				if err == repository.ErrDuplicateScheduled {
@@ -191,6 +194,13 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 
 		episodeSpan.End()
 	}
+
+	// Log episode processing summary
+	i.logger.InfoContext(ctx, "Episode processing complete",
+		"media_name", req.Name,
+		"total_episodes", len(req.Metadata.Episodes),
+		"aired_episodes", len(mediaToDownload),
+		"scheduled_or_skipped", len(req.Metadata.Episodes)-len(mediaToDownload))
 
 	// Only send download request if there are aired episodes
 	if len(mediaToDownload) > 0 {
@@ -253,7 +263,7 @@ func (i *DownloadInteractor) DownloadMovie(ctx context.Context, req tvdb.Media) 
 	if releaseDate.After(today) {
 		// Schedule for future download
 		traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
-		err := i.repo.Schedule(req, releaseDate, traceID, spanID)
+		err := i.repo.Schedule(ctx, req, releaseDate, traceID, spanID)
 		if err != nil {
 			if err == repository.ErrDuplicateScheduled {
 				i.logger.InfoContext(ctx, "Movie already scheduled, skipping", "movie", req.Name)

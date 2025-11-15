@@ -2,9 +2,9 @@ package config
 
 import (
 	"fmt"
+	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 	"os"
 	"strconv"
-	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 )
 
 // Load loads the torrenter configuration from environment variables

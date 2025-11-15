@@ -1,9 +1,9 @@
 package handlers
 
 import (
+	"github.com/jbofill10/scout/backend/internal/torrenter/interactors"
 	"log/slog"
 	"net/http"
-	"github.com/jbofill10/scout/backend/internal/torrenter/interactors"
 
 	"github.com/gin-gonic/gin"
 )

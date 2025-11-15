@@ -6,34 +6,44 @@ import (
 	"testing"
 	"time"
 
+	repoMocks "github.com/jbofill10/scout/backend/internal/webserver/repository/mocks"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
 )
 
-// MockSchedulerRepository is a mock implementation of SchedulerRepository
-type MockSchedulerRepository struct {
-	mock.Mock
+type SchedulerTestSuite struct {
+	suite.Suite
+	scheduler *Scheduler
+	mockRepo  *repoMocks.SchedulerRepository
+	logger    *slog.Logger
+	queue     chan tvdb.Media
 }
 
-func (m *MockSchedulerRepository) GetDueMedia() ([]tvdb.Media, error) {
-	args := m.Called()
-	return args.Get(0).([]tvdb.Media), args.Error(1)
+func TestSchedulerSuite(t *testing.T) {
+	suite.Run(t, new(SchedulerTestSuite))
 }
 
-func TestNewScheduler(t *testing.T) {
+func (s *SchedulerTestSuite) SetupTest() {
+	s.logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
+	s.mockRepo = repoMocks.NewSchedulerRepository(s.T())
+	s.scheduler = NewScheduler(s.mockRepo, s.logger)
+	s.queue = make(chan tvdb.Media, 10)
+}
+
+func (s *SchedulerTestSuite) TestNewScheduler() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	mockRepo := new(MockSchedulerRepository)
+	mockRepo := repoMocks.NewSchedulerRepository(s.T())
 
 	scheduler := NewScheduler(mockRepo, logger)
 
-	assert.NotNil(t, scheduler)
-	assert.Equal(t, mockRepo, scheduler.repo)
-	assert.Equal(t, logger, scheduler.logger)
+	s.NotNil(scheduler)
+	s.Equal(mockRepo, scheduler.repo)
+	s.Equal(logger, scheduler.logger)
 }
 
-func TestScheduler_Start(t *testing.T) {
+func (s *SchedulerTestSuite) TestStart_VariousScenarios() {
 	tests := []struct {
 		name           string
 		mediaList      []tvdb.Media
@@ -108,9 +118,9 @@ func TestScheduler_Start(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		s.Run(tt.name, func() {
 			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-			mockRepo := new(MockSchedulerRepository)
+			mockRepo := repoMocks.NewSchedulerRepository(s.T())
 			scheduler := NewScheduler(mockRepo, logger)
 
 			queue := make(chan tvdb.Media, 10)
@@ -119,25 +129,27 @@ func TestScheduler_Start(t *testing.T) {
 
 			scheduler.Start(queue)
 
-			// Give goroutines time to execute
-			time.Sleep(100 * time.Millisecond)
-
-			close(queue)
-
-			// Count queued items
+			// Collect items with timeout to avoid race conditions
+			timeout := time.After(150 * time.Millisecond)
 			queuedCount := 0
-			for range queue {
-				queuedCount++
+		collecting:
+			for {
+				select {
+				case <-queue:
+					queuedCount++
+				case <-timeout:
+					break collecting
+				}
 			}
 
-			assert.Equal(t, tt.expectedQueued, queuedCount, tt.description)
+			s.Equal(tt.expectedQueued, queuedCount, tt.description)
 		})
 	}
 }
 
-func TestScheduler_Start_MultipleFutureMedia(t *testing.T) {
+func (s *SchedulerTestSuite) TestStart_MultipleFutureMedia() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	mockRepo := new(MockSchedulerRepository)
+	mockRepo := repoMocks.NewSchedulerRepository(s.T())
 	scheduler := NewScheduler(mockRepo, logger)
 
 	// Create media with staggered future release times
@@ -161,22 +173,25 @@ func TestScheduler_Start_MultipleFutureMedia(t *testing.T) {
 	queue := make(chan tvdb.Media, 10)
 	scheduler.Start(queue)
 
-	// Wait for all scheduled items
-	time.Sleep(200 * time.Millisecond)
-
-	close(queue)
-
+	// Collect items with timeout to avoid race conditions
+	timeout := time.After(250 * time.Millisecond)
 	queuedCount := 0
-	for range queue {
-		queuedCount++
+collecting:
+	for {
+		select {
+		case <-queue:
+			queuedCount++
+		case <-timeout:
+			break collecting
+		}
 	}
 
-	assert.Equal(t, 2, queuedCount, "Should queue all future media after their release time")
+	s.Equal(2, queuedCount, "Should queue all future media after their release time")
 }
 
-func TestScheduler_Start_MixedDueAndFutureMedia(t *testing.T) {
+func (s *SchedulerTestSuite) TestStart_MixedDueAndFutureMedia() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	mockRepo := new(MockSchedulerRepository)
+	mockRepo := repoMocks.NewSchedulerRepository(s.T())
 	scheduler := NewScheduler(mockRepo, logger)
 
 	mediaList := []tvdb.Media{
@@ -199,15 +214,18 @@ func TestScheduler_Start_MixedDueAndFutureMedia(t *testing.T) {
 	queue := make(chan tvdb.Media, 10)
 	scheduler.Start(queue)
 
-	// Wait for all items
-	time.Sleep(150 * time.Millisecond)
-
-	close(queue)
-
+	// Collect items with timeout to avoid race conditions
+	timeout := time.After(200 * time.Millisecond)
 	queuedCount := 0
-	for range queue {
-		queuedCount++
+collecting:
+	for {
+		select {
+		case <-queue:
+			queuedCount++
+		case <-timeout:
+			break collecting
+		}
 	}
 
-	assert.Equal(t, 2, queuedCount, "Should queue both due and future media")
+	s.Equal(2, queuedCount, "Should queue both due and future media")
 }

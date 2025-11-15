@@ -3,10 +3,10 @@ package service
 import (
 	"bytes"
 	"context"
-	"log/slog"
-	tvdb "github.com/jbofill10/scout/backend/pkg/media"
-	"testing"
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	tvdb "github.com/jbofill10/scout/backend/pkg/media"
+	"log/slog"
+	"testing"
 
 	qbittorrent "github.com/autobrr/go-qbittorrent"
 	"github.com/stretchr/testify/suite"
@@ -248,6 +248,68 @@ func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_Anime() {
 		}
 	}
 	s.True(found, "Should have anime-style query")
+}
+
+func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_AnimeWithZeroAbsoluteNumber() {
+	media := &tvdb.Media{
+		Name:  "Test Anime",
+		Anime: true,
+	}
+
+	episode := &tvdb.Episode{
+		SeasonNumber:   1,
+		Number:         5,
+		AbsoluteNumber: 0, // TVDB didn't provide absolute number
+	}
+
+	strategies := s.handler.createSearchStrategy(media, episode)
+
+	// Should still create strategies, but skip absolute numbering
+	s.NotEmpty(strategies, "Should create fallback strategies")
+
+	// Should NOT create absolute numbering format with "00"
+	for _, strategy := range strategies {
+		s.NotEqual("Test Anime 00", strategy.Query, "Should not create query with 00")
+		s.NotContains(strategy.Query, " 00", "Should not include 00 in any query")
+	}
+
+	// Should have seasonal format fallback strategies
+	foundSeasonal := false
+	for _, strategy := range strategies {
+		if strategy.Query == "Test Anime S01E05" {
+			foundSeasonal = true
+			s.Equal(1, strategy.Season)
+			s.Equal(5, strategy.Episode)
+		}
+	}
+	s.True(foundSeasonal, "Should have S01E05 fallback format when absoluteNumber is 0")
+}
+
+func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_AnimeWithAbsoluteNumberOne() {
+	media := &tvdb.Media{
+		Name:  "Test Anime",
+		Anime: true,
+	}
+
+	episode := &tvdb.Episode{
+		SeasonNumber:   1,
+		Number:         1,
+		AbsoluteNumber: 1, // Valid absolute number (first episode)
+	}
+
+	strategies := s.handler.createSearchStrategy(media, episode)
+
+	// Should create absolute numbering format for episode 1
+	foundAbsolute := false
+	for _, strategy := range strategies {
+		if strategy.Query == "Test Anime 01" {
+			foundAbsolute = true
+			s.Equal(1, strategy.Episode)
+			s.Contains(strategy.Exclude, "season")
+			s.Contains(strategy.Exclude, "episode")
+		}
+	}
+	s.True(foundAbsolute, "Should create absolute format for episode 1 when absoluteNumber is 1")
 }
 
 func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_RegularShow() {

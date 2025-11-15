@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
-	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 
 	qbittorrent "github.com/autobrr/go-qbittorrent"
 	"github.com/google/uuid"
@@ -529,15 +529,19 @@ func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episo
 
 	if req.Anime {
 		for _, showName := range showNames {
-			ss = append(ss, &models.SearchStrategy{
-				Query:       fmt.Sprint(showName, " ", standardizeNumber(episode.AbsoluteNumber)),
-				MediaName:   showName,
-				Season:      episode.SeasonNumber,
-				Episode:     episode.AbsoluteNumber,
-				EpisodeMeta: episode,
-				Exclude:     []string{"season", "episode"},
-				TvdbId:      req.Id,
-			})
+			// Only create absolute number strategy if TVDB provided one (absoluteNumber > 0)
+			// When absoluteNumber == 0, it means TVDB doesn't have absolute numbering for this show
+			if episode.AbsoluteNumber > 0 {
+				ss = append(ss, &models.SearchStrategy{
+					Query:       fmt.Sprint(showName, " ", standardizeNumber(episode.AbsoluteNumber)),
+					MediaName:   showName,
+					Season:      episode.SeasonNumber,
+					Episode:     episode.AbsoluteNumber,
+					EpisodeMeta: episode,
+					Exclude:     []string{"season", "episode"},
+					TvdbId:      req.Id,
+				})
+			}
 		}
 	}
 

@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	repoMocks "github.com/jbofill10/scout/backend/internal/torrenter/repository/mocks"
+	serviceMocks "github.com/jbofill10/scout/backend/internal/torrenter/service/mocks"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"github.com/jbofill10/scout/backend/internal/torrenter/models"
-	repoMocks "github.com/jbofill10/scout/backend/internal/torrenter/repository/mocks"
-	serviceMocks "github.com/jbofill10/scout/backend/internal/torrenter/service/mocks"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -62,7 +62,7 @@ func (s *PlexHandlerTestSuite) TestGetLibraries_Success() {
 		}
 
 		w.Header().Set("Content-Type", "application/xml")
-		xml.NewEncoder(w).Encode(resp)
+		_ = xml.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -99,7 +99,7 @@ func (s *PlexHandlerTestSuite) TestGetMovies_Success() {
 		}
 
 		w.Header().Set("Content-Type", "application/xml")
-		xml.NewEncoder(w).Encode(resp)
+		_ = xml.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -131,7 +131,7 @@ func (s *PlexHandlerTestSuite) TestFetchAndUnmarshal_Success() {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		xml.NewEncoder(w).Encode(resp)
+		_ = xml.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -162,7 +162,7 @@ func (s *PlexHandlerTestSuite) TestFetchAndUnmarshal_HTTPError() {
 func (s *PlexHandlerTestSuite) TestFetchAndUnmarshal_InvalidXML() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("invalid xml"))
+		_, _ = w.Write([]byte("invalid xml"))
 	}))
 	defer server.Close()
 

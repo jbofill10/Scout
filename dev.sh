@@ -38,6 +38,7 @@ usage() {
     echo "Usage:"
     echo "  ./dev.sh rebuild <service>     - Rebuild and restart a service"
     echo "  ./dev.sh rebuild-all           - Rebuild and restart all services"
+    echo "  ./dev.sh vendor                - Regenerate Go workspace vendor directory"
     echo "  ./dev.sh logs <service>        - Follow logs for a service"
     echo "  ./dev.sh shell <service>       - Open shell in service container"
     echo "  ./dev.sh restart <service>     - Restart a service (no rebuild)"
@@ -50,8 +51,14 @@ usage() {
     echo "Examples:"
     echo "  ./dev.sh rebuild webserver     # Quick rebuild after code changes"
     echo "  ./dev.sh rebuild-all           # Rebuild everything"
+    echo "  ./dev.sh vendor                # Update vendor after dependency changes"
     echo "  ./dev.sh logs torrenter        # Watch torrenter logs"
     echo "  ./dev.sh shell webserver       # Debug inside container"
+    echo ""
+    echo "Monorepo Structure:"
+    echo "  backend/    - Go services (webserver, torrenter, tvdb-proxy)"
+    echo "  ui/         - React frontend"
+    echo "  Run './dev.sh vendor' after changing Go dependencies"
     exit 0
 }
 
@@ -186,6 +193,35 @@ up() {
     status
 }
 
+# Regenerate Go workspace vendor directory
+vendor() {
+    log_info "Regenerating Go workspace vendor directory..."
+
+    # Check if go.work exists
+    if [ ! -f "go.work" ]; then
+        log_error "go.work file not found!"
+        log_info "The Go workspace is not set up. Please run:"
+        log_info "  cat > go.work <<EOF"
+        log_info "go 1.24"
+        log_info ""
+        log_info "use ("
+        log_info "    ./backend"
+        log_info ")"
+        log_info "EOF"
+        exit 1
+    fi
+
+    # Run go work vendor
+    if command -v go &> /dev/null; then
+        go work vendor
+        log_success "Vendor directory regenerated!"
+        log_info "Docker builds will use the updated vendor/ directory"
+    else
+        log_error "Go is not installed. Please install Go 1.24 or later."
+        exit 1
+    fi
+}
+
 # Main command dispatcher
 case "$1" in
     rebuild)
@@ -193,6 +229,9 @@ case "$1" in
         ;;
     rebuild-all)
         rebuild_all
+        ;;
+    vendor)
+        vendor
         ;;
     logs)
         logs "$2"

@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
-import Card from '@mui/material/Card';
-import CardMedia from '@mui/material/CardMedia';
-import Box from '@mui/material/Box';
-import Typography from '@mui/material/Typography';
-import DownloadIcon from '@mui/icons-material/Download';
-import { useTheme } from '@mui/material/styles';
+import React, { useState } from "react";
+import Card from "@mui/material/Card";
+import CardMedia from "@mui/material/CardMedia";
+import Box from "@mui/material/Box";
+import Typography from "@mui/material/Typography";
+import DownloadIcon from "@mui/icons-material/Download";
+import { useTheme } from "@mui/material/styles";
 
 export interface MediaCardProps {
   media: {
@@ -13,7 +13,7 @@ export interface MediaCardProps {
     imageUrl: string;
     category?: string;
   };
-  onClick: (media: MediaCardProps['media']) => void;
+  onClick: (media: MediaCardProps["media"]) => void;
 }
 
 /**
@@ -36,7 +36,7 @@ const MediaCard: React.FC<MediaCardProps> = ({ media, onClick }) => {
   };
 
   const handleKeyPress = (event: React.KeyboardEvent) => {
-    if (event.key === 'Enter') {
+    if (event.key === "Enter") {
       onClick(media);
     }
   };
@@ -52,21 +52,21 @@ const MediaCard: React.FC<MediaCardProps> = ({ media, onClick }) => {
       aria-label={`View details for ${media.name}`}
       elevation={isHovered ? 8 : 2}
       sx={{
-        position: 'relative',
-        width: '100%',
-        aspectRatio: '2/3',
-        cursor: 'pointer',
-        transition: 'all 0.3s ease-in-out',
-        transform: isHovered ? 'scale(1.05)' : 'scale(1)',
+        position: "relative",
+        width: "100%",
+        aspectRatio: "2/3",
+        cursor: "pointer",
+        transition: "all 0.3s ease-in-out",
+        transform: isHovered ? "scale(1.05)" : "scale(1)",
         borderRadius: 2,
-        overflow: 'hidden',
-        '&:focus': {
+        overflow: "hidden",
+        "&:focus": {
           outline: `2px solid ${theme.palette.primary.main}`,
-          outlineOffset: '2px',
+          outlineOffset: "2px",
         },
-        '&:focus-visible': {
+        "&:focus-visible": {
           outline: `2px solid ${theme.palette.primary.main}`,
-          outlineOffset: '2px',
+          outlineOffset: "2px",
         },
       }}
     >
@@ -76,27 +76,27 @@ const MediaCard: React.FC<MediaCardProps> = ({ media, onClick }) => {
         alt={media.name}
         loading="lazy"
         sx={{
-          width: '100%',
-          height: '100%',
-          objectFit: 'cover',
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
         }}
       />
 
       {/* Hover Overlay */}
       <Box
         sx={{
-          position: 'absolute',
+          position: "absolute",
           top: 0,
           left: 0,
           right: 0,
           bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.75)',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
+          backgroundColor: "rgba(0, 0, 0, 0.75)",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
           opacity: isHovered ? 1 : 0,
-          transition: 'opacity 0.3s ease-in-out',
+          transition: "opacity 0.3s ease-in-out",
           padding: 2,
         }}
       >
@@ -113,11 +113,11 @@ const MediaCard: React.FC<MediaCardProps> = ({ media, onClick }) => {
           sx={{
             color: theme.palette.text.primary,
             fontWeight: 600,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            display: '-webkit-box',
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            display: "-webkit-box",
             WebkitLineClamp: 3,
-            WebkitBoxOrient: 'vertical',
+            WebkitBoxOrient: "vertical",
           }}
         >
           {media.name}
@@ -128,8 +128,8 @@ const MediaCard: React.FC<MediaCardProps> = ({ media, onClick }) => {
             sx={{
               color: theme.palette.text.secondary,
               mt: 1,
-              textTransform: 'uppercase',
-              letterSpacing: '0.05em',
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
             }}
           >
             {media.category}

@@ -1,18 +1,19 @@
-import React, { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import Box from '@mui/material/Box';
-import Typography from '@mui/material/Typography';
-import Button from '@mui/material/Button';
-import Skeleton from '@mui/material/Skeleton';
-import { useTheme } from '@mui/material/styles';
-import HorizontalCarousel from './HorizontalCarousel';
-import MediaCard from './MediaCard';
-import SearchResultDialog from '../SearchResultDialog';
-import type { SearchResult } from '../SearchResultsList';
+import React, { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import Box from "@mui/material/Box";
+import Typography from "@mui/material/Typography";
+import Button from "@mui/material/Button";
+import Skeleton from "@mui/material/Skeleton";
+import { useTheme } from "@mui/material/styles";
+import HorizontalCarousel from "./HorizontalCarousel";
+import MediaCard from "./MediaCard";
+import SearchResultDialog from "../SearchResultDialog";
+import type { SearchResult } from "../SearchResultsList";
+import { logError } from "../../lib/logger";
 
 interface GenreRowProps {
   genre: string;
-  mediaType: 'series' | 'movie';
+  mediaType: "series" | "movie";
 }
 
 /**
@@ -33,13 +34,19 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
 
   // Fetch popular content for this genre
   const { data, isLoading, isError, refetch } = useQuery<SearchResult[]>({
-    queryKey: ['popular', mediaType, genre],
+    queryKey: ["popular", mediaType, genre],
     queryFn: async () => {
-      const endpoint = mediaType === 'series' ? '/api/popular/shows' : '/api/popular/movies';
-      const params = new URLSearchParams({ genre });
+      const endpoint =
+        mediaType === "series" ? "/api/popular/shows" : "/api/popular/movies";
+
+      // Don't send genre parameter for "Popular TV Shows" or "Popular Movies" - these are UI labels, not real genres
+      const isPopularOnly =
+        genre === "Popular TV Shows" || genre === "Popular Movies";
+      const params = new URLSearchParams(isPopularOnly ? {} : { genre });
+
       const response = await fetch(`${endpoint}?${params}`);
       if (!response.ok) {
-        throw new Error('Failed to fetch popular content');
+        throw new Error("Failed to fetch popular content");
       }
       return response.json();
     },
@@ -47,12 +54,16 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
     retry: 2,
   });
 
-  const handleMediaClick = (media: { id: string; name: string; imageUrl: string }) => {
+  const handleMediaClick = (media: {
+    id: string;
+    name: string;
+    imageUrl: string;
+  }) => {
     // Convert to SearchResult format for dialog
     const searchResult: SearchResult = {
       id: media.id,
       mediaName: media.name,
-      imageUrl: media.imageUrl,
+      image_url: media.imageUrl,
     };
     setSelectedMedia(searchResult);
     setDialogOpen(true);
@@ -65,18 +76,18 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
 
   const handleDownload = (result: SearchResult) => {
     // Route to correct endpoint based on media type
-    const endpoint = mediaType === 'movie' ? '/api/movies' : '/api/shows';
+    const endpoint = mediaType === "movie" ? "/api/movies" : "/api/shows";
 
     fetch(endpoint, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
       body: JSON.stringify(result),
     })
       .then((response) => {
         if (!response.ok) {
-          throw new Error('Network response was not ok');
+          throw new Error("Network response was not ok");
         }
         return response.json();
       })
@@ -85,7 +96,14 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
         handleCloseDialog();
       })
       .catch((error) => {
-        console.error('Error initiating download:', error);
+        console.error("Error initiating download:", error);
+        logError("Download initiation failed in GenreRow", error as Error, {
+          component: "GenreRow",
+          endpoint: endpoint,
+          mediaType: mediaType,
+          genre: genre,
+          resultId: result.id,
+        });
       });
   };
 
@@ -93,17 +111,20 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
   if (isLoading) {
     return (
       <Box sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600, color: theme.palette.text.primary }}>
+        <Typography
+          variant="h5"
+          sx={{ mb: 2, fontWeight: 600, color: theme.palette.text.primary }}
+        >
           {genre}
         </Typography>
-        <Box sx={{ display: 'flex', gap: 2 }}>
+        <Box sx={{ display: "flex", gap: 2 }}>
           {Array.from({ length: 7 }).map((_, index) => (
             <Skeleton
               key={index}
               variant="rectangular"
               width={180}
               height={270}
-              sx={{ borderRadius: 2, flex: '0 0 180px' }}
+              sx={{ borderRadius: 2, flex: "0 0 180px" }}
             />
           ))}
         </Box>
@@ -115,13 +136,16 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
   if (isError) {
     return (
       <Box sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600, color: theme.palette.text.primary }}>
+        <Typography
+          variant="h5"
+          sx={{ mb: 2, fontWeight: 600, color: theme.palette.text.primary }}
+        >
           {genre}
         </Typography>
         <Box
           sx={{
-            display: 'flex',
-            alignItems: 'center',
+            display: "flex",
+            alignItems: "center",
             gap: 2,
             p: 3,
             backgroundColor: theme.palette.background.paper,
@@ -154,7 +178,7 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
             media={{
               id: item.id,
               name: item.mediaName,
-              imageUrl: item.imageUrl,
+              imageUrl: item.image_url,
             }}
             onClick={handleMediaClick}
           />

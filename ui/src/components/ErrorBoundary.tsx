@@ -6,6 +6,7 @@ import AlertTitle from '@mui/material/AlertTitle';
 import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
 import HomeIcon from '@mui/icons-material/Home';
+import { logError } from '../lib/logger';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -49,9 +50,15 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    // Log error details to console for debugging
+    // Log error details to console for debugging (preserved for development)
     console.error('ErrorBoundary caught an error:', error);
     console.error('Error info:', errorInfo);
+
+    // Send error to OpenTelemetry collector
+    logError('React ErrorBoundary caught an error', error, {
+      componentStack: errorInfo.componentStack,
+      errorBoundary: 'ErrorBoundary',
+    });
 
     // Update state with error info
     this.setState({

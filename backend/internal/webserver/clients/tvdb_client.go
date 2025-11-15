@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"log/slog"
 	"net/http"
-	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
@@ -146,10 +146,13 @@ func (c *TVDBProxyClient) GetGenres(ctx context.Context) ([]Genre, error) {
 			slog.WarnContext(ctx, "Failed to close response body", "error", cerr)
 		}
 	}()
-	var genres []Genre
+	// tvdb-proxy returns {"data": [...]} structure
+	var response struct {
+		Data []Genre `json:"data"`
+	}
 	decoder := json.NewDecoder(resp.Body)
-	if err := decoder.Decode(&genres); err != nil {
+	if err := decoder.Decode(&response); err != nil {
 		return nil, err
 	}
-	return genres, nil
+	return response.Data, nil
 }

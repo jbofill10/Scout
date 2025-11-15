@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -34,7 +35,7 @@ type ScheduledDownload struct {
 
 // SchedulerRepository defines DB operations for scheduled shows
 type SchedulerRepository interface {
-	Schedule(media tvdb.Media, releaseTime time.Time, scheduledTraceID, scheduledSpanID string) error
+	Schedule(ctx context.Context, media tvdb.Media, releaseTime time.Time, scheduledTraceID, scheduledSpanID string) error
 	GetDueMedia() ([]tvdb.Media, error)
 	InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, status, reason, traceID, spanID string) error
 	GetWeeklySchedule() ([]ScheduledDownload, error)
@@ -59,7 +60,7 @@ func NewSchedulerRepo(logger *slog.Logger, connStr string) (*SchedulerRepo, erro
 	return repo, nil
 }
 
-func (r *SchedulerRepo) Schedule(media tvdb.Media, releaseTime time.Time, scheduledTraceID, scheduledSpanID string) error {
+func (r *SchedulerRepo) Schedule(ctx context.Context, media tvdb.Media, releaseTime time.Time, scheduledTraceID, scheduledSpanID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -70,22 +71,51 @@ func (r *SchedulerRepo) Schedule(media tvdb.Media, releaseTime time.Time, schedu
 
 	// Compute a deterministic content hash of the marshalled media JSON so
 	// we can detect duplicate scheduled content efficiently.
-	h := sha256.Sum256(mediaJSON)
+	var scheduleHash string
+	if media.Category == "movie" || len(media.Metadata.Episodes) == 0 {
+		// For movies or media without episodes, use media ID + release time
+		scheduleHash = fmt.Sprintf("%s-%s", media.Id, releaseTime.Format("2006-01-02"))
+	} else {
+		// For TV shows, use episode identifiers
+		scheduleHash = fmt.Sprintf(
+			"%d-%d-%d",
+			media.Metadata.Episodes[0].SeasonNumber,
+			media.Metadata.Episodes[0].Number,
+			media.Metadata.Episodes[0].AbsoluteNumber,
+		)
+	}
+	h := sha256.Sum256([]byte(scheduleHash))
 	contentHash := hex.EncodeToString(h[:])
 
 	stmt := `INSERT INTO ScheduledDownloads (media, release_time, schedule_status, content_hash, scheduled_trace_id, scheduled_span_id)
 			 VALUES ($1, $2, $3, $4, $5, $6)
 			 ON CONFLICT (content_hash) DO NOTHING RETURNING id`
 
-	var insertedId int
-	err = r.db.QueryRow(stmt, mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, contentHash, scheduledTraceID, scheduledSpanID).Scan(&insertedId)
+	r.logger.InfoContext(ctx, "Attempting to schedule media",
+		slog.String("media", media.Name),
+		slog.String("release_time", releaseTime.Format(time.RFC3339)),
+		slog.String("content_hash", contentHash),
+	)
+	err = r.db.QueryRow(stmt, mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, contentHash, scheduledTraceID, scheduledSpanID).Scan(&contentHash)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			// ON CONFLICT DO NOTHING caused no insert; treat as duplicate
+			r.logger.InfoContext(ctx, "Show already scheduled, skipping",
+				slog.String("media", media.Name),
+				slog.String("release_time", releaseTime.Format(time.RFC3339)),
+				slog.String("content_hash", contentHash),
+			)
 			return ErrDuplicateScheduled
 		}
 		return fmt.Errorf("failed to insert scheduled media: %w", err)
 	}
+
+	r.logger.InfoContext(ctx, "Successfully scheduled media",
+		slog.String("media", media.Name),
+		slog.String("release_time", releaseTime.Format(time.RFC3339)),
+		slog.String("content_hash", contentHash),
+	)
+
 	return nil
 }
 

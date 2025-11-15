@@ -4,8 +4,8 @@ import (
 	"log/slog"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jbofill10/scout/backend/pkg/telemetry"
 	"github.com/jbofill10/scout/backend/internal/webserver/interactors"
+	"github.com/jbofill10/scout/backend/pkg/telemetry"
 )
 
 type SearchHandler struct {
@@ -35,6 +35,8 @@ func (h *SearchHandler) HandleSearch(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "Failed to search media"})
 		return
 	}
+
+	h.logger.InfoContext(ctx, "Is URL here?", "image_url", searchResults[0].ImageUrl)
 
 	h.logger.InfoContext(ctx, "Returning search results", telemetry.WithTraceContext(ctx, "count", len(searchResults))...)
 	c.JSON(200, searchResults)

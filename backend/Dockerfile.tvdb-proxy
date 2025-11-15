@@ -1,0 +1,40 @@
+# Build stage
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apk add --no-cache build-base
+
+# Copy go.mod and go.sum for dependency caching
+COPY go.mod go.sum ./
+
+# Download dependencies (cached layer)
+RUN go mod download
+
+# Copy shared packages
+COPY pkg/ ./pkg/
+
+# Copy tvdb-proxy service code
+COPY cmd/tvdb-proxy/ ./cmd/tvdb-proxy/
+COPY internal/tvdbproxy/ ./internal/tvdbproxy/
+
+# Build the binary
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w" -o tvdb-proxy ./cmd/tvdb-proxy
+
+# Runtime stage
+FROM alpine:3.19
+
+# Runtime deps
+RUN apk --no-cache add ca-certificates tzdata
+
+WORKDIR /root/
+
+# Copy the binary from builder stage
+COPY --from=builder /app/tvdb-proxy .
+
+# Expose port
+EXPOSE 22000
+
+# Run the binary
+CMD ["./tvdb-proxy"]

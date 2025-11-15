@@ -5,9 +5,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jbofill10/scout/backend/internal/torrenter/interactors"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
-	"github.com/jbofill10/scout/backend/internal/torrenter/interactors"
 )
 
 type DownloadHandler struct {

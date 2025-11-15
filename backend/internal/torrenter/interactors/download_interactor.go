@@ -2,10 +2,10 @@ package interactors
 
 import (
 	"context"
-	"log/slog"
-	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 	"github.com/jbofill10/scout/backend/internal/torrenter/service"
+	tvdb "github.com/jbofill10/scout/backend/pkg/media"
+	"log/slog"
 
 	"go.opentelemetry.io/otel/trace"
 )
