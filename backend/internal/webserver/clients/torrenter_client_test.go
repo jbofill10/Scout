@@ -16,7 +16,6 @@ import (
 
 type TorrenterClientTestSuite struct {
 	suite.Suite
-	client *TorrenterClient
 	logger *log.Logger
 }
 
@@ -193,7 +192,7 @@ func (s *TorrenterClientTestSuite) TestMediaExistsBatch_Success() {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -226,7 +225,7 @@ func (s *TorrenterClientTestSuite) TestMediaExistsBatch_EmptyMaps() {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -264,7 +263,7 @@ func (s *TorrenterClientTestSuite) TestMediaExistsBatch_Non200Status() {
 func (s *TorrenterClientTestSuite) TestMediaExistsBatch_InvalidJSON() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("invalid json"))
+		_, _ = w.Write([]byte("invalid json"))
 	}))
 	defer server.Close()
 
@@ -294,7 +293,7 @@ func (s *TorrenterClientTestSuite) TestMediaExistsBatch_NetworkError() {
 func (s *TorrenterClientTestSuite) TestMediaExistsBatch_EncodingError() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(struct {
+		_ = json.NewEncoder(w).Encode(struct {
 			Exists     map[string]bool `json:"exists"`
 			InProgress map[string]bool `json:"in_progress"`
 		}{})

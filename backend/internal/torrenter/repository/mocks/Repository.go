@@ -4,7 +4,9 @@ package mocks
 
 import (
 	context "context"
+
 	models "github.com/jbofill10/scout/backend/internal/torrenter/models"
+	notifications "github.com/jbofill10/scout/backend/pkg/notifications"
 
 	mock "github.com/stretchr/testify/mock"
 )
@@ -307,6 +309,72 @@ func (_m *Repository) UpsertMovies(ctx context.Context, movies models.PlexMovieL
 // UpsertShows provides a mock function with given fields: ctx, shows
 func (_m *Repository) UpsertShows(ctx context.Context, shows *models.PlexShowLibraryData) {
 	_m.Called(ctx, shows)
+}
+
+// CreateNotification provides a mock function with given fields: ctx, notification
+func (_m *Repository) CreateNotification(ctx context.Context, notification *notifications.Notification) error {
+	ret := _m.Called(ctx, notification)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CreateNotification")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, *notifications.Notification) error); ok {
+		r0 = rf(ctx, notification)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// GetNotification provides a mock function with given fields: ctx, tvdbID
+func (_m *Repository) GetNotification(ctx context.Context, tvdbID string) (*notifications.Notification, error) {
+	ret := _m.Called(ctx, tvdbID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetNotification")
+	}
+
+	var r0 *notifications.Notification
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (*notifications.Notification, error)); ok {
+		return rf(ctx, tvdbID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string) *notifications.Notification); ok {
+		r0 = rf(ctx, tvdbID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*notifications.Notification)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, tvdbID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// UpdateNotification provides a mock function with given fields: ctx, notification
+func (_m *Repository) UpdateNotification(ctx context.Context, notification *notifications.Notification) error {
+	ret := _m.Called(ctx, notification)
+
+	if len(ret) == 0 {
+		panic("no return value specified for UpdateNotification")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, *notifications.Notification) error); ok {
+		r0 = rf(ctx, notification)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
 }
 
 // NewRepository creates a new instance of Repository. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.

@@ -198,7 +198,7 @@ func (p *PlexHandler) getMovies(ctx context.Context) models.PlexMovieLibraryData
 	return movies
 }
 
-func (p *PlexHandler) fetchAndUnmarshal(ctx context.Context, url string, v interface{}) error {
+func (p *PlexHandler) fetchAndUnmarshal(ctx context.Context, url string, v any) error {
 	// Create manual span with descriptive name based on URL path
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -207,7 +207,7 @@ func (p *PlexHandler) fetchAndUnmarshal(ctx context.Context, url string, v inter
 
 	// Extract path for span name
 	spanName := fmt.Sprintf("Plex GET %s", req.URL.Path)
-	ctx, span := tracer.Start(ctx, spanName)
+	_, span := tracer.Start(ctx, spanName)
 	defer span.End()
 
 	req.Header.Set("X-Plex-Token", p.cfg.Key)

@@ -16,7 +16,6 @@ import (
 
 type TVDBProxyClientTestSuite struct {
 	suite.Suite
-	client *TVDBProxyClient
 	logger *log.Logger
 }
 
@@ -47,7 +46,7 @@ func (s *TVDBProxyClientTestSuite) TestSearch_Success() {
 		s.Equal("test", r.URL.Query().Get("mediaName"))
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(expectedResults)
+		_ = json.NewEncoder(w).Encode(expectedResults)
 	}))
 	defer server.Close()
 
@@ -64,7 +63,7 @@ func (s *TVDBProxyClientTestSuite) TestSearch_Success() {
 func (s *TVDBProxyClientTestSuite) TestSearch_EmptyResults() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode([]tvdb.Media{})
+		_ = json.NewEncoder(w).Encode([]tvdb.Media{})
 	}))
 	defer server.Close()
 
@@ -94,7 +93,7 @@ func (s *TVDBProxyClientTestSuite) TestSearch_HTTPError() {
 func (s *TVDBProxyClientTestSuite) TestSearch_InvalidJSON() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("invalid json"))
+		_, _ = w.Write([]byte("invalid json"))
 	}))
 	defer server.Close()
 
@@ -132,7 +131,7 @@ func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_Success() {
 		s.Equal("series", r.URL.Query().Get("mediaType"))
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(expectedInfo)
+		_ = json.NewEncoder(w).Encode(expectedInfo)
 	}))
 	defer server.Close()
 
@@ -164,7 +163,7 @@ func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_HTTPError() {
 func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_InvalidJSON() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("invalid json"))
+		_, _ = w.Write([]byte("invalid json"))
 	}))
 	defer server.Close()
 
@@ -199,7 +198,7 @@ func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_DifferentMediaIDs() {
 		s.Run(tc.name, func() {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				s.Contains(r.URL.Path, tc.mediaID)
-				json.NewEncoder(w).Encode(tvdb.TVDBSeriesExtendedResponse{})
+				_ = json.NewEncoder(w).Encode(tvdb.TVDBSeriesExtendedResponse{})
 			}))
 			defer server.Close()
 

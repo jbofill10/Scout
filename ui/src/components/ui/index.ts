@@ -17,3 +17,5 @@ export { default as ScheduleWidget } from './ScheduleWidget';
 export { default as Navbar } from './Navbar';
 
 export { default as SearchDropdown } from './SearchDropdown';
+
+export { default as NotificationDropdown } from './NotificationDropdown';

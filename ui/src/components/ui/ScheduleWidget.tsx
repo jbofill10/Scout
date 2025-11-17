@@ -147,15 +147,34 @@ const ScheduleWidget: React.FC = () => {
     return null;
   };
 
-  // const formatDate = (dateString: string) => {
-  //     const date = new Date(dateString);
-  //     return new Intl.DateTimeFormat('en-US', {
-  //         month: 'short',
-  //         day: 'numeric',
-  //         hour: '2-digit',
-  //         minute: '2-digit',
-  //     }).format(date);
-  // };
+  const getOrdinalSuffix = (day: number) => {
+    if (day > 3 && day < 21) return "th";
+    switch (day % 10) {
+      case 1:
+        return "st";
+      case 2:
+        return "nd";
+      case 3:
+        return "rd";
+      default:
+        return "th";
+    }
+  };
+
+  const formatDayOfWeek = (dateString: string) => {
+    const date = new Date(dateString);
+    const weekday = new Intl.DateTimeFormat("en-US", {
+      weekday: "long",
+      timeZone: "UTC",
+    }).format(date);
+    const dayNum = parseInt(
+      new Intl.DateTimeFormat("en-US", {
+        day: "numeric",
+        timeZone: "UTC",
+      }).format(date),
+    );
+    return `${weekday} - ${dayNum}${getOrdinalSuffix(dayNum)}`;
+  };
 
   // Loading state
   if (isLoading) {
@@ -255,58 +274,78 @@ const ScheduleWidget: React.FC = () => {
           }}
         >
           {data.map((item) => (
-            <Card
+            <Box
               key={`${item.id}-${item.seasonNumber}-${item.episodeNumber}`}
-              onClick={() => handleItemClick(item)}
               sx={{
                 flex: "0 0 auto",
                 width: 120,
-                cursor: "pointer",
-                transition: "transform 0.2s ease-in-out",
-                "&:hover": {
-                  transform: "scale(1.05)",
-                },
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
               }}
             >
-              <CardMedia
-                component="img"
-                image={item.posterUrl}
-                alt={item.mediaName}
+              <Card
+                onClick={() => handleItemClick(item)}
                 sx={{
                   width: "100%",
-                  height: 160,
-                  objectFit: "cover",
+                  cursor: "pointer",
+                  transition: "transform 0.2s ease-in-out",
+                  "&:hover": {
+                    transform: "scale(1.05)",
+                  },
                 }}
-              />
-              <Box sx={{ p: 1 }}>
-                <Typography
-                  variant="caption"
+              >
+                <CardMedia
+                  component="img"
+                  image={item.posterUrl}
+                  alt={item.mediaName}
                   sx={{
-                    fontWeight: 600,
-                    display: "-webkit-box",
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: "vertical",
-                    overflow: "hidden",
-                    lineHeight: 1.3,
-                    mb: 0.5,
+                    width: "100%",
+                    height: 160,
+                    objectFit: "cover",
                   }}
-                >
-                  {item.mediaName}
-                </Typography>
-                {formatEpisode(item.seasonNumber, item.episodeNumber) && (
+                />
+                <Box sx={{ p: 1 }}>
                   <Typography
                     variant="caption"
                     sx={{
-                      display: "block",
-                      color: theme.palette.primary.main,
+                      fontWeight: 600,
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                      lineHeight: 1.3,
                       mb: 0.5,
                     }}
                   >
-                    {formatEpisode(item.seasonNumber, item.episodeNumber)}
+                    {item.mediaName}
                   </Typography>
-                )}
-              </Box>
-            </Card>
+                  {formatEpisode(item.seasonNumber, item.episodeNumber) && (
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        display: "block",
+                        color: theme.palette.primary.main,
+                        mb: 0.5,
+                      }}
+                    >
+                      {formatEpisode(item.seasonNumber, item.episodeNumber)}
+                    </Typography>
+                  )}
+                </Box>
+              </Card>
+              <Typography
+                variant="caption"
+                sx={{
+                  mt: 0.5,
+                  color: theme.palette.text.secondary,
+                  fontSize: "0.7rem",
+                  textAlign: "center",
+                }}
+              >
+                {formatDayOfWeek(item.releaseTime)}
+              </Typography>
+            </Box>
           ))}
         </Box>
       </Paper>

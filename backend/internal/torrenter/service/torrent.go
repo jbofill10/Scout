@@ -13,6 +13,7 @@ import (
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
+	"github.com/jbofill10/scout/backend/pkg/notifications"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
 	qbittorrent "github.com/autobrr/go-qbittorrent"
@@ -101,6 +102,8 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 		if exists {
 			q.logger.InfoContext(ctx, "Movie already exists in Plex, skipping",
 				telemetry.WithTraceContext(ctx, "movie", req.Name, "tvdb_id", req.Id)...)
+			// Update notification to completed with "already exists" reason
+			q.updateNotificationStatus(ctx, req.Id, "Already exists in Plex library", notifications.StatusCompleted)
 			return nil
 		}
 	}
@@ -185,6 +188,7 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 }
 
 // filterExistingEpisodes checks which episodes already exist in Plex and returns only those that need downloading
+// For episodes that already exist, updates their notifications to "completed" status
 func (q *QbittHandler) filterExistingEpisodes(ctx context.Context, req *tvdb.Media) ([]tvdb.Episode, error) {
 	ctx, span := torrentTracer.Start(ctx, "filterExistingEpisodes")
 	defer span.End()
@@ -206,6 +210,8 @@ func (q *QbittHandler) filterExistingEpisodes(ctx context.Context, req *tvdb.Med
 		if exists {
 			q.logger.InfoContext(ctx, "Episode already exists in Plex, skipping",
 				telemetry.WithTraceContext(ctx, "name", req.Name, "season", episode.SeasonNumber, "episode", episode.Number)...)
+			// Update notification to completed with "already exists" reason
+			q.updateNotificationStatus(ctx, strconv.Itoa(episode.Id), "Already exists in Plex library", notifications.StatusCompleted)
 			continue
 		}
 
@@ -283,6 +289,8 @@ func (q *QbittHandler) processEpisodeDownload(
 		if err != nil {
 			q.logger.ErrorContext(episodeCtx, "Failed to insert download history", "error", err)
 		}
+		// Update notification to failed
+		q.updateNotificationStatus(episodeCtx, ss.TvdbId, "No torrents found matching criteria", notifications.StatusFailed)
 		episodeSpan.SetStatus(codes.Ok, "no suitable torrent found")
 		episodeSpan.End()
 		return nil
@@ -411,32 +419,68 @@ func (q *QbittHandler) initiateDownloadAndMonitor(
 	done chan<- models.TorrentCompleteEvent,
 	wg *sync.WaitGroup,
 ) error {
-	// TODO: Come back and fix this
-	// ss := match.Strategy
-	// err := q.repo.InsertDownloadHistory(
-	// 	ctx,
-	// 	ss.MediaName,
-	// 	ss.Season,
-	// 	ss.Episode,
-	// 	ss.EpisodeMeta.AbsoluteNumber,
-	// 	match.Torrent.InfoHash,
-	// 	"downloading",
-	// 	"")
-	// if err != nil {
-	// 	q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
-	// }
-
 	infoHash, trackingUUID, err := q.downloadTorrent(ctx, match.Torrent)
 	if err != nil {
 		q.logger.ErrorContext(ctx, "Failed to download torrent", "error", err)
+		// Update notification to failed
+		q.updateNotificationStatus(ctx, match.Strategy.TvdbId, fmt.Sprintf("Torrent client error: %v", err), notifications.StatusFailed)
 		return err
 	}
+
+	// Update notification: download has started successfully
+	q.updateNotificationStatus(ctx, match.Strategy.TvdbId, "", notifications.StatusDownloading)
 
 	// Start monitoring goroutine
 	wg.Add(1)
 	go q.monitorTorrentCompletion(ctx, match, infoHash, trackingUUID, done, wg)
 
 	return nil
+}
+
+// updateNotificationStatus updates a notification with the given status and reason
+// This is a generalized function used by all notification update operations to reduce code duplication
+func (q *QbittHandler) updateNotificationStatus(ctx context.Context, tvdbId, reason string, status notifications.NotificationStatus) {
+	notification, err := q.repo.GetNotification(ctx, tvdbId)
+
+	if err != nil {
+		q.logger.ErrorContext(ctx, "Failed to find notification for update",
+			telemetry.WithTraceContext(ctx,
+				"error", err.Error(),
+				"tvdb_id", tvdbId,
+				"status", string(status))...)
+		return
+	}
+
+	if notification == nil {
+		q.logger.WarnContext(ctx, "No notification found (webserver should have created it)",
+			telemetry.WithTraceContext(ctx,
+				"tvdb_id", tvdbId,
+				"status", string(status))...)
+		return
+	}
+
+	// Update notification fields
+	notification.Status = status
+	notification.Reason = reason
+
+	err = q.repo.UpdateNotification(ctx, notification)
+	if err != nil {
+		q.logger.ErrorContext(ctx, "Failed to update notification",
+			telemetry.WithTraceContext(ctx,
+				"error", err.Error(),
+				"notification_id", notification.ID,
+				"status", string(status))...)
+		return
+	}
+
+	// Build log attributes
+	logAttrs := []any{
+		"notification_id", notification.ID,
+		"status", string(status),
+	}
+	if reason != "" {
+		logAttrs = append(logAttrs, "reason", reason)
+	}
 }
 
 // monitorTorrentCompletion watches a torrent until it completes and sends the completion event
@@ -489,7 +533,9 @@ func (q *QbittHandler) monitorTorrentCompletion(
 		if q.didTorrentComplete(&torrent) {
 			if !ranRecheck {
 				ranRecheck = true
-				q.c.RecheckCtx(monitorCtx, []string{torrent.Hash})
+				if err := q.c.RecheckCtx(monitorCtx, []string{torrent.Hash}); err != nil {
+					q.logger.WarnContext(monitorCtx, "Failed to recheck torrent", "hash", torrent.Hash, "error", err)
+				}
 				continue
 			}
 

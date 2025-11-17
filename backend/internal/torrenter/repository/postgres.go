@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"github.com/jbofill10/scout/backend/pkg/telemetry"
+
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	"github.com/jbofill10/scout/backend/pkg/notifications"
+	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
 	"github.com/XSAM/otelsql"
 	_ "github.com/lib/pq"
@@ -21,6 +23,10 @@ var (
 )
 
 type Repository interface {
+	// Embed shared notifications.Repository interface (Get, Create, Update)
+	notifications.Repository
+
+	// Plex library methods
 	UpsertLibraries(ctx context.Context, libs models.PlexLibrariesResponse)
 	UpsertMovies(ctx context.Context, movies models.PlexMovieLibraryData)
 	UpsertShows(ctx context.Context, shows *models.PlexShowLibraryData)
@@ -38,6 +44,7 @@ type Repository interface {
 }
 
 type Repo struct {
+	*notifications.PostgresRepository
 	db     *sql.DB
 	logger *slog.Logger
 }
@@ -70,7 +77,11 @@ func NewRepo(logger *slog.Logger, connStr string) (*Repo, error) {
 		return nil, err
 	}
 
-	repo := &Repo{db: db, logger: logger}
+	repo := &Repo{
+		PostgresRepository: notifications.NewPostgresRepository(db, logger),
+		db:                 db,
+		logger:             logger,
+	}
 	return repo, nil
 }
 
@@ -248,7 +259,6 @@ func (r *Repo) GetShowBaseDirectory(ctx context.Context, tvdbId string) (string,
 	return baseDir.String, nil
 }
 
-
 func (r *Repo) GetMovieBaseDirectory(ctx context.Context, tvdbId string) (string, error) {
 	var baseDir sql.NullString
 	err := r.db.QueryRowContext(ctx, `SELECT base_directory FROM Movies WHERE tvdb_id = $1 AND base_directory IS NOT NULL LIMIT 1;`, tvdbId).Scan(&baseDir)
@@ -389,7 +399,7 @@ func (r *Repo) InsertDownloadHistory(ctx context.Context, mediaTitle string, sea
 	traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
 
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO DownloadHistory (mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason, trace_id, span_id)
+		INSERT INTO ShowDownloadHistory (mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason, trace_id, span_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`, mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason, traceID, spanID)
 	if err != nil {
@@ -400,7 +410,7 @@ func (r *Repo) InsertDownloadHistory(ctx context.Context, mediaTitle string, sea
 
 func (r *Repo) UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error {
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE DownloadHistory SET status = $1, reason = $2 WHERE torrentHash = $3
+		UPDATE ShowDownloadHistory SET status = $1, reason = $2 WHERE torrentHash = $3
 	`, status, reason, torrentHash)
 	if err != nil {
 		return fmt.Errorf("failed to update download history: %w", err)
@@ -431,3 +441,7 @@ func (r *Repo) GetPreferredUploaders(ctx context.Context, mediaType string, isAn
 
 	return preferred, nil
 }
+
+// Note: CreateNotification, GetNotification, and UpdateNotification are provided by the embedded PostgresRepository
+// OpenTelemetry tracing was removed in favor of code reuse. If detailed tracing is needed,
+// these methods can be overridden with torrenter-specific implementations that include spans.

@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
-	tvdb "github.com/jbofill10/scout/backend/pkg/media"
+
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	tvdb "github.com/jbofill10/scout/backend/pkg/media"
+	"github.com/jbofill10/scout/backend/pkg/notifications"
 )
 
 // TorrentService handles torrent search and download operations
@@ -21,6 +23,10 @@ type MediaProcessor interface {
 
 // Repository defines database operations
 type Repository interface {
+	// Embed shared notifications.Repository interface (Get, Create, Update)
+	notifications.Repository
+
+	// Plex library methods
 	UpsertLibraries(ctx context.Context, libs models.PlexLibrariesResponse)
 	UpsertMovies(ctx context.Context, movies models.PlexMovieLibraryData)
 	UpsertShows(ctx context.Context, shows *models.PlexShowLibraryData)

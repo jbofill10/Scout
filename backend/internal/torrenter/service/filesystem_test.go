@@ -162,5 +162,5 @@ func (s *FsSvcTestSuite) TestNewFsSvc() {
 	s.IsType(&FsSvc{}, fs)
 
 	// Verify it implements FileSystem interface
-	var _ FileSystem = fs
+	var _ = FileSystem(fs)
 }

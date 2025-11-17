@@ -29,11 +29,10 @@ func NewBaseDirectoryCache() *BaseDirectoryCache {
 }
 
 type MediaProcessSvc struct {
-	Logger    *slog.Logger
-	repo      Repository
-	fs        FileSystem
-	dirCache  *BaseDirectoryCache
-	cancelCtx context.CancelFunc
+	Logger   *slog.Logger
+	repo     Repository
+	fs       FileSystem
+	dirCache *BaseDirectoryCache
 }
 
 func NewMediaProcessSvc(logger *slog.Logger, repo Repository, fs FileSystem) MediaProcessor {

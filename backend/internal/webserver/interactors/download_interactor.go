@@ -10,6 +10,7 @@ import (
 	"github.com/jbofill10/scout/backend/internal/webserver/repository"
 	"github.com/jbofill10/scout/backend/internal/webserver/scheduler"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
+	"github.com/jbofill10/scout/backend/pkg/notifications"
 	status "github.com/jbofill10/scout/backend/pkg/status"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
@@ -21,16 +22,18 @@ import (
 var tracer = otel.Tracer("webserver")
 
 type DownloadInteractor struct {
-	scheduler       *scheduler.Scheduler
-	repo            repository.SchedulerRepository
-	logger          *slog.Logger
-	mediaQueue      chan tvdb.Media
-	tvdbClient      *clients.TVDBProxyClient
-	torrenterClient *clients.TorrenterClient
+	scheduler        *scheduler.Scheduler
+	repo             repository.SchedulerRepository
+	notificationRepo repository.NotificationRepository
+	logger           *slog.Logger
+	mediaQueue       chan tvdb.Media
+	tvdbClient       *clients.TVDBProxyClient
+	torrenterClient  *clients.TorrenterClient
 }
 
 func NewDownloadInteractor(
 	repo repository.SchedulerRepository,
+	notificationRepo repository.NotificationRepository,
 	sched *scheduler.Scheduler,
 	mediaQueue chan tvdb.Media,
 	logger *slog.Logger,
@@ -38,12 +41,13 @@ func NewDownloadInteractor(
 	torrenterClient *clients.TorrenterClient,
 ) *DownloadInteractor {
 	return &DownloadInteractor{
-		repo:            repo,
-		scheduler:       sched,
-		mediaQueue:      mediaQueue,
-		logger:          logger,
-		tvdbClient:      tvdbClient,
-		torrenterClient: torrenterClient,
+		repo:             repo,
+		notificationRepo: notificationRepo,
+		scheduler:        sched,
+		mediaQueue:       mediaQueue,
+		logger:           logger,
+		tvdbClient:       tvdbClient,
+		torrenterClient:  torrenterClient,
 	}
 }
 
@@ -52,33 +56,36 @@ func (i *DownloadInteractor) WatchForDueMedia() {
 	i.scheduler.Start(i.mediaQueue)
 	go func() {
 		for media := range i.mediaQueue {
-			// Create a new trace for this scheduled download execution
-			// Note: This is a new trace, not tied to the original scheduling request
-			// However, the scheduled_trace_id in the database can be used to correlate back
-			ctx, span := tracer.Start(context.Background(), "scheduled_download",
-				trace.WithAttributes(
-					attribute.String("media.name", media.Name),
-					attribute.String("media.id", media.Id),
-					attribute.Int("episode.count", len(media.Metadata.Episodes)),
-				),
-			)
-			defer span.End()
+			// Wrap in function to ensure defer runs after each iteration
+			func(media tvdb.Media) {
+				// Create a new trace for this scheduled download execution
+				// Note: This is a new trace, not tied to the original scheduling request
+				// However, the scheduled_trace_id in the database can be used to correlate back
+				ctx, span := tracer.Start(context.Background(), "scheduled_download",
+					trace.WithAttributes(
+						attribute.String("media.name", media.Name),
+						attribute.String("media.id", media.Id),
+						attribute.Int("episode.count", len(media.Metadata.Episodes)),
+					),
+				)
+				defer span.End()
 
-			i.logger.InfoContext(ctx, "Processing due media", "media", media.Name)
+				i.logger.InfoContext(ctx, "Processing due media", "media", media.Name)
 
-			// Get trace/span IDs for this execution
-			traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
+				// Get trace/span IDs for this execution
+				traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
 
-			// Media is already complete and ready for Download()
-			err := i.torrenterClient.Download(ctx, media)
-			if err != nil {
-				i.logger.ErrorContext(ctx, "Failed to download media", "error", err)
-				// Log failure for each episode in the media
-				for _, ep := range media.Metadata.Episodes {
-					_ = i.repo.InsertDownloadHistory(media.Name, ep.SeasonNumber, ep.Number, ep.AbsoluteNumber,
-						status.Failure, "[Scheduled Download Error]: "+err.Error(), traceID, spanID)
+				// Media is already complete and ready for Download()
+				err := i.torrenterClient.Download(ctx, media)
+				if err != nil {
+					i.logger.ErrorContext(ctx, "Failed to download media", "error", err)
+					// Log failure for each episode in the media
+					for _, ep := range media.Metadata.Episodes {
+						_ = i.repo.InsertDownloadHistory(media.Name, ep.SeasonNumber, ep.Number, ep.AbsoluteNumber,
+							status.Failure, "[Scheduled Download Error]: "+err.Error(), traceID, spanID)
+					}
 				}
-			}
+			}(media)
 		}
 	}()
 }
@@ -152,6 +159,20 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 			if err != nil {
 				i.logger.ErrorContext(episodeCtx, "Failed to insert download history", "episode", episode.Number, "error", err)
 			}
+
+			// Create notification for aired episode (status: searching)
+			// IMPORTANT: Uses episode.Id as tvdb_id, not req.Id (show ID)
+			notification, err := notifications.NewFromSeries(req, episode, traceID, spanID)
+			if err != nil {
+				i.logger.ErrorContext(episodeCtx, "Failed to create notification object",
+					"error", err, "episode", episode.Number)
+			} else {
+				notification.Status = notifications.StatusSearching
+				if err := i.notificationRepo.CreateNotification(episodeCtx, notification); err != nil {
+					i.logger.ErrorContext(episodeCtx, "Failed to create notification for aired episode",
+						"error", err, "episode", episode.Number)
+				}
+			}
 		} else {
 			// Episode hasn't aired - schedule it for future download
 			episodeSpan.SetAttributes(attribute.String("episode.status", "scheduled"))
@@ -189,6 +210,20 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 				}
 			} else {
 				i.logger.InfoContext(episodeCtx, "Scheduled episode", "season", episode.SeasonNumber, "episode", episode.Number, "air_date", episodeAired.Format("2006-01-02"))
+
+				// Create notification for scheduled episode (status: scheduled)
+				// IMPORTANT: Uses episode.Id as tvdb_id, not req.Id (show ID)
+				notification, err := notifications.NewFromSeries(req, episode, traceID, spanID)
+				if err != nil {
+					i.logger.ErrorContext(episodeCtx, "Failed to create notification object",
+						"error", err, "episode", episode.Number)
+				} else {
+					notification.Status = notifications.StatusScheduled
+					if err := i.notificationRepo.CreateNotification(episodeCtx, notification); err != nil {
+						i.logger.ErrorContext(episodeCtx, "Failed to create notification for scheduled episode",
+							"error", err, "episode", episode.Number)
+					}
+				}
 			}
 		}
 
@@ -274,10 +309,39 @@ func (i *DownloadInteractor) DownloadMovie(ctx context.Context, req tvdb.Media) 
 		}
 		i.logger.InfoContext(ctx, "Scheduled movie for future release",
 			"movie", req.Name, "release_date", releaseDate.Format("2006-01-02"))
+
+		// Create notification for scheduled movie (status: scheduled)
+		notification, err := notifications.NewFromMovie(req, traceID, spanID)
+		if err != nil {
+			i.logger.ErrorContext(ctx, "Failed to create notification object",
+				"error", err, "movie", req.Name)
+		} else {
+			notification.Status = notifications.StatusScheduled
+			if err := i.notificationRepo.CreateNotification(ctx, notification); err != nil {
+				i.logger.ErrorContext(ctx, "Failed to create notification for scheduled movie",
+					"error", err, "movie", req.Name)
+			}
+		}
+
 		return nil
 	}
 
 	// Movie has already been released - download immediately
+	traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
+
+	// Create notification for released movie (status: searching)
+	notification, err := notifications.NewFromMovie(req, traceID, spanID)
+	if err != nil {
+		i.logger.ErrorContext(ctx, "Failed to create notification object",
+			"error", err, "movie", req.Name)
+	} else {
+		notification.Status = notifications.StatusSearching
+		if err := i.notificationRepo.CreateNotification(ctx, notification); err != nil {
+			i.logger.ErrorContext(ctx, "Failed to create notification for released movie",
+				"error", err, "movie", req.Name)
+		}
+	}
+
 	err = i.torrenterClient.Download(ctx, req)
 	if err != nil {
 		i.logger.ErrorContext(ctx, "Failed to download movie", "error", err)

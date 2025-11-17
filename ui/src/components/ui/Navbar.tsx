@@ -9,6 +9,7 @@ import Box from '@mui/material/Box';
 import SearchIcon from '@mui/icons-material/Search';
 import LiveTvIcon from '@mui/icons-material/LiveTv';
 import { useTheme } from '@mui/material/styles';
+import NotificationDropdown from './NotificationDropdown';
 
 interface NavbarProps {
   onSearchClick: () => void;
@@ -123,8 +124,12 @@ const Navbar: React.FC<NavbarProps> = ({ onSearchClick }) => {
           </Button>
         </Box>
 
-        {/* Right: Search Icon */}
-        <Box>
+        {/* Right: Notifications and Search */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {/* Notification Bell */}
+          <NotificationDropdown />
+
+          {/* Search Icon */}
           <IconButton
             onClick={onSearchClick}
             sx={{

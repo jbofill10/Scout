@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
+	"time"
 
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
@@ -50,10 +52,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize repository
-	repo, err := repository.NewSchedulerRepo(logger, cfg.Database.ConnStr)
+	// Initialize repositories
+	schedulerRepo, err := repository.NewSchedulerRepo(logger, cfg.Database.ConnStr)
 	if err != nil {
-		logger.Error("Failed to init repo", "error", err)
+		logger.Error("Failed to init scheduler repo", "error", err)
+		os.Exit(1)
+	}
+
+	notificationRepo, err := repository.NewNotificationRepo(logger, cfg.Database.ConnStr)
+	if err != nil {
+		logger.Error("Failed to init notification repo", "error", err)
 		os.Exit(1)
 	}
 
@@ -61,7 +69,7 @@ func main() {
 	queue := make(chan tvdb.Media, 100)
 
 	// Initialize scheduler
-	sched := scheduler.NewScheduler(repo, logger)
+	sched := scheduler.NewScheduler(schedulerRepo, logger)
 
 	// Initialize clients
 	tvdbClient := clients.NewTVDBProxyClient(cfg.TVDBProxyHost)
@@ -70,7 +78,8 @@ func main() {
 	// Initialize interactors
 	searchInteractor := interactors.NewSearchInteractor(tvdbClient)
 	downloadInteractor := interactors.NewDownloadInteractor(
-		repo,
+		schedulerRepo,
+		notificationRepo,
 		sched,
 		queue,
 		logger,
@@ -81,11 +90,33 @@ func main() {
 	// Start watching for due media
 	downloadInteractor.WatchForDueMedia()
 
+	// Start notification cleanup job
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+
+		// Run cleanup immediately on startup
+		ctx := context.Background()
+		logger.Info("Running initial notification cleanup")
+		if err := notificationRepo.CleanupOld(ctx, 30); err != nil {
+			logger.Error("Failed to cleanup old notifications", "error", err)
+		}
+
+		// Run cleanup daily
+		for range ticker.C {
+			logger.Info("Running scheduled notification cleanup")
+			if err := notificationRepo.CleanupOld(ctx, 30); err != nil {
+				logger.Error("Failed to cleanup old notifications", "error", err)
+			}
+		}
+	}()
+
 	// Initialize handlers
 	searchHandler := handlers.NewSearchHandler(searchInteractor, logger)
 	downloadHandler := handlers.NewDownloadHandler(downloadInteractor, logger)
 	popularHandler := handlers.NewPopularHandler(tvdbClient, logger)
-	scheduleHandler := handlers.NewScheduleHandler(repo, logger)
+	scheduleHandler := handlers.NewScheduleHandler(schedulerRepo, logger)
+	notificationHandler := handlers.NewNotificationHandler(notificationRepo, logger)
 
 	// Setup routes
 	r := gin.Default()
@@ -98,6 +129,13 @@ func main() {
 	r.GET("/popular/movies", popularHandler.GetPopularMovies)
 	r.GET("/genres", popularHandler.GetGenres)
 	r.GET("/schedule/weekly", scheduleHandler.GetWeeklySchedule)
+
+	// Notification routes
+	r.GET("/notifications", notificationHandler.GetNotifications)
+	r.GET("/notifications/grouped", notificationHandler.GetGroupedNotifications)
+	r.GET("/notifications/unread/count", notificationHandler.GetUnreadCount)
+	r.PATCH("/notifications/:id/read", notificationHandler.MarkAsRead)
+	r.DELETE("/notifications/:id", notificationHandler.DismissNotification)
 
 	// Start server
 	logger.Info("Starting webserver", "address", cfg.BindAddress)

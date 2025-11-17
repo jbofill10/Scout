@@ -2,10 +2,12 @@ package interactors
 
 import (
 	"context"
+	"log/slog"
+
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 	"github.com/jbofill10/scout/backend/internal/torrenter/service"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
-	"log/slog"
+	"github.com/jbofill10/scout/backend/pkg/notifications"
 
 	"go.opentelemetry.io/otel/trace"
 )
@@ -71,12 +73,17 @@ func (i *DownloadInteractor) handleDownloadCompletion(ctx context.Context, dlCom
 			if err2 := i.repo.UpdateDownloadHistoryStatus(eventCtx, event.Hash, "failure", err.Error()); err2 != nil {
 				i.logger.ErrorContext(eventCtx, "Failed to update download history", "error", err2)
 			}
+			// Update notification to failed
+			i.updateNotificationFailed(eventCtx, &event, "Processing error: "+err.Error())
 			continue
 		}
 
 		if err := i.repo.UpdateDownloadHistoryStatus(eventCtx, event.Hash, "success", ""); err != nil {
 			i.logger.ErrorContext(eventCtx, "Failed to update download history", "error", err, "hash", event.Hash)
 		}
+
+		// Update notification to completed
+		i.updateNotificationCompleted(eventCtx, &event)
 
 		// Remove UUID tracking tag to prevent tag bloat
 		if err := i.qbitt.RemoveUUIDTag(eventCtx, event.Hash, event.UUID); err != nil {
@@ -85,4 +92,101 @@ func (i *DownloadInteractor) handleDownloadCompletion(ctx context.Context, dlCom
 	}
 
 	i.logger.InfoContext(ctx, "Download completion handler exiting")
+}
+
+// updateNotificationCompleted updates notification to completed stage (non-blocking)
+func (i *DownloadInteractor) updateNotificationCompleted(ctx context.Context, event *models.TorrentCompleteEvent) {
+	if event.Req == nil {
+		i.logger.WarnContext(ctx, "Cannot update notification: strategy is nil")
+		return
+	}
+
+	ss := event.Req
+
+	// Get notification by tvdb_id (episode ID for series, movie ID for movies)
+	notification, err := i.repo.GetNotification(ctx, ss.TvdbId)
+
+	if err != nil {
+		i.logger.ErrorContext(ctx, "Failed to get notification for completion update",
+			"error", err,
+			"tvdb_id", ss.TvdbId,
+			"season", ss.Season,
+			"episode", ss.Episode,
+			"is_movie", ss.IsMovie)
+		return
+	}
+
+	if notification == nil {
+		i.logger.WarnContext(ctx, "No notification found for completion (webserver should have created it)",
+			"tvdb_id", ss.TvdbId,
+			"season", ss.Season,
+			"episode", ss.Episode,
+			"is_movie", ss.IsMovie)
+		return
+	}
+
+	// Update notification fields
+	notification.Status = notifications.StatusCompleted
+	notification.Reason = ""
+
+	err = i.repo.UpdateNotification(ctx, notification)
+	if err != nil {
+		i.logger.ErrorContext(ctx, "Failed to update notification to completed status",
+			"error", err,
+			"notification_id", notification.ID)
+		return
+	}
+
+	i.logger.InfoContext(ctx, "Updated notification to completed status",
+		"notification_id", notification.ID,
+		"status", "completed")
+}
+
+// updateNotificationFailed updates notification to failed stage (non-blocking)
+func (i *DownloadInteractor) updateNotificationFailed(ctx context.Context, event *models.TorrentCompleteEvent, reason string) {
+	if event.Req == nil {
+		i.logger.WarnContext(ctx, "Cannot update notification: strategy is nil")
+		return
+	}
+
+	ss := event.Req
+
+	// Get notification by tvdb_id (episode ID for series, movie ID for movies)
+	notification, err := i.repo.GetNotification(ctx, ss.TvdbId)
+
+	if err != nil {
+		i.logger.ErrorContext(ctx, "Failed to get notification for failure update",
+			"error", err,
+			"tvdb_id", ss.TvdbId,
+			"season", ss.Season,
+			"episode", ss.Episode,
+			"is_movie", ss.IsMovie)
+		return
+	}
+
+	if notification == nil {
+		i.logger.WarnContext(ctx, "No notification found for failure (webserver should have created it)",
+			"tvdb_id", ss.TvdbId,
+			"season", ss.Season,
+			"episode", ss.Episode,
+			"is_movie", ss.IsMovie)
+		return
+	}
+
+	// Update notification fields
+	notification.Status = notifications.StatusFailed
+	notification.Reason = reason
+
+	err = i.repo.UpdateNotification(ctx, notification)
+	if err != nil {
+		i.logger.ErrorContext(ctx, "Failed to update notification to failed status",
+			"error", err,
+			"notification_id", notification.ID)
+		return
+	}
+
+	i.logger.InfoContext(ctx, "Updated notification to failed status",
+		"notification_id", notification.ID,
+		"status", "failed",
+		"reason", reason)
 }
