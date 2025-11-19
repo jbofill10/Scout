@@ -107,10 +107,12 @@ func main() {
 	// Initialize interactors
 	downloadInteractor := interactors.NewDownloadInteractor(qbitt, mp, repo, logger)
 	mediaInteractor := interactors.NewMediaInteractor(repo)
+	statusInteractor := interactors.NewStatusInteractor(repo, logger)
 
 	// Initialize handlers
 	downloadHandler := handlers.NewDownloadHandler(downloadInteractor, logger)
 	mediaHandler := handlers.NewMediaHandler(mediaInteractor, logger)
+	statusHandler := handlers.NewStatusHandler(statusInteractor, logger)
 
 	// Setup routes
 	r := gin.Default()
@@ -118,10 +120,11 @@ func main() {
 	r.Use(RecoveryMiddleware(logger)) // Custom recovery middleware with trace logging
 	r.POST("/download", downloadHandler.DownloadTorrent)
 	r.GET("/media/:hash", mediaHandler.MediaExists)
+	r.POST("/status/batch", statusHandler.BatchStatus)
 
-	// Sync Plex library on startup
-	logger.Info("Syncing Plex library on startup")
-	plex.SyncPlexLibrary(context.Background())
+	// Sync Plex library on startup (non-blocking)
+	logger.Info("Starting Plex library sync in background")
+	go plex.SyncPlexLibrary(context.Background())
 
 	// Start cache cleanup goroutine
 	ctx := context.Background()

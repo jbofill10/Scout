@@ -123,3 +123,43 @@ func (c *TorrenterClient) MediaExistsBatch(ctx context.Context, items []tvdb.Med
 
 	return body.Exists, body.InProgress, nil
 }
+
+// GetStatusBatch retrieves the download status for multiple media items at once.
+// It POSTs an array of StatusRequest to the torrenter's /status/batch endpoint
+// and returns a StatusBatchResponse with show and movie status information.
+func (c *TorrenterClient) GetStatusBatch(ctx context.Context, requests []tvdb.StatusRequest) (tvdb.StatusBatchResponse, error) {
+	url := fmt.Sprintf("http://%s/status/batch", c.Host)
+	slog.InfoContext(ctx, "calling torrenter status batch", "request_count", len(requests))
+
+	buf := new(bytes.Buffer)
+	if err := json.NewEncoder(buf).Encode(requests); err != nil {
+		return tvdb.StatusBatchResponse{}, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, buf)
+	if err != nil {
+		return tvdb.StatusBatchResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return tvdb.StatusBatchResponse{}, err
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.WarnContext(ctx, "Failed to close response body", "error", cerr)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return tvdb.StatusBatchResponse{}, fmt.Errorf("torrenter returned status %d", resp.StatusCode)
+	}
+
+	var response tvdb.StatusBatchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return tvdb.StatusBatchResponse{}, err
+	}
+
+	return response, nil
+}

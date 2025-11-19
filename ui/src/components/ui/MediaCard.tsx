@@ -3,8 +3,10 @@ import Card from "@mui/material/Card";
 import CardMedia from "@mui/material/CardMedia";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
+import Chip from "@mui/material/Chip";
 import DownloadIcon from "@mui/icons-material/Download";
 import { useTheme } from "@mui/material/styles";
+import type { MediaStatusBadge } from "../../types/MediaStatus";
 
 export interface MediaCardProps {
   media: {
@@ -14,6 +16,7 @@ export interface MediaCardProps {
     category?: string;
   };
   onClick: (media: MediaCardProps["media"]) => void;
+  statusBadge?: MediaStatusBadge;
 }
 
 /**
@@ -24,12 +27,31 @@ export interface MediaCardProps {
  * - 2:3 aspect ratio poster (standard movie/TV poster dimensions)
  * - Lazy loading for performance
  * - Hover overlay with title and download icon
+ * - Optional status badge (shows download status for movies/shows)
  * - Keyboard accessible (Enter key support)
  * - Material-UI elevation change on hover
  */
-const MediaCard: React.FC<MediaCardProps> = ({ media, onClick }) => {
+const MediaCard: React.FC<MediaCardProps> = ({ media, onClick, statusBadge }) => {
   const theme = useTheme();
   const [isHovered, setIsHovered] = useState(false);
+
+  // Determine badge label based on status type
+  const getBadgeLabel = (): string | null => {
+    if (!statusBadge) return null;
+
+    if (statusBadge.type === 'movie' && statusBadge.inLibrary) {
+      return 'In Library';
+    }
+
+    if (statusBadge.type === 'show' && statusBadge.episodeCount) {
+      const { downloaded, total } = statusBadge.episodeCount;
+      return `${downloaded}/${total}`;
+    }
+
+    return null;
+  };
+
+  const badgeLabel = getBadgeLabel();
 
   const handleClick = () => {
     onClick(media);
@@ -81,6 +103,25 @@ const MediaCard: React.FC<MediaCardProps> = ({ media, onClick }) => {
           objectFit: "cover",
         }}
       />
+
+      {/* Status Badge (always visible) */}
+      {badgeLabel && (
+        <Chip
+          label={badgeLabel}
+          size="small"
+          sx={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            backgroundColor: "rgba(0, 0, 0, 0.7)",
+            color: "white",
+            fontWeight: 600,
+            fontSize: "0.75rem",
+            backdropFilter: "blur(4px)",
+            zIndex: 1,
+          }}
+        />
+      )}
 
       {/* Hover Overlay */}
       <Box

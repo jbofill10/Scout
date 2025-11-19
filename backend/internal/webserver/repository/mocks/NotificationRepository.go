@@ -91,10 +91,10 @@ func (_m *NotificationRepository) GetNotifications(ctx context.Context, limit in
 	var r0 []notifications.Notification
 	var r1 error
 	if rf, ok := ret.Get(0).(func(context.Context, int, string, string) ([]notifications.Notification, error)); ok {
-		return rf(ctx, limit, category, stage)
+		return rf(ctx, limit, category, status)
 	}
 	if rf, ok := ret.Get(0).(func(context.Context, int, string, string) []notifications.Notification); ok {
-		r0 = rf(ctx, limit, category, stage)
+		r0 = rf(ctx, limit, category, status)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]notifications.Notification)
@@ -102,7 +102,7 @@ func (_m *NotificationRepository) GetNotifications(ctx context.Context, limit in
 	}
 
 	if rf, ok := ret.Get(1).(func(context.Context, int, string, string) error); ok {
-		r1 = rf(ctx, limit, category, stage)
+		r1 = rf(ctx, limit, category, status)
 	} else {
 		r1 = ret.Error(1)
 	}

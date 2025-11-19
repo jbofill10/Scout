@@ -117,6 +117,7 @@ func main() {
 	popularHandler := handlers.NewPopularHandler(tvdbClient, logger)
 	scheduleHandler := handlers.NewScheduleHandler(schedulerRepo, logger)
 	notificationHandler := handlers.NewNotificationHandler(notificationRepo, logger)
+	statusHandler := handlers.NewStatusHandler(torrenterClient, logger)
 
 	// Setup routes
 	r := gin.Default()
@@ -128,6 +129,7 @@ func main() {
 	r.GET("/popular/shows", popularHandler.GetPopularShows)
 	r.GET("/popular/movies", popularHandler.GetPopularMovies)
 	r.GET("/genres", popularHandler.GetGenres)
+	r.POST("/status/batch", statusHandler.GetBatchStatus)
 	r.GET("/schedule/weekly", scheduleHandler.GetWeeklySchedule)
 
 	// Notification routes

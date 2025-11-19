@@ -38,6 +38,7 @@ type Repository interface {
 	EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season, episode int) (bool, error)
 	MovieExistsByTvdbId(ctx context.Context, tvdbId string) (bool, error)
 	MediaExists(ctx context.Context, id string) (bool, error)
+	GetShowSeasonEpisodes(ctx context.Context, tvdbId string) (map[int][]int, error)
 	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
 	UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error
 	GetPreferredUploaders(ctx context.Context, mediaType string, isAnime bool) ([]string, error)

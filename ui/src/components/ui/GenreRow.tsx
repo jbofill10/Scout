@@ -8,7 +8,11 @@ import { useTheme } from "@mui/material/styles";
 import HorizontalCarousel from "./HorizontalCarousel";
 import MediaCard from "./MediaCard";
 import SearchResultDialog from "../SearchResultDialog";
+import MediaStatusDialog from "./MediaStatusDialog";
 import type { SearchResult } from "../SearchResultsList";
+import type { ShowStatus } from "../../types/MediaStatus";
+import { useMediaStatus } from "../../hooks/useMediaStatus";
+import { getStatusBadgeForMedia } from "../../utils/statusHelpers";
 import { logError } from "../../lib/logger";
 
 interface GenreRowProps {
@@ -22,15 +26,27 @@ interface GenreRowProps {
  * Displays a horizontal carousel of popular media for a specific genre.
  * Features:
  * - Fetches popular content from API based on genre and media type
+ * - Fetches download status for all displayed media items
+ * - Displays status badges on media cards (episode counts for shows, library status for movies)
  * - Shows loading skeletons during fetch
  * - Error handling with retry button
- * - Opens SearchResultDialog on media card click
- * - Integrates MediaCard and HorizontalCarousel components
+ * - Opens MediaStatusDialog for TV shows (shows episode breakdown)
+ * - Opens SearchResultDialog for movies (triggers download)
+ * - Integrates MediaCard, HorizontalCarousel, and status system
  */
 const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
   const theme = useTheme();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<SearchResult | null>(null);
+
+  // State for status dialog (shows only)
+  const [statusDialogOpen, setStatusDialogOpen] = useState(false);
+  const [selectedShowStatus, setSelectedShowStatus] = useState<ShowStatus | null>(null);
+  const [selectedShowInfo, setSelectedShowInfo] = useState<{
+    name: string;
+    posterUrl: string;
+    tvdbId: string;
+  } | null>(null);
 
   // Fetch popular content for this genre
   const { data, isLoading, isError, refetch } = useQuery<SearchResult[]>({
@@ -54,24 +70,52 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
     retry: 2,
   });
 
+  // Build status requests from media data
+  const statusRequests =
+    data?.map((item) => ({
+      tvdbId: item.id,
+      mediaType: mediaType === "series" ? ("show" as const) : ("movie" as const),
+    })) || [];
+
+  // Fetch status data (only when we have media data)
+  const { data: statusData } = useMediaStatus(statusRequests, !!data && data.length > 0);
+
   const handleMediaClick = (media: {
     id: string;
     name: string;
     imageUrl: string;
   }) => {
-    // Convert to SearchResult format for dialog
-    const searchResult: SearchResult = {
-      id: media.id,
-      mediaName: media.name,
-      image_url: media.imageUrl,
-    };
-    setSelectedMedia(searchResult);
-    setDialogOpen(true);
+    if (mediaType === "series") {
+      // For TV shows, open the status dialog
+      const status = statusData?.shows?.find((s) => s.tvdbId === media.id);
+      setSelectedShowInfo({
+        name: media.name,
+        posterUrl: media.imageUrl,
+        tvdbId: media.id,
+      });
+      setSelectedShowStatus(status || null);
+      setStatusDialogOpen(true);
+    } else {
+      // For movies, open the download dialog
+      const searchResult: SearchResult = {
+        id: media.id,
+        mediaName: media.name,
+        image_url: media.imageUrl,
+      };
+      setSelectedMedia(searchResult);
+      setDialogOpen(true);
+    }
   };
 
   const handleCloseDialog = () => {
     setDialogOpen(false);
     setSelectedMedia(null);
+  };
+
+  const handleCloseStatusDialog = () => {
+    setStatusDialogOpen(false);
+    setSelectedShowStatus(null);
+    setSelectedShowInfo(null);
   };
 
   const handleDownload = (result: SearchResult) => {
@@ -181,6 +225,11 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
               imageUrl: item.image_url,
             }}
             onClick={handleMediaClick}
+            statusBadge={getStatusBadgeForMedia(
+              item.id,
+              statusData,
+              mediaType === "series" ? "show" : "movie"
+            )}
           />
         )}
       />
@@ -191,6 +240,15 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
         onDownload={handleDownload}
         mediaType={mediaType}
       />
+      {selectedShowInfo && (
+        <MediaStatusDialog
+          open={statusDialogOpen}
+          onClose={handleCloseStatusDialog}
+          status={selectedShowStatus}
+          mediaName={selectedShowInfo.name}
+          posterUrl={selectedShowInfo.posterUrl}
+        />
+      )}
     </>
   );
 };

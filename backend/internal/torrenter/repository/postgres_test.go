@@ -445,3 +445,94 @@ func (s *RepoTestSuite) TestUpsertShows_MultipleEpisodes() {
 
 	s.NoError(s.mock.ExpectationsWereMet())
 }
+
+func (s *RepoTestSuite) TestGetShowSeasonEpisodes_MultipleSeasons() {
+	rows := sqlmock.NewRows([]string{"season_number", "episode_number"}).
+		AddRow(1, 1).
+		AddRow(1, 2).
+		AddRow(1, 3).
+		AddRow(2, 1).
+		AddRow(2, 2)
+
+	s.mock.ExpectQuery(`SELECT s.season_number, e.episode_number`).
+		WithArgs("123").
+		WillReturnRows(rows)
+
+	result, err := s.repo.GetShowSeasonEpisodes(context.Background(), "123")
+
+	s.NoError(err)
+	s.Len(result, 2)
+	s.Equal([]int{1, 2, 3}, result[1])
+	s.Equal([]int{1, 2}, result[2])
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *RepoTestSuite) TestGetShowSeasonEpisodes_NoShow() {
+	rows := sqlmock.NewRows([]string{"season_number", "episode_number"})
+
+	s.mock.ExpectQuery(`SELECT s.season_number, e.episode_number`).
+		WithArgs("nonexistent").
+		WillReturnRows(rows)
+
+	result, err := s.repo.GetShowSeasonEpisodes(context.Background(), "nonexistent")
+
+	s.NoError(err)
+	s.NotNil(result)
+	s.Empty(result)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *RepoTestSuite) TestGetShowSeasonEpisodes_EmptyTvdbId() {
+	result, err := s.repo.GetShowSeasonEpisodes(context.Background(), "")
+
+	s.NoError(err)
+	s.NotNil(result)
+	s.Empty(result)
+}
+
+func (s *RepoTestSuite) TestGetShowSeasonEpisodes_QueryError() {
+	s.mock.ExpectQuery(`SELECT s.season_number, e.episode_number`).
+		WithArgs("123").
+		WillReturnError(sql.ErrConnDone)
+
+	result, err := s.repo.GetShowSeasonEpisodes(context.Background(), "123")
+
+	s.Error(err)
+	s.Nil(result)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *RepoTestSuite) TestMovieExistsByTvdbId_True() {
+	rows := sqlmock.NewRows([]string{"exists"}).AddRow(true)
+
+	s.mock.ExpectQuery(`SELECT EXISTS`).
+		WithArgs("movie123").
+		WillReturnRows(rows)
+
+	exists, err := s.repo.MovieExistsByTvdbId(context.Background(), "movie123")
+
+	s.NoError(err)
+	s.True(exists)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *RepoTestSuite) TestMovieExistsByTvdbId_False() {
+	rows := sqlmock.NewRows([]string{"exists"}).AddRow(false)
+
+	s.mock.ExpectQuery(`SELECT EXISTS`).
+		WithArgs("movie456").
+		WillReturnRows(rows)
+
+	exists, err := s.repo.MovieExistsByTvdbId(context.Background(), "movie456")
+
+	s.NoError(err)
+	s.False(exists)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *RepoTestSuite) TestMovieExistsByTvdbId_EmptyTvdbId() {
+	exists, err := s.repo.MovieExistsByTvdbId(context.Background(), "")
+
+	s.NoError(err)
+	s.False(exists)
+}

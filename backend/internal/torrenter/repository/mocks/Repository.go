@@ -186,6 +186,36 @@ func (_m *Repository) GetShowBaseDirectory(ctx context.Context, tvdbId string) (
 	return r0, r1
 }
 
+// GetShowSeasonEpisodes provides a mock function with given fields: ctx, tvdbId
+func (_m *Repository) GetShowSeasonEpisodes(ctx context.Context, tvdbId string) (map[int][]int, error) {
+	ret := _m.Called(ctx, tvdbId)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetShowSeasonEpisodes")
+	}
+
+	var r0 map[int][]int
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (map[int][]int, error)); ok {
+		return rf(ctx, tvdbId)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string) map[int][]int); ok {
+		r0 = rf(ctx, tvdbId)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(map[int][]int)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, tvdbId)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // InsertDownloadHistory provides a mock function with given fields: ctx, mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason
 func (_m *Repository) InsertDownloadHistory(ctx context.Context, mediaTitle string, season int, episode int, absoluteEpisode int, torrentHash string, status string, reason string) error {
 	ret := _m.Called(ctx, mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason)

@@ -78,7 +78,7 @@ func TestGetNotifications_WithFilters(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("GET", "/notifications?limit=50&category=movie&stage=scheduled", nil)
+	c.Request = httptest.NewRequest("GET", "/notifications?limit=50&category=movie&status=scheduled", nil)
 
 	handler.GetNotifications(c)
 

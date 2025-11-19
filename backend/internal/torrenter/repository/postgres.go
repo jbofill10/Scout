@@ -38,6 +38,7 @@ type Repository interface {
 	EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season, episode int) (bool, error)
 	MovieExistsByTvdbId(ctx context.Context, tvdbId string) (bool, error)
 	MediaExists(ctx context.Context, id string) (bool, error)
+	GetShowSeasonEpisodes(ctx context.Context, tvdbId string) (map[int][]int, error)
 	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
 	UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error
 	GetPreferredUploaders(ctx context.Context, mediaType string, isAnime bool) ([]string, error)
@@ -440,6 +441,45 @@ func (r *Repo) GetPreferredUploaders(ctx context.Context, mediaType string, isAn
 	}
 
 	return preferred, nil
+}
+
+// GetShowSeasonEpisodes returns all episodes in a show grouped by season number
+func (r *Repo) GetShowSeasonEpisodes(ctx context.Context, tvdbId string) (map[int][]int, error) {
+	if tvdbId == "" {
+		return make(map[int][]int), nil
+	}
+
+	query := `
+		SELECT s.season_number, e.episode_number
+		FROM Episodes e
+		JOIN Seasons s ON e.parentId = s.id
+		JOIN Shows sh ON s.parentId = sh.id
+		WHERE sh.tvdb_id = $1
+		ORDER BY s.season_number, e.episode_number
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, tvdbId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query show season episodes: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int][]int)
+	for rows.Next() {
+		var seasonNum, episodeNum int
+		if err := rows.Scan(&seasonNum, &episodeNum); err != nil {
+			r.logger.ErrorContext(ctx, "Error scanning episode", "error", err, "tvdb_id", tvdbId)
+			continue
+		}
+
+		result[seasonNum] = append(result[seasonNum], episodeNum)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating episode rows: %w", err)
+	}
+
+	return result, nil
 }
 
 // Note: CreateNotification, GetNotification, and UpdateNotification are provided by the embedded PostgresRepository
