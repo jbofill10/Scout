@@ -207,7 +207,7 @@ Updates notifications as download progresses. Completes backend notification lif
 
 First user-visible UI milestone. Users can see notifications.
 
-- [ ] **6.1** Create NotificationDropdown component
+- [x] **6.1** Create NotificationDropdown component
   - Create `ui/src/components/ui/NotificationDropdown.tsx`
   - Props: isOpen, onClose, notifications array
   - Use Material-UI Slide, Backdrop, Box components
@@ -216,7 +216,7 @@ First user-visible UI milestone. Users can see notifications.
   - **Dependencies**: None (parallel with backend)
   - **Assigned**: ui-maintainer agent
 
-- [ ] **6.2** Add TanStack Query hook for fetching notifications
+- [x] **6.2** Add TanStack Query hook for fetching notifications
   - Create `ui/src/hooks/useNotifications.ts`
   - Query `/api/notifications/grouped` endpoint
   - Auto-refresh every 30 seconds
@@ -225,7 +225,7 @@ First user-visible UI milestone. Users can see notifications.
   - **Dependencies**: 3.3, 3.7 (can stub API during dev)
   - **Assigned**: ui-maintainer agent
 
-- [ ] **6.3** Add TanStack Query hook for unread count
+- [x] **6.3** Add TanStack Query hook for unread count
   - Create `ui/src/hooks/useUnreadCount.ts`
   - Query `/api/notifications/unread/count` endpoint
   - Auto-refresh every 30 seconds
@@ -233,7 +233,7 @@ First user-visible UI milestone. Users can see notifications.
   - **Dependencies**: 3.4, 3.7
   - **Assigned**: ui-maintainer agent
 
-- [ ] **6.4** Implement notification grouping logic in UI
+- [x] **6.4** Implement notification grouping logic in UI
   - In NotificationDropdown, group notifications by media
   - Show media poster, title, latest stage
   - For shows: List episodes with individual statuses
@@ -242,7 +242,7 @@ First user-visible UI milestone. Users can see notifications.
   - **Dependencies**: 6.1
   - **Assigned**: ui-maintainer agent
 
-- [ ] **6.5** Add mark as read functionality
+- [x] **6.5** Add mark as read functionality
   - Implement mutation for PATCH /api/notifications/:id/read
   - Call on notification click
   - Invalidate queries to refresh UI
@@ -250,7 +250,7 @@ First user-visible UI milestone. Users can see notifications.
   - **Dependencies**: 3.5, 6.1, 6.2
   - **Assigned**: ui-maintainer agent
 
-- [ ] **6.6** Add dismiss functionality
+- [x] **6.6** Add dismiss functionality
   - Implement mutation for DELETE /api/notifications/:id
   - Add dismiss button (X icon) to each notification
   - Invalidate queries to refresh UI
@@ -258,7 +258,7 @@ First user-visible UI milestone. Users can see notifications.
   - **Dependencies**: 3.6, 6.1, 6.2
   - **Assigned**: ui-maintainer agent
 
-- [ ] **6.7** Add bell icon to Navbar
+- [x] **6.7** Add bell icon to Navbar
   - Add NotificationsIcon from @mui/icons-material
   - Add Badge component showing unread count
   - Position in top-right, between nav buttons and search icon
@@ -267,7 +267,7 @@ First user-visible UI milestone. Users can see notifications.
   - **Dependencies**: 6.1, 6.3
   - **Assigned**: ui-maintainer agent
 
-- [ ] **6.8** Style NotificationDropdown to match theme
+- [x] **6.8** Style NotificationDropdown to match theme
   - Use warm dark theme colors (indigo/purple)
   - Match card styling from other components
   - Responsive layout (though desktop-focused)
@@ -296,7 +296,7 @@ Ensures quality and catches regressions. Must complete before considering featur
   - **Dependencies**: Phase 5 complete
   - **Assigned**: test-guardian agent
 
-- [ ] **7.3** Run UI linting and tests
+- [x] **7.3** Run UI linting and tests
   - `npm run lint` in ui/ directory
   - Fix any ESLint errors
   - Verify components follow React best practices
@@ -304,7 +304,7 @@ Ensures quality and catches regressions. Must complete before considering featur
   - **Dependencies**: Phase 6 complete
   - **Assigned**: ui-maintainer agent
 
-- [ ] **7.4** End-to-end testing
+- [x] **7.4** End-to-end testing
   - Deploy to local Docker Compose environment
   - Download a show with multiple episodes
   - Verify notifications appear at each stage
@@ -315,7 +315,7 @@ Ensures quality and catches regressions. Must complete before considering featur
   - **Dependencies**: All phases complete
   - **Assigned**: Manual testing
 
-- [ ] **7.5** Update CLAUDE.md with notification system documentation
+- [x] **7.5** Update CLAUDE.md with notification system documentation
   - Add section on notification architecture
   - Document API endpoints
   - Document notification stages
