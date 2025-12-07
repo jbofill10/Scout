@@ -17,6 +17,7 @@ export interface MediaCardProps {
   };
   onClick: (media: MediaCardProps["media"]) => void;
   statusBadge?: MediaStatusBadge;
+  isLoadingStatus?: boolean;
 }
 
 /**
@@ -31,7 +32,12 @@ export interface MediaCardProps {
  * - Keyboard accessible (Enter key support)
  * - Material-UI elevation change on hover
  */
-const MediaCard: React.FC<MediaCardProps> = ({ media, onClick, statusBadge }) => {
+const MediaCard: React.FC<MediaCardProps> = ({
+  media,
+  onClick,
+  statusBadge,
+  isLoadingStatus = false,
+}) => {
   const theme = useTheme();
   const [isHovered, setIsHovered] = useState(false);
 
@@ -52,6 +58,28 @@ const MediaCard: React.FC<MediaCardProps> = ({ media, onClick, statusBadge }) =>
   };
 
   const badgeLabel = getBadgeLabel();
+
+  // Determine badge color based on download status
+  const getBadgeColor = (): string => {
+    if (!statusBadge) return 'rgba(0, 0, 0, 0.7)';
+
+    if (statusBadge.type === 'movie' && statusBadge.inLibrary) {
+      return theme.palette.success.dark; // Green for movies in library
+    }
+
+    if (statusBadge.type === 'show' && statusBadge.episodeCount) {
+      const { downloaded, total } = statusBadge.episodeCount;
+      if (downloaded === 0) {
+        return theme.palette.grey[700]; // Gray for no episodes
+      }
+      if (downloaded === total) {
+        return theme.palette.success.dark; // Green for complete
+      }
+      return theme.palette.warning.dark; // Yellow/amber for partial
+    }
+
+    return 'rgba(0, 0, 0, 0.7)';
+  };
 
   const handleClick = () => {
     onClick(media);
@@ -104,23 +132,56 @@ const MediaCard: React.FC<MediaCardProps> = ({ media, onClick, statusBadge }) =>
         }}
       />
 
-      {/* Status Badge (always visible) */}
-      {badgeLabel && (
-        <Chip
-          label={badgeLabel}
-          size="small"
+      {/* Status Badge or Loading Shimmer */}
+      {isLoadingStatus ? (
+        <Box
           sx={{
             position: "absolute",
             top: 8,
             right: 8,
-            backgroundColor: "rgba(0, 0, 0, 0.7)",
-            color: "white",
-            fontWeight: 600,
-            fontSize: "0.75rem",
+            width: 60,
+            height: 24,
+            borderRadius: 3,
+            backgroundColor: "rgba(0, 0, 0, 0.5)",
             backdropFilter: "blur(4px)",
             zIndex: 1,
+            overflow: "hidden",
+            "&::after": {
+              content: '""',
+              position: "absolute",
+              top: 0,
+              left: "-100%",
+              width: "100%",
+              height: "100%",
+              background:
+                "linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent)",
+              animation: "shimmer 1.5s infinite",
+            },
+            "@keyframes shimmer": {
+              "0%": { left: "-100%" },
+              "100%": { left: "100%" },
+            },
           }}
+          aria-label="Loading status"
         />
+      ) : (
+        badgeLabel && (
+          <Chip
+            label={badgeLabel}
+            size="small"
+            sx={{
+              position: "absolute",
+              top: 8,
+              right: 8,
+              backgroundColor: getBadgeColor(),
+              color: "white",
+              fontWeight: 600,
+              fontSize: "0.75rem",
+              backdropFilter: "blur(4px)",
+              zIndex: 1,
+            }}
+          />
+        )
       )}
 
       {/* Hover Overlay */}

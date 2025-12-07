@@ -3,6 +3,7 @@
 package mocks
 
 import (
+	context "context"
 	media "github.com/jbofill10/scout/backend/pkg/media"
 	time "time"
 
@@ -14,9 +15,9 @@ type SchedulerRepository struct {
 	mock.Mock
 }
 
-// GetDueMedia provides a mock function with no fields
-func (_m *SchedulerRepository) GetDueMedia() ([]media.Media, error) {
-	ret := _m.Called()
+// GetDueMedia provides a mock function with given fields: ctx, windowEnd
+func (_m *SchedulerRepository) GetDueMedia(ctx context.Context, windowEnd time.Time) ([]media.Media, error) {
+	ret := _m.Called(ctx, windowEnd)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetDueMedia")
@@ -24,19 +25,19 @@ func (_m *SchedulerRepository) GetDueMedia() ([]media.Media, error) {
 
 	var r0 []media.Media
 	var r1 error
-	if rf, ok := ret.Get(0).(func() ([]media.Media, error)); ok {
-		return rf()
+	if rf, ok := ret.Get(0).(func(context.Context, time.Time) ([]media.Media, error)); ok {
+		return rf(ctx, windowEnd)
 	}
-	if rf, ok := ret.Get(0).(func() []media.Media); ok {
-		r0 = rf()
+	if rf, ok := ret.Get(0).(func(context.Context, time.Time) []media.Media); ok {
+		r0 = rf(ctx, windowEnd)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]media.Media)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func() error); ok {
-		r1 = rf()
+	if rf, ok := ret.Get(1).(func(context.Context, time.Time) error); ok {
+		r1 = rf(ctx, windowEnd)
 	} else {
 		r1 = ret.Error(1)
 	}

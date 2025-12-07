@@ -35,3 +35,18 @@ type StatusBatchResponse struct {
 	Shows  []ShowStatus  `json:"shows,omitempty"`
 	Movies []MovieStatus `json:"movies,omitempty"`
 }
+
+// MediaStatusInfo represents download status information for enriched responses
+type MediaStatusInfo struct {
+	Type       string         `json:"type"` // "show" or "movie"
+	Seasons    []SeasonStatus `json:"seasons,omitempty"`
+	InLibrary  bool           `json:"inLibrary,omitempty"`
+	Downloaded int            `json:"downloaded,omitempty"` // For shows: count of downloaded episodes
+	Total      int            `json:"total,omitempty"`      // For shows: total episodes
+}
+
+// EnrichedMedia represents a Media object with additional download status information
+type EnrichedMedia struct {
+	Media  Media           `json:"media"`
+	Status MediaStatusInfo `json:"status"`
+}

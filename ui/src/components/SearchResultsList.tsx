@@ -1,11 +1,10 @@
 import React, { useState } from "react";
-import SearchResultDialog from "./SearchResultDialog";
+import MediaStatusDialog from "./ui/MediaStatusDialog";
 import Box from "@mui/material/Box";
-import Typography from "@mui/material/Typography";
-import Card from "@mui/material/Card";
-import CardContent from "@mui/material/CardContent";
-import CardMedia from "@mui/material/CardMedia";
 import { logError } from "../lib/logger";
+import { buildStatusBadgeFromEnriched } from "../utils/statusHelpers";
+import MediaCard from "./ui/MediaCard";
+import type { EnrichedMedia, ShowStatus } from "../types/MediaStatus";
 
 export interface SearchResult {
   id: string;
@@ -24,7 +23,7 @@ export interface SearchResult {
 }
 
 interface SearchResultsListProps {
-  results: SearchResult[];
+  results: EnrichedMedia[];
   mediaType: "series" | "movie";
 }
 
@@ -32,22 +31,48 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({
   results,
   mediaType,
 }) => {
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedResult, setSelectedResult] = useState<SearchResult | null>(
-    null,
-  );
+  // State for MediaStatusDialog (both TV shows and movies)
+  const [statusDialogOpen, setStatusDialogOpen] = useState(false);
+  const [selectedShowStatus, setSelectedShowStatus] = useState<ShowStatus | null>(null);
+  const [selectedShowInfo, setSelectedShowInfo] = useState<{
+    name: string;
+    posterUrl: string;
+    tvdbId: string;
+  } | null>(null);
+  const [selectedEnrichedMedia, setSelectedEnrichedMedia] = useState<EnrichedMedia | null>(null);
 
-  const handleCardClick = (result: SearchResult) => {
-    setSelectedResult(result);
-    setDialogOpen(true);
+  const handleCardClick = (enrichedMedia: EnrichedMedia) => {
+    // Use MediaStatusDialog for both TV shows and movies
+    setSelectedShowInfo({
+      name: enrichedMedia.media.mediaName,
+      posterUrl: enrichedMedia.media.image_url,
+      tvdbId: enrichedMedia.media.id,
+    });
+
+    // Convert MediaStatusInfo to ShowStatus format
+    const showStatus: ShowStatus | null = enrichedMedia.status.seasons
+      ? {
+          tvdbId: enrichedMedia.media.id,
+          seasons: enrichedMedia.status.seasons,
+        }
+      : null;
+
+    setSelectedShowStatus(showStatus);
+    setSelectedEnrichedMedia(enrichedMedia);
+    setStatusDialogOpen(true);
   };
 
-  const handleClose = () => {
-    setDialogOpen(false);
-    setSelectedResult(null);
+  const handleCloseStatusDialog = () => {
+    setStatusDialogOpen(false);
+    setSelectedShowStatus(null);
+    setSelectedShowInfo(null);
+    setSelectedEnrichedMedia(null);
   };
 
-  const handleDownload = (result: SearchResult) => {
+  const handleDownload = () => {
+    // Use selected enriched media for download
+    if (!selectedEnrichedMedia) return;
+
     // Route to correct endpoint based on media type
     const endpoint = mediaType === "movie" ? "/api/movies" : "/api/shows";
 
@@ -56,7 +81,7 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(result),
+      body: JSON.stringify(selectedEnrichedMedia.media),
     })
       .then((response) => {
         if (!response.ok) {
@@ -65,7 +90,8 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({
         return response.json();
       })
       .then(() => {
-        // Download initiated successfully
+        // Download initiated successfully - close dialog
+        handleCloseStatusDialog();
       })
       .catch((error) => {
         console.error("Error initiating download:", error);
@@ -76,7 +102,7 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({
             component: "SearchResultsList",
             endpoint: endpoint,
             mediaType: mediaType,
-            resultId: result.id,
+            resultId: selectedEnrichedMedia.media.id,
           },
         );
       });
@@ -86,64 +112,45 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({
     <>
       <Box
         sx={{
-          display: "flex",
-          flexDirection: "row",
-          gap: 2,
-          flexWrap: "wrap",
-          justifyContent: "center",
-          alignItems: "center",
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+          gap: 3,
           width: "100%",
+          padding: 2,
         }}
       >
-        {results.map((result) => (
-          <Card
-            key={result.id}
-            sx={{
-              width: 160,
-              height: 240,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              p: 1,
-              boxSizing: "border-box",
-              cursor: "pointer",
-            }}
-            onClick={() => handleCardClick(result)}
-          >
-            <CardMedia
-              component="img"
-              sx={{ width: 120, height: 160, objectFit: "cover", mb: 1 }}
-              image={result.image_url}
-              alt={result.mediaName}
-            />
-            <CardContent
-              sx={{
-                p: 0,
-                textAlign: "center",
-                width: "100%",
-                flexGrow: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
+        {results.map((enrichedMedia) => {
+          // Build status badge from enriched response (no async loading needed)
+          const statusBadge = buildStatusBadgeFromEnriched(enrichedMedia.status);
+
+          return (
+            <MediaCard
+              key={enrichedMedia.media.id}
+              media={{
+                id: enrichedMedia.media.id,
+                name: enrichedMedia.media.mediaName,
+                imageUrl: enrichedMedia.media.image_url,
+                category: mediaType,
               }}
-            >
-              <Typography
-                variant="subtitle1"
-                sx={{ wordBreak: "break-word", whiteSpace: "normal" }}
-              >
-                {result.mediaName}
-              </Typography>
-            </CardContent>
-          </Card>
-        ))}
+              onClick={() => handleCardClick(enrichedMedia)}
+              statusBadge={statusBadge}
+              isLoadingStatus={false}
+            />
+          );
+        })}
       </Box>
-      <SearchResultDialog
-        open={dialogOpen}
-        onClose={handleClose}
-        result={selectedResult}
-        onDownload={handleDownload}
-        mediaType={mediaType}
-      />
+      {selectedShowInfo && (
+        <MediaStatusDialog
+          open={statusDialogOpen}
+          onClose={handleCloseStatusDialog}
+          status={selectedShowStatus}
+          mediaName={selectedShowInfo.name}
+          posterUrl={selectedShowInfo.posterUrl}
+          enrichedMedia={selectedEnrichedMedia}
+          onDownload={handleDownload}
+          showDownloadButton={true}
+        />
+      )}
     </>
   );
 };

@@ -92,6 +92,8 @@ func main() {
 
 	router.GET("/series", getSeries)
 	router.GET("/series/:id/extended", getExtendedInformation)
+	router.POST("/series/batch/extended", getBatchExtendedInformation)
+	router.POST("/series/batch/episodes", getBatchEpisodes)
 	router.GET("/genres", getGenres)
 	router.GET("/series/popular", getPopularSeries)
 	router.GET("/movies/popular", getPopularMovies)
@@ -413,11 +415,9 @@ func fetchTranslations(ctx context.Context, mediaId string, language string, med
 
 }
 
-func getExtendedInformation(c *gin.Context) {
-	mediaId := c.Param("id")
-	mediaType := c.Query("mediaType")
-	fmt.Printf("Fetching extended information for media ID: %s, type: %s\n", mediaId, mediaType)
-
+// fetchExtendedInformation fetches extended metadata for a single media item
+// Returns the extended response or an error if the fetch fails
+func fetchExtendedInformation(ctx context.Context, mediaId string, mediaType string) (*tvdb.TVDBSeriesExtendedResponse, error) {
 	// Conditional endpoint logic based on media type
 	var url string
 	if mediaType == "movie" {
@@ -427,13 +427,9 @@ func getExtendedInformation(c *gin.Context) {
 		url = tvDbConfig.Host + fmt.Sprintf("/series/%s/extended", mediaId)
 	}
 
-	// Extract context for trace propagation
-	ctx := c.Request.Context()
-
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Internal Server Error: Unable to create request for media ID %s", mediaId)})
-		return
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Accept", "application/json")
@@ -445,9 +441,7 @@ func getExtendedInformation(c *gin.Context) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.InfoContext(ctx, "Error making request to TVDB", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Internal Server Error: Unable to get extended information for media ID %s", mediaId)})
-		return
+		return nil, fmt.Errorf("failed to make request to TVDB: %w", err)
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); cerr != nil {
@@ -455,24 +449,14 @@ func getExtendedInformation(c *gin.Context) {
 		}
 	}()
 
-	var info tvdb.TVDBSeriesExtendedResponse
-
-	// unmarshal and print string body for debugging
-	var debugBody string
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logger.ErrorContext(ctx, "Failed to read response body for media ID", "value", mediaId, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Internal Server Error: Unable to read extended information for media ID %s", mediaId)})
-		return
+		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	fmt.Println(string(bodyBytes))
 
+	var info tvdb.TVDBSeriesExtendedResponse
 	if err := json.Unmarshal(bodyBytes, &info); err != nil {
-		// Try to unmarshal into a string for debugging
-		_ = json.Unmarshal(bodyBytes, &debugBody)
-		logger.ErrorContext(ctx, "Failed to decode response", "media_id", mediaId, "body", debugBody)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Internal Server Error: Unable to decode extended information for media ID %s", mediaId)})
-		return
+		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
 	// Determine if the media is anime by checking genres
@@ -505,8 +489,6 @@ func getExtendedInformation(c *gin.Context) {
 		info.Data.Aliases = append(info.Data.Aliases, jpnAliases...)
 	}
 
-	logger.InfoContext(ctx, "All aliases", "media_id", mediaId, "is_anime", isAnime, "aliases", info.Data.Aliases)
-
 	// Filter aliases by language: always include 'eng', include 'jpn' if anime
 	filteredAliases := []tvdb.Alias{}
 	for _, alias := range info.Data.Aliases {
@@ -516,9 +498,205 @@ func getExtendedInformation(c *gin.Context) {
 	}
 	info.Data.Aliases = filteredAliases
 
-	logger.InfoContext(ctx, "Filtered aliases", "media_id", mediaId, "is_anime", isAnime, "aliases", info.Data.Aliases)
+	// Fetch episode metadata for TV series to enable episode-level status display
+	if mediaType == "series" {
+		logger.InfoContext(ctx, "Fetching episode metadata for series", "media_id", mediaId)
+		seriesMetadata, err := querySeriesMetadata(ctx, mediaId)
+		if err == nil && len(seriesMetadata.Data.Episodes) > 0 {
+			info.Data.Episodes = seriesMetadata.Data.Episodes
+			logger.InfoContext(ctx, "Successfully fetched episode metadata", "media_id", mediaId, "episode_count", len(seriesMetadata.Data.Episodes))
+		} else if err != nil {
+			logger.ErrorContext(ctx, "Failed to fetch episode metadata", "media_id", mediaId, "error", err)
+		} else {
+			logger.WarnContext(ctx, "No episodes found for series", "media_id", mediaId)
+		}
+	}
+
+	logger.InfoContext(ctx, "Fetched extended information", "media_id", mediaId, "is_anime", isAnime)
+	return &info, nil
+}
+
+func getExtendedInformation(c *gin.Context) {
+	mediaId := c.Param("id")
+	mediaType := c.Query("mediaType")
+	fmt.Printf("Fetching extended information for media ID: %s, type: %s\n", mediaId, mediaType)
+
+	ctx := c.Request.Context()
+
+	info, err := fetchExtendedInformation(ctx, mediaId, mediaType)
+	if err != nil {
+		logger.ErrorContext(ctx, "Failed to fetch extended information", "media_id", mediaId, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Unable to get extended information for media ID %s: %v", mediaId, err)})
+		return
+	}
 
 	c.JSON(http.StatusOK, info)
+}
+
+// BatchExtendedRequest represents a single request in the batch
+type BatchExtendedRequest struct {
+	Id        string `json:"id" binding:"required"`
+	MediaType string `json:"mediaType" binding:"required"`
+}
+
+// BatchExtendedResponse wraps a single response with optional error
+type BatchExtendedResponse struct {
+	Request *BatchExtendedRequest             `json:"request"`
+	Data    *tvdb.TVDBSeriesExtendedResponse  `json:"data,omitempty"`
+	Error   string                            `json:"error,omitempty"`
+}
+
+// BatchEpisodesRequest represents a single request for episode metadata
+type BatchEpisodesRequest struct {
+	SeriesId string `json:"seriesId" binding:"required"`
+}
+
+// BatchEpisodesResponse wraps episode metadata with optional error
+type BatchEpisodesResponse struct {
+	Request  *BatchEpisodesRequest     `json:"request"`
+	Data     *tvdb.TVDBSeriesMetadata  `json:"data,omitempty"`
+	Error    string                    `json:"error,omitempty"`
+}
+
+// getBatchExtendedInformation handles batch requests for extended media information
+// POST /series/batch/extended
+// Input: Array of {id: string, mediaType: string}
+// Output: Array of extended responses (with partial failure support)
+func getBatchExtendedInformation(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	var requests []BatchExtendedRequest
+	if err := c.ShouldBindJSON(&requests); err != nil {
+		logger.ErrorContext(ctx, "Invalid batch request body", "error", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: expected array of {id, mediaType}"})
+		return
+	}
+
+	if len(requests) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Empty batch request"})
+		return
+	}
+
+	logger.InfoContext(ctx, "Processing batch extended request", "count", len(requests))
+
+	// Use buffered channel to limit concurrent requests (similar to episode enrichment pattern)
+	ch := make(chan struct{}, 20)
+	var wg sync.WaitGroup
+
+	// Thread-safe result collection
+	var mu sync.Mutex
+	results := make([]BatchExtendedResponse, 0, len(requests))
+
+	for _, req := range requests {
+		wg.Add(1)
+		ch <- struct{}{} // Acquire semaphore
+
+		go func(ctx context.Context, request BatchExtendedRequest) {
+			defer wg.Done()
+			defer func() { <-ch }() // Release semaphore
+
+			logger.InfoContext(ctx, "Fetching extended info in batch", "media_id", request.Id, "media_type", request.MediaType)
+
+			// Fetch extended information
+			info, err := fetchExtendedInformation(ctx, request.Id, request.MediaType)
+
+			response := BatchExtendedResponse{
+				Request: &request,
+			}
+
+			if err != nil {
+				// Log error but don't fail the entire batch
+				logger.WarnContext(ctx, "Failed to fetch extended info in batch",
+					"media_id", request.Id,
+					"media_type", request.MediaType,
+					"error", err)
+				response.Error = err.Error()
+			} else {
+				response.Data = info
+			}
+
+			// Thread-safe append
+			mu.Lock()
+			results = append(results, response)
+			mu.Unlock()
+		}(ctx, req)
+	}
+
+	wg.Wait()
+	close(ch)
+
+	logger.InfoContext(ctx, "Batch extended request completed", "total_requests", len(requests), "responses", len(results))
+	c.JSON(http.StatusOK, results)
+}
+
+// getBatchEpisodes handles batch requests for series episode metadata
+// POST /series/batch/episodes
+// Input: Array of {seriesId: string}
+// Output: Array of episode metadata responses (with partial failure support)
+func getBatchEpisodes(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	var requests []BatchEpisodesRequest
+	if err := c.ShouldBindJSON(&requests); err != nil {
+		logger.ErrorContext(ctx, "Invalid batch episodes request body", "error", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: expected array of {seriesId}"})
+		return
+	}
+
+	if len(requests) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Empty batch request"})
+		return
+	}
+
+	logger.InfoContext(ctx, "Processing batch episodes request", "count", len(requests))
+
+	// Use buffered channel to limit concurrent requests
+	ch := make(chan struct{}, 20)
+	var wg sync.WaitGroup
+
+	// Thread-safe result collection
+	var mu sync.Mutex
+	results := make([]BatchEpisodesResponse, 0, len(requests))
+
+	for _, req := range requests {
+		wg.Add(1)
+		ch <- struct{}{} // Acquire semaphore
+
+		go func(ctx context.Context, request BatchEpisodesRequest) {
+			defer wg.Done()
+			defer func() { <-ch }() // Release semaphore
+
+			logger.InfoContext(ctx, "Fetching episodes in batch", "series_id", request.SeriesId)
+
+			// Fetch episode metadata using existing querySeriesMetadata function
+			seriesResponse, err := querySeriesMetadata(ctx, request.SeriesId)
+
+			response := BatchEpisodesResponse{
+				Request: &request,
+			}
+
+			if err != nil {
+				// Log error but don't fail the entire batch
+				logger.WarnContext(ctx, "Failed to fetch episodes in batch",
+					"series_id", request.SeriesId,
+					"error", err)
+				response.Error = err.Error()
+			} else {
+				response.Data = &seriesResponse.Data
+			}
+
+			// Thread-safe append
+			mu.Lock()
+			results = append(results, response)
+			mu.Unlock()
+		}(ctx, req)
+	}
+
+	wg.Wait()
+	close(ch)
+
+	logger.InfoContext(ctx, "Batch episodes request completed", "total_requests", len(requests), "responses", len(results))
+	c.JSON(http.StatusOK, results)
 }
 
 // Genre cache methods

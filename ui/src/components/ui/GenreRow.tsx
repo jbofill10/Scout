@@ -7,11 +7,11 @@ import Skeleton from "@mui/material/Skeleton";
 import { useTheme } from "@mui/material/styles";
 import HorizontalCarousel from "./HorizontalCarousel";
 import MediaCard from "./MediaCard";
-import SearchResultDialog from "../SearchResultDialog";
 import MediaStatusDialog from "./MediaStatusDialog";
 import type { SearchResult } from "../SearchResultsList";
-import type { ShowStatus } from "../../types/MediaStatus";
+import type { ShowStatus, EnrichedMedia } from "../../types/MediaStatus";
 import { useMediaStatus } from "../../hooks/useMediaStatus";
+import { useEnrichedPopular } from "../../hooks/useProgressiveEnrichment";
 import { getStatusBadgeForMedia } from "../../utils/statusHelpers";
 import { logError } from "../../lib/logger";
 
@@ -36,10 +36,8 @@ interface GenreRowProps {
  */
 const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
   const theme = useTheme();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedMedia, setSelectedMedia] = useState<SearchResult | null>(null);
 
-  // State for status dialog (shows only)
+  // State for MediaStatusDialog (both shows and movies)
   const [statusDialogOpen, setStatusDialogOpen] = useState(false);
   const [selectedShowStatus, setSelectedShowStatus] = useState<ShowStatus | null>(null);
   const [selectedShowInfo, setSelectedShowInfo] = useState<{
@@ -47,6 +45,7 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
     posterUrl: string;
     tvdbId: string;
   } | null>(null);
+  const [selectedEnrichedMedia, setSelectedEnrichedMedia] = useState<EnrichedMedia | null>(null);
 
   // Fetch popular content for this genre
   const { data, isLoading, isError, refetch } = useQuery<SearchResult[]>({
@@ -80,65 +79,99 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
   // Fetch status data (only when we have media data)
   const { data: statusData } = useMediaStatus(statusRequests, !!data && data.length > 0);
 
+  // Progressive enrichment: Fetch enriched data asynchronously (with episode metadata, extended info)
+  // Determine if genre should be sent (skip for "Popular TV Shows" / "Popular Movies")
+  const isPopularOnly =
+    genre === "Popular TV Shows" || genre === "Popular Movies";
+  const enrichedGenre = isPopularOnly ? "" : genre;
+
+  const { data: enrichedData } = useEnrichedPopular(
+    enrichedGenre,
+    20,
+    mediaType,
+    !!data && data.length > 0  // Only fetch after initial data loads
+  );
+
   const handleMediaClick = (media: {
     id: string;
     name: string;
     imageUrl: string;
   }) => {
-    if (mediaType === "series") {
-      // For TV shows, open the status dialog
-      const status = statusData?.shows?.find((s) => s.tvdbId === media.id);
-      setSelectedShowInfo({
-        name: media.name,
-        posterUrl: media.imageUrl,
-        tvdbId: media.id,
-      });
-      setSelectedShowStatus(status || null);
-      setStatusDialogOpen(true);
-    } else {
-      // For movies, open the download dialog
-      const searchResult: SearchResult = {
-        id: media.id,
-        mediaName: media.name,
-        image_url: media.imageUrl,
-      };
-      setSelectedMedia(searchResult);
-      setDialogOpen(true);
-    }
-  };
+    // Use MediaStatusDialog for both TV shows and movies
+    const status = statusData?.shows?.find((s) => s.tvdbId === media.id) ||
+                   statusData?.movies?.find((m) => m.tvdbId === media.id);
+    // Find enriched media data if available
+    const enriched = enrichedData?.find((e) => e.media.id === media.id);
 
-  const handleCloseDialog = () => {
-    setDialogOpen(false);
-    setSelectedMedia(null);
+    setSelectedShowInfo({
+      name: media.name,
+      posterUrl: media.imageUrl,
+      tvdbId: media.id,
+    });
+
+    // Convert status to ShowStatus format for series, null for movies
+    const showStatus: ShowStatus | null = mediaType === "series" && status && "seasons" in status
+      ? { tvdbId: media.id, seasons: status.seasons }
+      : null;
+
+    setSelectedShowStatus(showStatus);
+    setSelectedEnrichedMedia(enriched || null);
+    setStatusDialogOpen(true);
   };
 
   const handleCloseStatusDialog = () => {
     setStatusDialogOpen(false);
     setSelectedShowStatus(null);
     setSelectedShowInfo(null);
+    setSelectedEnrichedMedia(null);
   };
 
-  const handleDownload = (result: SearchResult) => {
-    // Route to correct endpoint based on media type
-    const endpoint = mediaType === "movie" ? "/api/movies" : "/api/shows";
+  const handleDownload = () => {
+    if (!selectedEnrichedMedia) {
+      // Fallback if enriched data not available
+      if (!selectedShowInfo) return;
+      const basicMedia = {
+        id: selectedShowInfo.tvdbId,
+        mediaName: selectedShowInfo.name,
+        image_url: selectedShowInfo.posterUrl,
+      };
 
+      const endpoint = mediaType === "movie" ? "/api/movies" : "/api/shows";
+      fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(basicMedia),
+      })
+        .then((response) => {
+          if (!response.ok) throw new Error("Network response was not ok");
+          return response.json();
+        })
+        .then(() => handleCloseStatusDialog())
+        .catch((error) => {
+          console.error("Error initiating download:", error);
+          logError("Download initiation failed in GenreRow", error as Error, {
+            component: "GenreRow",
+            endpoint: endpoint,
+            mediaType: mediaType,
+            genre: genre,
+            resultId: basicMedia.id,
+          });
+        });
+      return;
+    }
+
+    // Use enriched media data
+    const endpoint = mediaType === "movie" ? "/api/movies" : "/api/shows";
     fetch(endpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(result),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(selectedEnrichedMedia.media),
     })
       .then((response) => {
-        if (!response.ok) {
-          throw new Error("Network response was not ok");
-        }
+        if (!response.ok) throw new Error("Network response was not ok");
         return response.json();
       })
-      .then(() => {
-        // Download initiated successfully
-        handleCloseDialog();
-      })
+      .then(() => handleCloseStatusDialog())
       .catch((error) => {
         console.error("Error initiating download:", error);
         logError("Download initiation failed in GenreRow", error as Error, {
@@ -146,7 +179,7 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
           endpoint: endpoint,
           mediaType: mediaType,
           genre: genre,
-          resultId: result.id,
+          resultId: selectedEnrichedMedia.media.id,
         });
       });
   };
@@ -233,13 +266,6 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
           />
         )}
       />
-      <SearchResultDialog
-        open={dialogOpen}
-        onClose={handleCloseDialog}
-        result={selectedMedia}
-        onDownload={handleDownload}
-        mediaType={mediaType}
-      />
       {selectedShowInfo && (
         <MediaStatusDialog
           open={statusDialogOpen}
@@ -247,6 +273,9 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
           status={selectedShowStatus}
           mediaName={selectedShowInfo.name}
           posterUrl={selectedShowInfo.posterUrl}
+          enrichedMedia={selectedEnrichedMedia}
+          onDownload={handleDownload}
+          showDownloadButton={true}
         />
       )}
     </>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import InfiniteScroll from 'react-infinite-scroll-component/dist/index.js';
 import SearchResultsList from '../components/SearchResultsList';
-import type { SearchResult } from '../components/SearchResultsList';
+import type { EnrichedMedia } from '../types/MediaStatus';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
 import Paper from '@mui/material/Paper';
@@ -15,14 +15,14 @@ import Movie from '@mui/icons-material/Movie';
 const Search: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [formSubmitted, setFormSubmitted] = useState(false);
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchResults, setSearchResults] = useState<EnrichedMedia[]>([]);
   const [hasMore, setHasMore] = useState(true);
   const [page, setPage] = useState(1);
   const [mediaType, setMediaType] = useState<'series' | 'movie'>('series');
 
   const fetchResults = async (query: string, pageNum: number) => {
     const params = new URLSearchParams({ query, media_type: mediaType, page: pageNum.toString() });
-    const res = await fetch(`/api/search?${params}`);
+    const res = await fetch(`/api/search/enriched?${params}`);
     const data = await res.json();
     return data;
   };

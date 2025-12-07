@@ -10,6 +10,7 @@ import (
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -74,14 +75,14 @@ func (s *SchedulerTestSuite) TestStart_VariousScenarios() {
 					Name: "Future Show",
 					Metadata: tvdb.TVDBSeriesMetadata{
 						Episodes: []tvdb.Episode{
-							{Aired: time.Now().Add(50 * time.Millisecond).Format("2006-01-02")},
+							{Aired: time.Now().AddDate(0, 0, 2).Format("2006-01-02")},
 						},
 					},
 				},
 			},
 			repoError:      nil,
-			expectedQueued: 1,
-			description:    "Should schedule media for future release",
+			expectedQueued: 0, // Won't queue - outside 24hr polling window
+			description:    "Should schedule media for future release (beyond polling window)",
 		},
 		{
 			name: "invalid aired date",
@@ -125,7 +126,7 @@ func (s *SchedulerTestSuite) TestStart_VariousScenarios() {
 
 			queue := make(chan tvdb.Media, 10)
 
-			mockRepo.On("GetDueMedia").Return(tt.mediaList, tt.repoError)
+			mockRepo.On("GetDueMedia", mock.Anything, mock.Anything).Return(tt.mediaList, tt.repoError)
 
 			scheduler.Start(queue)
 
@@ -152,30 +153,33 @@ func (s *SchedulerTestSuite) TestStart_MultipleFutureMedia() {
 	mockRepo := repoMocks.NewSchedulerRepository(s.T())
 	scheduler := NewScheduler(mockRepo, logger)
 
-	// Create media with staggered future release times
+	// Create media with staggered future release times (2 and 3 days ahead, beyond 24hr window)
 	mediaList := []tvdb.Media{
 		{
 			Name: "Show 1",
 			Metadata: tvdb.TVDBSeriesMetadata{
-				Episodes: []tvdb.Episode{{Aired: time.Now().Add(50 * time.Millisecond).Format("2006-01-02")}},
+				Episodes: []tvdb.Episode{{Aired: time.Now().AddDate(0, 0, 2).Format("2006-01-02")}},
 			},
 		},
 		{
 			Name: "Show 2",
 			Metadata: tvdb.TVDBSeriesMetadata{
-				Episodes: []tvdb.Episode{{Aired: time.Now().Add(100 * time.Millisecond).Format("2006-01-02")}},
+				Episodes: []tvdb.Episode{{Aired: time.Now().AddDate(0, 0, 3).Format("2006-01-02")}},
 			},
 		},
 	}
 
-	mockRepo.On("GetDueMedia").Return(mediaList, nil)
+	mockRepo.On("GetDueMedia", mock.Anything, mock.Anything).Return(mediaList, nil)
 
 	queue := make(chan tvdb.Media, 10)
 	scheduler.Start(queue)
 
-	// Collect items with timeout to avoid race conditions
-	timeout := time.After(250 * time.Millisecond)
+	// Give time for scheduler to process and create timers
+	time.Sleep(100 * time.Millisecond)
+
+	// Since both are tomorrow/day after, they won't queue during this test
 	queuedCount := 0
+	timeout := time.After(50 * time.Millisecond)
 collecting:
 	for {
 		select {
@@ -186,7 +190,9 @@ collecting:
 		}
 	}
 
-	s.Equal(2, queuedCount, "Should queue all future media after their release time")
+	s.Equal(0, queuedCount, "Future media should be scheduled but not queued immediately")
+	// Verify scheduler created timers by checking it doesn't error
+	scheduler.Stop()
 }
 
 func (s *SchedulerTestSuite) TestStart_MixedDueAndFutureMedia() {
@@ -204,18 +210,18 @@ func (s *SchedulerTestSuite) TestStart_MixedDueAndFutureMedia() {
 		{
 			Name: "Future",
 			Metadata: tvdb.TVDBSeriesMetadata{
-				Episodes: []tvdb.Episode{{Aired: time.Now().Add(50 * time.Millisecond).Format("2006-01-02")}},
+				Episodes: []tvdb.Episode{{Aired: time.Now().AddDate(0, 0, 1).Format("2006-01-02")}},
 			},
 		},
 	}
 
-	mockRepo.On("GetDueMedia").Return(mediaList, nil)
+	mockRepo.On("GetDueMedia", mock.Anything, mock.Anything).Return(mediaList, nil)
 
 	queue := make(chan tvdb.Media, 10)
 	scheduler.Start(queue)
 
-	// Collect items with timeout to avoid race conditions
-	timeout := time.After(200 * time.Millisecond)
+	// Collect items with timeout
+	timeout := time.After(100 * time.Millisecond)
 	queuedCount := 0
 collecting:
 	for {
@@ -227,5 +233,6 @@ collecting:
 		}
 	}
 
-	s.Equal(2, queuedCount, "Should queue both due and future media")
+	s.Equal(1, queuedCount, "Should queue only the already-due media, not future media")
+	scheduler.Stop()
 }

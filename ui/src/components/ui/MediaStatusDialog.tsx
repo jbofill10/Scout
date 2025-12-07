@@ -1,7 +1,9 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";
 import DialogContent from "@mui/material/DialogContent";
+import DialogActions from "@mui/material/DialogActions";
+import Button from "@mui/material/Button";
 import Box from "@mui/material/Box";
 import Tabs from "@mui/material/Tabs";
 import Tab from "@mui/material/Tab";
@@ -16,7 +18,7 @@ import IconButton from "@mui/material/IconButton";
 import CloseIcon from "@mui/icons-material/Close";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import CancelIcon from "@mui/icons-material/Cancel";
-import type { ShowStatus } from "../../types/MediaStatus";
+import type { ShowStatus, EnrichedMedia } from "../../types/MediaStatus";
 import { useTheme } from "@mui/material/styles";
 
 export interface MediaStatusDialogProps {
@@ -25,6 +27,22 @@ export interface MediaStatusDialogProps {
   status: ShowStatus | null;
   mediaName: string;
   posterUrl: string;
+  enrichedMedia?: EnrichedMedia | null;
+  onDownload?: () => void;
+  showDownloadButton?: boolean;
+}
+
+interface EnrichedEpisodeInfo {
+  episodeNum: number;
+  seasonNum: number;
+  downloaded: boolean;
+  name?: string;
+  aired?: string;
+}
+
+interface EnrichedSeasonInfo {
+  seasonNum: number;
+  episodes: EnrichedEpisodeInfo[];
 }
 
 /**
@@ -44,11 +62,70 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
   status,
   mediaName,
   posterUrl,
+  enrichedMedia,
+  onDownload,
+  showDownloadButton = false,
 }) => {
   const theme = useTheme();
   const [selectedSeasonIndex, setSelectedSeasonIndex] = useState(0);
 
-  if (!status || !status.seasons || status.seasons.length === 0) {
+  // Merge TVDB episode metadata with Plex download status
+  const enrichedSeasons = useMemo<EnrichedSeasonInfo[]>(() => {
+    // If no enriched data, fall back to status-only display
+    if (!enrichedMedia || !enrichedMedia.media.metadata?.episodes) {
+      if (!status || !status.seasons || status.seasons.length === 0) {
+        return [];
+      }
+      return status.seasons.map((season): EnrichedSeasonInfo => ({
+        seasonNum: season.seasonNum,
+        episodes: season.episodes.map((ep): EnrichedEpisodeInfo => ({
+          episodeNum: ep.episodeNum,
+          seasonNum: season.seasonNum,
+          downloaded: ep.downloaded,
+        })),
+      }));
+    }
+
+    // Build set of downloaded episodes from status data
+    const downloadedEpisodesSet = new Set<string>();
+    if (status?.seasons) {
+      status.seasons.forEach((season) => {
+        season.episodes.forEach((ep) => {
+          const key = `${season.seasonNum}-${ep.episodeNum}`;
+          downloadedEpisodesSet.add(key);
+        });
+      });
+    }
+
+    // Build complete episode list from TVDB metadata
+    const seasonsMap = new Map<number, EnrichedEpisodeInfo[]>();
+    enrichedMedia.media.metadata.episodes.forEach((ep) => {
+      const key = `${ep.seasonNumber}-${ep.number}`;
+      const downloaded = downloadedEpisodesSet.has(key);
+
+      if (!seasonsMap.has(ep.seasonNumber)) {
+        seasonsMap.set(ep.seasonNumber, []);
+      }
+
+      seasonsMap.get(ep.seasonNumber)!.push({
+        episodeNum: ep.number,
+        seasonNum: ep.seasonNumber,
+        downloaded: downloaded,
+        name: ep.name,
+        aired: ep.aired,
+      });
+    });
+
+    // Convert map to array and sort
+    return Array.from(seasonsMap.entries())
+      .map(([seasonNum, episodes]): EnrichedSeasonInfo => ({
+        seasonNum,
+        episodes: episodes.sort((a, b) => a.episodeNum - b.episodeNum),
+      }))
+      .sort((a, b) => a.seasonNum - b.seasonNum);
+  }, [status, enrichedMedia]);
+
+  if (enrichedSeasons.length === 0) {
     return null;
   }
 
@@ -56,7 +133,7 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
     setSelectedSeasonIndex(newValue);
   };
 
-  const currentSeason = status.seasons[selectedSeasonIndex];
+  const currentSeason = enrichedSeasons[selectedSeasonIndex];
 
   return (
     <Dialog
@@ -126,7 +203,7 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
               px: 2,
             }}
           >
-            {status.seasons.map((season) => (
+            {enrichedSeasons.map((season) => (
               <Tab
                 key={season.seasonNum}
                 label={`Season ${season.seasonNum}`}
@@ -175,7 +252,20 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
                           color: theme.palette.text.primary,
                         }}
                       >
-                        Episode {episode.episodeNum}
+                        <Box>
+                          <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                            Episode {episode.episodeNum}
+                            {episode.name && `: ${episode.name}`}
+                          </Typography>
+                          {episode.aired && (
+                            <Typography
+                              variant="caption"
+                              sx={{ color: theme.palette.text.secondary }}
+                            >
+                              Aired: {new Date(episode.aired).toLocaleDateString()}
+                            </Typography>
+                          )}
+                        </Box>
                       </TableCell>
                       <TableCell align="right">
                         {episode.downloaded ? (
@@ -211,9 +301,9 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
                           >
                             <Typography
                               variant="body2"
-                              sx={{ color: theme.palette.error.main }}
+                              sx={{ color: theme.palette.error.main, fontWeight: 600 }}
                             >
-                              Not Downloaded
+                              Missing
                             </Typography>
                             <CancelIcon
                               sx={{
@@ -232,6 +322,18 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
           )}
         </Box>
       </DialogContent>
+
+      {/* Dialog Actions */}
+      <DialogActions sx={{ p: 2, borderTop: `1px solid ${theme.palette.divider}` }}>
+        <Button onClick={onClose} variant="outlined" color="inherit">
+          Close
+        </Button>
+        {showDownloadButton && onDownload && (
+          <Button onClick={onDownload} variant="contained" color="primary">
+            Download
+          </Button>
+        )}
+      </DialogActions>
     </Dialog>
   );
 };

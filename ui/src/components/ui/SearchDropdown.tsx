@@ -13,8 +13,9 @@ import Movie from "@mui/icons-material/Movie";
 import { useTheme } from "@mui/material/styles";
 import InfiniteScroll from "react-infinite-scroll-component/dist/index.js";
 import MediaCard from "./MediaCard";
-import SearchResultDialog from "../SearchResultDialog";
-import type { SearchResult } from "../SearchResultsList";
+import MediaStatusDialog from "./MediaStatusDialog";
+import type { EnrichedMedia, ShowStatus } from "../../types/MediaStatus";
+import { buildStatusBadgeFromEnriched } from "../../utils/statusHelpers";
 import { logError } from "../../lib/logger";
 
 interface SearchDropdownProps {
@@ -40,15 +41,19 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
   const theme = useTheme();
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchResults, setSearchResults] = useState<EnrichedMedia[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [page, setPage] = useState(1);
   const [mediaType, setMediaType] = useState<"series" | "movie">("series");
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedResult, setSelectedResult] = useState<SearchResult | null>(
-    null,
-  );
+  const [statusDialogOpen, setStatusDialogOpen] = useState(false);
+  const [selectedShowStatus, setSelectedShowStatus] = useState<ShowStatus | null>(null);
+  const [selectedShowInfo, setSelectedShowInfo] = useState<{
+    name: string;
+    posterUrl: string;
+    tvdbId: string;
+  } | null>(null);
+  const [selectedEnrichedMedia, setSelectedEnrichedMedia] = useState<EnrichedMedia | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Debounce search term (500ms)
@@ -97,7 +102,7 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
         media_type: mediaType,
         page: pageNum.toString(),
       });
-      const res = await fetch(`/api/search?${params}`);
+      const res = await fetch(`/api/search/enriched?${params}`);
       const data = await res.json();
 
       if (pageNum === 1) {
@@ -132,17 +137,35 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, hasMore, isSearching, debouncedSearchTerm]);
 
-  const handleMediaClick = (result: SearchResult) => {
-    setSelectedResult(result);
-    setDialogOpen(true);
+  const handleMediaClick = (enrichedMedia: EnrichedMedia) => {
+    setSelectedShowInfo({
+      name: enrichedMedia.media.mediaName,
+      posterUrl: enrichedMedia.media.image_url,
+      tvdbId: enrichedMedia.media.id,
+    });
+
+    const showStatus: ShowStatus | null = enrichedMedia.status.seasons
+      ? {
+          tvdbId: enrichedMedia.media.id,
+          seasons: enrichedMedia.status.seasons,
+        }
+      : null;
+
+    setSelectedShowStatus(showStatus);
+    setSelectedEnrichedMedia(enrichedMedia);
+    setStatusDialogOpen(true);
   };
 
-  const handleCloseDialog = () => {
-    setDialogOpen(false);
-    setSelectedResult(null);
+  const handleCloseStatusDialog = () => {
+    setStatusDialogOpen(false);
+    setSelectedShowStatus(null);
+    setSelectedShowInfo(null);
+    setSelectedEnrichedMedia(null);
   };
 
-  const handleDownload = (result: SearchResult) => {
+  const handleDownload = () => {
+    if (!selectedEnrichedMedia) return;
+
     const endpoint = mediaType === "movie" ? "/api/movies" : "/api/shows";
 
     fetch(endpoint, {
@@ -150,7 +173,7 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(result),
+      body: JSON.stringify(selectedEnrichedMedia.media),
     })
       .then((response) => {
         if (!response.ok) {
@@ -160,7 +183,7 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
       })
       .then(() => {
         // Download initiated successfully
-        handleCloseDialog();
+        handleCloseStatusDialog();
       })
       .catch((error) => {
         console.error("Error initiating download:", error);
@@ -171,7 +194,7 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
             component: "SearchDropdown",
             endpoint: endpoint,
             mediaType: mediaType,
-            resultId: result.id,
+            resultId: selectedEnrichedMedia.media.id,
           },
         );
       });
@@ -333,17 +356,23 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
                     gap: 3,
                   }}
                 >
-                  {searchResults.map((result) => (
-                    <MediaCard
-                      key={result.id}
-                      media={{
-                        id: result.id,
-                        name: result.mediaName,
-                        imageUrl: result.image_url,
-                      }}
-                      onClick={() => handleMediaClick(result)}
-                    />
-                  ))}
+                  {searchResults.map((enrichedMedia) => {
+                    const statusBadge = buildStatusBadgeFromEnriched(enrichedMedia.status);
+
+                    return (
+                      <MediaCard
+                        key={enrichedMedia.media.id}
+                        media={{
+                          id: enrichedMedia.media.id,
+                          name: enrichedMedia.media.mediaName,
+                          imageUrl: enrichedMedia.media.image_url,
+                        }}
+                        onClick={() => handleMediaClick(enrichedMedia)}
+                        statusBadge={statusBadge}
+                        isLoadingStatus={false}
+                      />
+                    );
+                  })}
                 </Box>
               </InfiniteScroll>
             )}
@@ -369,13 +398,18 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
         </Box>
       </Slide>
 
-      <SearchResultDialog
-        open={dialogOpen}
-        onClose={handleCloseDialog}
-        result={selectedResult}
-        onDownload={handleDownload}
-        mediaType={mediaType}
-      />
+      {selectedShowInfo && (
+        <MediaStatusDialog
+          open={statusDialogOpen}
+          onClose={handleCloseStatusDialog}
+          status={selectedShowStatus}
+          mediaName={selectedShowInfo.name}
+          posterUrl={selectedShowInfo.posterUrl}
+          enrichedMedia={selectedEnrichedMedia}
+          onDownload={handleDownload}
+          showDownloadButton={true}
+        />
+      )}
     </>
   );
 };

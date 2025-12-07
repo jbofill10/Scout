@@ -2,6 +2,7 @@ import type {
   StatusBatchResponse,
   SeasonStatus,
   MediaStatusBadge,
+  MediaStatusInfo,
 } from '../types/MediaStatus';
 
 /**
@@ -74,6 +75,44 @@ export function getStatusBadgeForMedia(
       };
     }
 
+    return undefined;
+  }
+
+  return undefined;
+}
+
+/**
+ * Builds a MediaStatusBadge from enriched search MediaStatusInfo
+ * Used to convert backend status format to UI badge format
+ *
+ * @param statusInfo - Status info from enriched search response
+ * @returns MediaStatusBadge object for display in MediaCard
+ */
+export function buildStatusBadgeFromEnriched(
+  statusInfo: MediaStatusInfo
+): MediaStatusBadge | undefined {
+  if (statusInfo.type === 'movie') {
+    // Only show badge if movie is in library
+    if (statusInfo.inLibrary) {
+      return {
+        type: 'movie',
+        inLibrary: true,
+      };
+    }
+    return undefined;
+  }
+
+  if (statusInfo.type === 'series') {
+    const downloaded = statusInfo.downloaded || 0;
+    const total = statusInfo.total || 0;
+
+    // Only show badge if there are episodes
+    if (total > 0) {
+      return {
+        type: 'show',
+        episodeCount: { downloaded, total },
+      };
+    }
     return undefined;
   }
 

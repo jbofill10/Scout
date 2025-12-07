@@ -8,8 +8,8 @@ import Typography from "@mui/material/Typography";
 import Skeleton from "@mui/material/Skeleton";
 import Button from "@mui/material/Button";
 import { useTheme } from "@mui/material/styles";
-import SearchResultDialog from "../SearchResultDialog";
-import type { SearchResult } from "../SearchResultsList";
+import MediaStatusDialog from "./MediaStatusDialog";
+import type { EnrichedMedia, ShowStatus } from "../../types/MediaStatus";
 import { logError } from "../../lib/logger";
 
 interface ScheduledItem {
@@ -38,8 +38,14 @@ interface ScheduledItem {
  */
 const ScheduleWidget: React.FC = () => {
   const theme = useTheme();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedItem, setSelectedItem] = useState<SearchResult | null>(null);
+  const [statusDialogOpen, setStatusDialogOpen] = useState(false);
+  const [selectedShowStatus, setSelectedShowStatus] = useState<ShowStatus | null>(null);
+  const [selectedShowInfo, setSelectedShowInfo] = useState<{
+    name: string;
+    posterUrl: string;
+    tvdbId: string;
+  } | null>(null);
+  const [selectedEnrichedMedia, setSelectedEnrichedMedia] = useState<EnrichedMedia | null>(null);
   const [selectedMediaType, setSelectedMediaType] = useState<
     "series" | "movie"
   >("series");
@@ -62,58 +68,86 @@ const ScheduleWidget: React.FC = () => {
   const handleItemClick = async (item: ScheduledItem) => {
     setSelectedMediaType(item.mediaType);
 
-    // Fetch full media details including episodes
+    // Fetch enriched media details
     try {
       const params = new URLSearchParams({
         query: item.mediaName,
         media_type: item.mediaType,
       });
-      const res = await fetch(`/api/search?${params}`);
-      const results: SearchResult[] = await res.json();
+      const res = await fetch(`/api/search/enriched?${params}`);
+      const results: EnrichedMedia[] = await res.json();
 
       // Find the matching result by ID
-      const fullResult = results.find((r) => r.id === item.id);
-      if (fullResult) {
-        setSelectedItem(fullResult);
-        setDialogOpen(true);
+      const enrichedResult = results.find((r) => r.media.id === item.id);
+      if (enrichedResult) {
+        setSelectedShowInfo({
+          name: enrichedResult.media.mediaName,
+          posterUrl: enrichedResult.media.image_url,
+          tvdbId: enrichedResult.media.id,
+        });
+
+        const showStatus: ShowStatus | null = enrichedResult.status.seasons
+          ? {
+              tvdbId: enrichedResult.media.id,
+              seasons: enrichedResult.status.seasons,
+            }
+          : null;
+
+        setSelectedShowStatus(showStatus);
+        setSelectedEnrichedMedia(enrichedResult);
+        setStatusDialogOpen(true);
       } else {
-        // Fallback to basic info if not found
-        const searchResult: SearchResult = {
-          id: item.id,
-          mediaName: item.mediaName,
-          image_url: item.posterUrl,
-        };
-        setSelectedItem(searchResult);
-        setDialogOpen(true);
+        // Fallback: create minimal enriched media
+        setSelectedShowInfo({
+          name: item.mediaName,
+          posterUrl: item.posterUrl,
+          tvdbId: item.id,
+        });
+        setSelectedShowStatus(null);
+        setSelectedEnrichedMedia(null);
+        setStatusDialogOpen(true);
       }
     } catch (error) {
       console.error("Failed to fetch media details:", error);
       // Fallback to basic info on error
-      const searchResult: SearchResult = {
-        id: item.id,
-        mediaName: item.mediaName,
-        image_url: item.posterUrl,
-      };
-      setSelectedItem(searchResult);
-      setDialogOpen(true);
+      setSelectedShowInfo({
+        name: item.mediaName,
+        posterUrl: item.posterUrl,
+        tvdbId: item.id,
+      });
+      setSelectedShowStatus(null);
+      setSelectedEnrichedMedia(null);
+      setStatusDialogOpen(true);
     }
   };
 
-  const handleCloseDialog = () => {
-    setDialogOpen(false);
-    setSelectedItem(null);
+  const handleCloseStatusDialog = () => {
+    setStatusDialogOpen(false);
+    setSelectedShowStatus(null);
+    setSelectedShowInfo(null);
+    setSelectedEnrichedMedia(null);
   };
 
-  const handleDownload = (result: SearchResult) => {
+  const handleDownload = () => {
+    if (!selectedEnrichedMedia && !selectedShowInfo) return;
+
     const endpoint =
       selectedMediaType === "movie" ? "/api/movies" : "/api/shows";
+
+    const mediaData = selectedEnrichedMedia
+      ? selectedEnrichedMedia.media
+      : {
+          id: selectedShowInfo!.tvdbId,
+          mediaName: selectedShowInfo!.name,
+          image_url: selectedShowInfo!.posterUrl,
+        };
 
     fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(result),
+      body: JSON.stringify(mediaData),
     })
       .then((response) => {
         if (!response.ok) {
@@ -123,7 +157,7 @@ const ScheduleWidget: React.FC = () => {
       })
       .then(() => {
         // Download initiated successfully
-        handleCloseDialog();
+        handleCloseStatusDialog();
       })
       .catch((error) => {
         console.error("Error initiating download:", error);
@@ -134,7 +168,7 @@ const ScheduleWidget: React.FC = () => {
             component: "ScheduleWidget",
             endpoint: endpoint,
             mediaType: selectedMediaType,
-            resultId: result.id,
+            resultId: selectedEnrichedMedia?.media.id || selectedShowInfo?.tvdbId || "unknown",
           },
         );
       });
@@ -349,13 +383,18 @@ const ScheduleWidget: React.FC = () => {
           ))}
         </Box>
       </Paper>
-      <SearchResultDialog
-        open={dialogOpen}
-        onClose={handleCloseDialog}
-        result={selectedItem}
-        onDownload={handleDownload}
-        mediaType={selectedMediaType}
-      />
+      {selectedShowInfo && (
+        <MediaStatusDialog
+          open={statusDialogOpen}
+          onClose={handleCloseStatusDialog}
+          status={selectedShowStatus}
+          mediaName={selectedShowInfo.name}
+          posterUrl={selectedShowInfo.posterUrl}
+          enrichedMedia={selectedEnrichedMedia}
+          onDownload={handleDownload}
+          showDownloadButton={true}
+        />
+      )}
     </>
   );
 };

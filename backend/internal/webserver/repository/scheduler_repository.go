@@ -36,7 +36,7 @@ type ScheduledDownload struct {
 // SchedulerRepository defines DB operations for scheduled shows
 type SchedulerRepository interface {
 	Schedule(ctx context.Context, media tvdb.Media, releaseTime time.Time, scheduledTraceID, scheduledSpanID string) error
-	GetDueMedia() ([]tvdb.Media, error)
+	GetDueMedia(ctx context.Context, windowEnd time.Time) ([]tvdb.Media, error)
 	InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, status, reason, traceID, spanID string) error
 	GetWeeklySchedule() ([]ScheduledDownload, error)
 }
@@ -119,21 +119,20 @@ func (r *SchedulerRepo) Schedule(ctx context.Context, media tvdb.Media, releaseT
 	return nil
 }
 
-func (r *SchedulerRepo) GetDueMedia() ([]tvdb.Media, error) {
+func (r *SchedulerRepo) GetDueMedia(ctx context.Context, windowEnd time.Time) ([]tvdb.Media, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	today := time.Now().Format("2006-01-02")
 	stmt := `SELECT id, media FROM ScheduledDownloads
-			 WHERE date(release_time) = $1 AND schedule_status = 'pending'
+			 WHERE schedule_status = $1 AND release_time <= $2
 			 ORDER BY release_time ASC`
-	rows, err := r.db.Query(stmt, today)
+	rows, err := r.db.QueryContext(ctx, stmt, StatusPending, windowEnd.Format(time.RFC3339))
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		if err := rows.Close(); err != nil {
-			r.logger.Error("Failed to close rows", "error", err)
+			r.logger.ErrorContext(ctx, "Failed to close rows", "error", err)
 		}
 	}()
 
@@ -147,7 +146,7 @@ func (r *SchedulerRepo) GetDueMedia() ([]tvdb.Media, error) {
 		}
 		var media tvdb.Media
 		if err := json.Unmarshal(mediaJSON, &media); err != nil {
-			r.logger.Error("Failed to unmarshal media", "id", id, "error", err)
+			r.logger.ErrorContext(ctx, "Failed to unmarshal media", "id", id, "error", err)
 			continue
 		}
 		results = append(results, media)
@@ -156,7 +155,7 @@ func (r *SchedulerRepo) GetDueMedia() ([]tvdb.Media, error) {
 
 	// Mark all retrieved items as queued
 	for _, id := range idsToMark {
-		_, _ = r.db.Exec(`UPDATE ScheduledDownloads SET schedule_status = 'queued' WHERE id = $1`, id)
+		_, _ = r.db.ExecContext(ctx, `UPDATE ScheduledDownloads SET schedule_status = $1 WHERE id = $2`, StatusQueued, id)
 	}
 
 	return results, nil
