@@ -27,6 +27,7 @@ type TvDbConfig struct {
 	Host   string `toml:"host"`
 	ApiKey string `toml:"api-key"`
 	Token  string `toml:"token"`
+	Pin    string `toml:"pin"`
 }
 
 var tvDbConfig TvDbConfig
@@ -255,9 +256,18 @@ func loadConfig() error {
 	if apiKey := os.Getenv("TVDB_API_KEY"); apiKey != "" {
 		tvDbConfig.ApiKey = apiKey
 	}
-	if token := os.Getenv("TVDB_TOKEN"); token != "" {
-		tvDbConfig.Token = token
+	if pin := os.Getenv("TVDB_PIN"); pin != "" {
+		tvDbConfig.Pin = pin
 	}
+
+	ctx := context.TODO()
+	token, err := getApiKey(ctx)
+	if err != nil {
+		logger.Error("Unable to get API Key, exiting")
+		os.Exit(1)
+	}
+
+	tvDbConfig.Token = token
 
 	// Validate required fields
 	if tvDbConfig.Host == "" {
@@ -268,12 +278,77 @@ func loadConfig() error {
 		logger.Error("TVDB_API_KEY is required")
 		os.Exit(1)
 	}
-	if tvDbConfig.Token == "" {
-		logger.Error("TVDB_TOKEN is required")
-		os.Exit(1)
-	}
 
 	return nil
+}
+
+type tvdbLoginResponse struct {
+	Data struct {
+		Token string `json:"token"`
+	} `json:"data"`
+	Status string `json:"status"`
+}
+
+func getApiKey(ctx context.Context) (string, error) {
+	// Prepare login request body with apikey and pin
+	loginReq := map[string]string{
+		"apikey": tvDbConfig.ApiKey,
+	}
+	// Only include pin if it's set (licensed keys don't need PIN)
+	if tvDbConfig.Pin != "" {
+		loginReq["pin"] = tvDbConfig.Pin
+	}
+
+	reqBody, err := json.Marshal(loginReq)
+	if err != nil {
+		logger.ErrorContext(ctx, "Error marshalling login request", "err", err)
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", tvDbConfig.Host+"/login", strings.NewReader(string(reqBody)))
+	if err != nil {
+		logger.InfoContext(ctx, "Error creating login request")
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.ErrorContext(ctx, "Error making request to TVDB", "err", err)
+		return "", err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			logger.InfoContext(ctx, "Error closing response body", "err", err)
+		}
+	}()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.ErrorContext(ctx, "Error reading response body", "err", err)
+		return "", err
+	}
+
+	// Check for non-2xx status codes
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		logger.ErrorContext(ctx, "TVDB login failed", "status_code", resp.StatusCode, "response", string(body))
+		return "", fmt.Errorf("TVDB login failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var lr tvdbLoginResponse
+	if err := json.Unmarshal(body, &lr); err != nil {
+		logger.ErrorContext(ctx, "Unable to parse login response body", "err", err, "body", string(body))
+		return "", err
+	}
+
+	logger.InfoContext(ctx, "Successfully authenticated with TVDB API")
+	return lr.Data.Token, nil
+
 }
 
 func tvDbGet(ctx context.Context, uri string) ([]byte, error) {
@@ -541,9 +616,9 @@ type BatchExtendedRequest struct {
 
 // BatchExtendedResponse wraps a single response with optional error
 type BatchExtendedResponse struct {
-	Request *BatchExtendedRequest             `json:"request"`
-	Data    *tvdb.TVDBSeriesExtendedResponse  `json:"data,omitempty"`
-	Error   string                            `json:"error,omitempty"`
+	Request *BatchExtendedRequest            `json:"request"`
+	Data    *tvdb.TVDBSeriesExtendedResponse `json:"data,omitempty"`
+	Error   string                           `json:"error,omitempty"`
 }
 
 // BatchEpisodesRequest represents a single request for episode metadata
@@ -553,9 +628,9 @@ type BatchEpisodesRequest struct {
 
 // BatchEpisodesResponse wraps episode metadata with optional error
 type BatchEpisodesResponse struct {
-	Request  *BatchEpisodesRequest     `json:"request"`
-	Data     *tvdb.TVDBSeriesMetadata  `json:"data,omitempty"`
-	Error    string                    `json:"error,omitempty"`
+	Request *BatchEpisodesRequest    `json:"request"`
+	Data    *tvdb.TVDBSeriesMetadata `json:"data,omitempty"`
+	Error   string                   `json:"error,omitempty"`
 }
 
 // getBatchExtendedInformation handles batch requests for extended media information
