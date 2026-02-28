@@ -5,21 +5,25 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jbofill10/scout/backend/internal/webserver/cache"
 	"github.com/jbofill10/scout/backend/internal/webserver/interactors"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 )
 
 type PopularEnrichedHandler struct {
 	interactor *interactors.PopularEnrichedInteractor
+	cache      *cache.PopularCache
 	logger     *slog.Logger
 }
 
 func NewPopularEnrichedHandler(
 	interactor *interactors.PopularEnrichedInteractor,
+	cache *cache.PopularCache,
 	logger *slog.Logger,
 ) *PopularEnrichedHandler {
 	return &PopularEnrichedHandler{
 		interactor: interactor,
+		cache:      cache,
 		logger:     logger,
 	}
 }
@@ -52,7 +56,20 @@ func (h *PopularEnrichedHandler) HandleEnrichedPopularShows(c *gin.Context) {
 		telemetry.WithTraceContext(ctx, "genre", genre, "limit", limit)...,
 	)
 
-	// Call interactor to orchestrate enrichment
+	// Try cache first if limit matches default (20)
+	if limit == 20 {
+		shows, cacheHit := h.cache.GetEnrichedShows(ctx, genre)
+		if cacheHit {
+			h.logger.InfoContext(ctx, "Serving enriched popular shows from cache",
+				telemetry.WithTraceContext(ctx, "genre", genre, "count", len(shows), "cache_hit", true)...)
+			c.JSON(200, shows)
+			return
+		}
+		h.logger.InfoContext(ctx, "Cache miss for enriched popular shows, falling back to interactor",
+			telemetry.WithTraceContext(ctx, "genre", genre)...)
+	}
+
+	// Fall back to live enrichment via interactor
 	enrichedResults, err := h.interactor.EnrichedPopularShows(ctx, genre, limit)
 	if err != nil {
 		h.logger.ErrorContext(
@@ -66,8 +83,8 @@ func (h *PopularEnrichedHandler) HandleEnrichedPopularShows(c *gin.Context) {
 
 	h.logger.InfoContext(
 		ctx,
-		"Returning enriched popular shows",
-		telemetry.WithTraceContext(ctx, "count", len(enrichedResults))...,
+		"Returning enriched popular shows from interactor",
+		telemetry.WithTraceContext(ctx, "count", len(enrichedResults), "cache_hit", false)...,
 	)
 	c.JSON(200, enrichedResults)
 }
@@ -100,7 +117,20 @@ func (h *PopularEnrichedHandler) HandleEnrichedPopularMovies(c *gin.Context) {
 		telemetry.WithTraceContext(ctx, "genre", genre, "limit", limit)...,
 	)
 
-	// Call interactor to orchestrate enrichment
+	// Try cache first if limit matches default (20)
+	if limit == 20 {
+		movies, cacheHit := h.cache.GetEnrichedMovies(ctx, genre)
+		if cacheHit {
+			h.logger.InfoContext(ctx, "Serving enriched popular movies from cache",
+				telemetry.WithTraceContext(ctx, "genre", genre, "count", len(movies), "cache_hit", true)...)
+			c.JSON(200, movies)
+			return
+		}
+		h.logger.InfoContext(ctx, "Cache miss for enriched popular movies, falling back to interactor",
+			telemetry.WithTraceContext(ctx, "genre", genre)...)
+	}
+
+	// Fall back to live enrichment via interactor
 	enrichedResults, err := h.interactor.EnrichedPopularMovies(ctx, genre, limit)
 	if err != nil {
 		h.logger.ErrorContext(
@@ -114,8 +144,8 @@ func (h *PopularEnrichedHandler) HandleEnrichedPopularMovies(c *gin.Context) {
 
 	h.logger.InfoContext(
 		ctx,
-		"Returning enriched popular movies",
-		telemetry.WithTraceContext(ctx, "count", len(enrichedResults))...,
+		"Returning enriched popular movies from interactor",
+		telemetry.WithTraceContext(ctx, "count", len(enrichedResults), "cache_hit", false)...,
 	)
 	c.JSON(200, enrichedResults)
 }
