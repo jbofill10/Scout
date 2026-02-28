@@ -105,7 +105,7 @@ func (mp *MediaProcessSvc) ProcessDownloadedTorrent(ctx context.Context, media *
 		MediaName:   media.Req.MediaName,
 		ReleaseYear: media.Req.ReleaseYear, // TODO: add to SearchStrategy
 	}
-	if media.Req.Episode == 0 {
+	if media.Req.IsMovie {
 		req.MediaType = "movie"
 		req.Season = ""
 		req.Episode = ""
@@ -131,7 +131,7 @@ func (mp *MediaProcessSvc) ProcessDownloadedTorrent(ctx context.Context, media *
 	// For shows, construct Plex-friendly filename (ShowName - S##E##.ext)
 	// For movies, keep the original filename
 	var fileName string
-	if media.Req.Episode != 0 && media.Req.EpisodeMeta != nil {
+	if !media.Req.IsMovie && media.Req.EpisodeMeta != nil {
 		// Show: Always use seasonal format regardless of search strategy
 		fileName = mp.constructPlexFilename(media.Req.MediaName, media.Req.EpisodeMeta, originalFileName)
 		mp.Logger.InfoContext(ctx, "Constructed Plex filename",
