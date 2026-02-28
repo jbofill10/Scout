@@ -4,8 +4,8 @@ package mocks
 
 import (
 	context "context"
-	models "github.com/jbofill10/scout/backend/internal/torrenter/models"
 
+	models "github.com/jbofill10/scout/backend/internal/torrenter/models"
 	mock "github.com/stretchr/testify/mock"
 )
 

@@ -17,6 +17,10 @@ type PlexService struct {
 func (_m *PlexService) SyncPlexLibrary(ctx context.Context) error {
 	ret := _m.Called(ctx)
 
+	if len(ret) == 0 {
+		panic("no return value specified for SyncPlexLibrary")
+	}
+
 	var r0 error
 	if rf, ok := ret.Get(0).(func(context.Context) error); ok {
 		r0 = rf(ctx)
