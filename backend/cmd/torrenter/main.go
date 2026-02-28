@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime/debug"
 
+	"github.com/jbofill10/scout/backend/internal/torrenter/clients"
 	"github.com/jbofill10/scout/backend/internal/torrenter/config"
 	"github.com/jbofill10/scout/backend/internal/torrenter/handlers"
 	"github.com/jbofill10/scout/backend/internal/torrenter/interactors"
@@ -108,11 +109,14 @@ func main() {
 	downloadInteractor := interactors.NewDownloadInteractor(qbitt, mp, repo, logger)
 	mediaInteractor := interactors.NewMediaInteractor(repo)
 	statusInteractor := interactors.NewStatusInteractor(repo, logger)
+	libraryInteractor := interactors.NewLibraryInteractor(repo, logger)
 
 	// Initialize handlers
 	downloadHandler := handlers.NewDownloadHandler(downloadInteractor, logger)
 	mediaHandler := handlers.NewMediaHandler(mediaInteractor, logger)
 	statusHandler := handlers.NewStatusHandler(statusInteractor, logger)
+	libraryHandler := handlers.NewLibraryHandler(libraryInteractor, logger)
+	plexProxyHandler := handlers.NewPlexProxyHandler(&cfg.Plex, logger)
 
 	// Setup routes
 	r := gin.Default()
@@ -120,11 +124,29 @@ func main() {
 	r.Use(RecoveryMiddleware(logger)) // Custom recovery middleware with trace logging
 	r.POST("/download", downloadHandler.DownloadTorrent)
 	r.GET("/media/:hash", mediaHandler.MediaExists)
+	r.POST("/media/exists", mediaHandler.MediaExistsBatch)
 	r.POST("/status/batch", statusHandler.BatchStatus)
+
+	// Library routes
+	r.GET("/library/shows", libraryHandler.GetShows)
+	r.GET("/library/shows/:tvdbId/episodes", libraryHandler.GetShowEpisodes)
+	r.GET("/library/shows/:tvdbId/metadata-status", libraryHandler.GetShowMetadataStatus)
+	r.GET("/library/movies", libraryHandler.GetMovies)
+	r.POST("/sync-episodes", libraryHandler.SyncEpisodes)
+
+	// Plex proxy routes
+	r.GET("/plex/thumb", plexProxyHandler.ProxyThumb)
 
 	// Sync Plex library on startup (non-blocking)
 	logger.Info("Starting Plex library sync in background")
 	go plex.SyncPlexLibrary(context.Background())
+
+	// Initialize webserver client for TVDB refresh
+	webserverClient := clients.NewWebserverClient(cfg.Refresh.WebserverHost, logger)
+
+	// Start TVDB refresh service (non-blocking)
+	refreshService := service.NewRefreshService(repo, webserverClient, cfg.Refresh.RefreshInterval, logger)
+	go refreshService.Start(context.Background())
 
 	// Start cache cleanup goroutine
 	ctx := context.Background()

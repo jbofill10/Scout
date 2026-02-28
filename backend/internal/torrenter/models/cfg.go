@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 type ProwlarrCfg struct {
 	Host string
 	Key  string
@@ -22,9 +24,15 @@ type PlexCfg struct {
 	Key           string
 }
 
+type RefreshCfg struct {
+	WebserverHost   string
+	RefreshInterval time.Duration
+}
+
 type TorrenterConf struct {
 	Prowlarr ProwlarrCfg
 	Qbitt    QbittCfg
 	Ui       UiCfg
 	Plex     PlexCfg
+	Refresh  RefreshCfg
 }

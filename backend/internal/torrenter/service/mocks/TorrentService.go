@@ -4,8 +4,8 @@ package mocks
 
 import (
 	context "context"
-	media "github.com/jbofill10/scout/backend/pkg/media"
 
+	media "github.com/jbofill10/scout/backend/pkg/media"
 	mock "github.com/stretchr/testify/mock"
 
 	models "github.com/jbofill10/scout/backend/internal/torrenter/models"

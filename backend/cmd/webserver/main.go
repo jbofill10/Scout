@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jbofill10/scout/backend/internal/webserver/cache"
 	"github.com/jbofill10/scout/backend/internal/webserver/clients"
 	"github.com/jbofill10/scout/backend/internal/webserver/config"
 	"github.com/jbofill10/scout/backend/internal/webserver/handlers"
@@ -100,6 +101,20 @@ func main() {
 		torrenterClient,
 	)
 
+	// Initialize popular cache and refresher
+	popularCache := cache.NewPopularCache()
+	popularRefresher := cache.NewPopularRefresher(
+		popularCache,
+		tvdbClient,
+		torrenterClient,
+		popularEnrichedInteractor,
+		logger,
+	)
+
+	// Start popular content cache refresher (immediate refresh + background goroutine)
+	logger.Info("Starting popular content cache refresher")
+	popularRefresher.Start()
+
 	// Start watching for due media
 	downloadInteractor.WatchForDueMedia()
 
@@ -113,6 +128,9 @@ func main() {
 
 		// Stop scheduler
 		sched.Stop()
+
+		// Stop popular content cache refresher
+		popularRefresher.Stop()
 
 		// Give time for cleanup
 		time.Sleep(1 * time.Second)
@@ -145,12 +163,14 @@ func main() {
 	searchHandler := handlers.NewSearchHandler(searchInteractor, logger)
 	enrichedSearchHandler := handlers.NewEnrichedSearchHandler(enrichedSearchInteractor, logger)
 	downloadHandler := handlers.NewDownloadHandler(downloadInteractor, logger)
-	popularHandler := handlers.NewPopularHandler(tvdbClient, logger)
-	popularEnrichedHandler := handlers.NewPopularEnrichedHandler(popularEnrichedInteractor, logger)
+	popularHandler := handlers.NewPopularHandler(tvdbClient, popularCache, logger)
+	popularEnrichedHandler := handlers.NewPopularEnrichedHandler(popularEnrichedInteractor, popularCache, logger)
 	scheduleHandler := handlers.NewScheduleHandler(schedulerRepo, logger)
 	notificationHandler := handlers.NewNotificationHandler(notificationRepo, logger)
 	statusHandler := handlers.NewStatusHandler(torrenterClient, logger)
 	mediaExtendedHandler := handlers.NewMediaExtendedHandler(tvdbClient, logger)
+	libraryHandler := handlers.NewLibraryHandler(torrenterClient, logger)
+	tvdbHandler := handlers.NewTVDBHandler(tvdbClient, logger)
 
 	// Setup routes
 	r := gin.Default()
@@ -168,6 +188,18 @@ func main() {
 	r.POST("/status/batch", statusHandler.GetBatchStatus)
 	r.POST("/media/batch-extended", mediaExtendedHandler.GetBatchExtended)
 	r.GET("/schedule/weekly", scheduleHandler.GetWeeklySchedule)
+
+	// TVDB routes
+	r.POST("/tvdb/batch/episodes", tvdbHandler.GetEpisodesBatch)
+
+	// Library routes
+	r.GET("/library/shows", libraryHandler.GetShows)
+	r.GET("/library/shows/:tvdbId", libraryHandler.GetShowDetails)
+	r.GET("/library/shows/:tvdbId/metadata-status", libraryHandler.GetShowMetadataStatus)
+	r.GET("/library/movies", libraryHandler.GetMovies)
+
+	// Plex proxy routes
+	r.GET("/plex/thumb", libraryHandler.ProxyPlexThumb)
 
 	// Notification routes
 	r.GET("/notifications", notificationHandler.GetNotifications)

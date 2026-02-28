@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"github.com/jbofill10/scout/backend/internal/torrenter/interactors"
+	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"log/slog"
 	"net/http"
 
@@ -45,4 +46,28 @@ func (h *MediaHandler) MediaExists(c *gin.Context) {
 		h.logger.InfoContext(ctx, "Media not found", "hash", hash)
 		c.JSON(http.StatusNotFound, gin.H{})
 	}
+}
+
+// MediaExistsBatch checks existence for multiple media IDs and returns map-based response.
+func (h *MediaHandler) MediaExistsBatch(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	var items []tvdb.Media
+	if err := c.ShouldBindJSON(&items); err != nil {
+		h.logger.ErrorContext(ctx, "Failed to bind media exists batch request", "error", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	exists, err := h.interactor.CheckMediaExistsBatch(ctx, items)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "Failed batch media existence check", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check media existence"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"exists":      exists,
+		"in_progress": map[string]bool{},
+	})
 }

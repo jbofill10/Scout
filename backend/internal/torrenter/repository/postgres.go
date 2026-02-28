@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	"github.com/jbofill10/scout/backend/pkg/library"
 	"github.com/jbofill10/scout/backend/pkg/notifications"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
@@ -42,6 +43,13 @@ type Repository interface {
 	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
 	UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error
 	GetPreferredUploaders(ctx context.Context, mediaType string, isAnime bool) ([]string, error)
+
+	// Library browsing methods
+	GetAllShows(ctx context.Context) ([]library.LibraryShow, error)
+	GetAllMovies(ctx context.Context) ([]library.LibraryMovie, error)
+	GetShowEpisodesWithStatus(ctx context.Context, tvdbId string) ([]library.EpisodeWithStatus, error)
+	UpsertTvdbEpisodes(ctx context.Context, seriesTvdbId string, episodes []library.TvdbEpisode) error
+	GetTvdbMetadataStatus(ctx context.Context, tvdbId string) (tvdbCount int, plexCount int, err error)
 }
 
 type Repo struct {
@@ -164,7 +172,18 @@ func (r *Repo) GetPreferredLibrary(ctx context.Context, libType string) (models.
 
 func (r *Repo) MediaExists(ctx context.Context, id string) (bool, error) {
 	var exists bool
-	err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM Media WHERE id = $1);`, id).Scan(&exists)
+	// Check all library-backed entities by both Plex ID and TVDB ID.
+	// There is no unified "Media" table in the current schema.
+	query := `
+		SELECT EXISTS(
+			SELECT 1 FROM Shows WHERE id = $1 OR tvdb_id = $1
+			UNION ALL
+			SELECT 1 FROM Movies WHERE id = $1 OR tvdb_id = $1
+			UNION ALL
+			SELECT 1 FROM Episodes WHERE id = $1 OR tvdb_id = $1
+		);
+	`
+	err := r.db.QueryRowContext(ctx, query, id).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("failed to check media existence: %w", err)
 	}
@@ -485,3 +504,227 @@ func (r *Repo) GetShowSeasonEpisodes(ctx context.Context, tvdbId string) (map[in
 // Note: CreateNotification, GetNotification, and UpdateNotification are provided by the embedded PostgresRepository
 // OpenTelemetry tracing was removed in favor of code reuse. If detailed tracing is needed,
 // these methods can be overridden with torrenter-specific implementations that include spans.
+
+// UpsertTvdbEpisodes stores TVDB episode metadata for a show
+// This data is used to detect "missing episodes" (aired but not downloaded)
+func (r *Repo) UpsertTvdbEpisodes(ctx context.Context, seriesTvdbId string, episodes []library.TvdbEpisode) error {
+	ctx, span := repoTracer.Start(ctx, "repository.UpsertTvdbEpisodes")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("series_tvdb_id", seriesTvdbId),
+		attribute.Int("episode_count", len(episodes)),
+	)
+
+	if len(episodes) == 0 {
+		span.SetStatus(codes.Ok, "No episodes to upsert")
+		return nil
+	}
+
+	for _, ep := range episodes {
+		// Convert empty aired date to NULL for PostgreSQL
+		var airedDate interface{}
+		if ep.Aired == "" {
+			airedDate = nil
+		} else {
+			airedDate = ep.Aired
+		}
+
+		_, err := r.db.ExecContext(ctx, `
+			INSERT INTO TvdbEpisodes (tvdb_id, series_tvdb_id, season_number, episode_number, absolute_number, name, aired)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (tvdb_id) DO UPDATE SET
+				series_tvdb_id = EXCLUDED.series_tvdb_id,
+				season_number = EXCLUDED.season_number,
+				episode_number = EXCLUDED.episode_number,
+				absolute_number = EXCLUDED.absolute_number,
+				name = EXCLUDED.name,
+				aired = EXCLUDED.aired
+		`, ep.TvdbId, ep.SeriesTvdbId, ep.SeasonNumber, ep.EpisodeNumber, ep.AbsoluteNumber, ep.Name, airedDate)
+		if err != nil {
+			r.logger.ErrorContext(ctx, "Failed to upsert TVDB episode",
+				"tvdb_id", ep.TvdbId, "season", ep.SeasonNumber, "episode", ep.EpisodeNumber, "error", err)
+			span.RecordError(err)
+			return fmt.Errorf("failed to upsert TVDB episode %s S%dE%d: %w", seriesTvdbId, ep.SeasonNumber, ep.EpisodeNumber, err)
+		}
+	}
+
+	span.SetStatus(codes.Ok, "TVDB episodes upserted successfully")
+	return nil
+}
+
+// GetShowEpisodesWithStatus returns all episodes (aired) with download status
+// Uses LEFT JOIN to detect missing episodes (in TvdbEpisodes but not in Episodes)
+func (r *Repo) GetShowEpisodesWithStatus(ctx context.Context, tvdbId string) ([]library.EpisodeWithStatus, error) {
+	ctx, span := repoTracer.Start(ctx, "repository.GetShowEpisodesWithStatus")
+	defer span.End()
+	span.SetAttributes(attribute.String("tvdb_id", tvdbId))
+
+	if tvdbId == "" {
+		return []library.EpisodeWithStatus{}, nil
+	}
+
+	query := `
+		SELECT
+			te.tvdb_id,
+			te.season_number,
+			te.episode_number,
+			COALESCE(te.absolute_number, 0) as absolute_number,
+			COALESCE(te.name, '') as name,
+			COALESCE(te.aired::text, '') as aired,
+			CASE WHEN e.id IS NOT NULL THEN true ELSE false END as downloaded
+		FROM TvdbEpisodes te
+		LEFT JOIN Episodes e ON te.tvdb_id = e.tvdb_id
+		WHERE te.series_tvdb_id = $1
+		  AND te.aired <= CURRENT_DATE
+		ORDER BY te.season_number, te.episode_number
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, tvdbId)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to query show episodes with status")
+		return nil, fmt.Errorf("failed to query show episodes with status: %w", err)
+	}
+	defer rows.Close()
+
+	var episodes []library.EpisodeWithStatus
+	for rows.Next() {
+		var ep library.EpisodeWithStatus
+		if err := rows.Scan(&ep.TvdbId, &ep.SeasonNumber, &ep.EpisodeNumber, &ep.AbsoluteNumber, &ep.Name, &ep.Aired, &ep.Downloaded); err != nil {
+			r.logger.ErrorContext(ctx, "Error scanning episode with status", "error", err, "tvdb_id", tvdbId)
+			span.RecordError(err)
+			continue
+		}
+		episodes = append(episodes, ep)
+	}
+
+	if err = rows.Err(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Error iterating episode rows")
+		return nil, fmt.Errorf("error iterating episode rows: %w", err)
+	}
+
+	span.SetAttributes(attribute.Int("episode_count", len(episodes)))
+	span.SetStatus(codes.Ok, "Episodes with status retrieved successfully")
+	return episodes, nil
+}
+
+// GetTvdbMetadataStatus returns counts for TVDB episodes vs Plex episodes
+func (r *Repo) GetTvdbMetadataStatus(ctx context.Context, tvdbId string) (tvdbCount int, plexCount int, err error) {
+	ctx, span := repoTracer.Start(ctx, "repository.GetTvdbMetadataStatus")
+	defer span.End()
+	span.SetAttributes(attribute.String("tvdb_id", tvdbId))
+
+	// Count TVDB episodes (aired only, exclude Season 0 specials)
+	err = r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM TvdbEpisodes
+		WHERE series_tvdb_id = $1 AND aired <= CURRENT_DATE AND season_number != 0
+	`, tvdbId).Scan(&tvdbCount)
+	if err != nil {
+		span.RecordError(err)
+		return 0, 0, fmt.Errorf("failed to count TVDB episodes: %w", err)
+	}
+
+	// Count Plex episodes (exclude Season 0 specials)
+	err = r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM Episodes e
+		JOIN Seasons s ON e.parentid = s.id
+		JOIN Shows sh ON s.parentid = sh.id
+		WHERE sh.tvdb_id = $1 AND s.season_number != 0
+	`, tvdbId).Scan(&plexCount)
+	if err != nil {
+		span.RecordError(err)
+		return 0, 0, fmt.Errorf("failed to count Plex episodes: %w", err)
+	}
+
+	span.SetAttributes(
+		attribute.Int("tvdb_count", tvdbCount),
+		attribute.Int("plex_count", plexCount),
+	)
+	span.SetStatus(codes.Ok, "Metadata status retrieved")
+	return tvdbCount, plexCount, nil
+}
+
+// GetAllShows returns all shows in the library
+func (r *Repo) GetAllShows(ctx context.Context) ([]library.LibraryShow, error) {
+	ctx, span := repoTracer.Start(ctx, "repository.GetAllShows")
+	defer span.End()
+
+	query := `
+		SELECT COALESCE(tvdb_id, ''), title, COALESCE(thumb, '')
+		FROM Shows
+		WHERE tvdb_id IS NOT NULL AND tvdb_id != ''
+		ORDER BY title ASC
+	`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to query shows")
+		return nil, fmt.Errorf("failed to query shows: %w", err)
+	}
+	defer rows.Close()
+
+	var shows []library.LibraryShow
+	for rows.Next() {
+		var show library.LibraryShow
+		if err := rows.Scan(&show.TvdbId, &show.Title, &show.Thumb); err != nil {
+			r.logger.ErrorContext(ctx, "Error scanning show", "error", err)
+			span.RecordError(err)
+			continue
+		}
+		shows = append(shows, show)
+	}
+
+	if err = rows.Err(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Error iterating show rows")
+		return nil, fmt.Errorf("error iterating show rows: %w", err)
+	}
+
+	span.SetAttributes(attribute.Int("show_count", len(shows)))
+	span.SetStatus(codes.Ok, "Shows retrieved successfully")
+	return shows, nil
+}
+
+// GetAllMovies returns all movies in the library
+func (r *Repo) GetAllMovies(ctx context.Context) ([]library.LibraryMovie, error) {
+	ctx, span := repoTracer.Start(ctx, "repository.GetAllMovies")
+	defer span.End()
+
+	query := `
+		SELECT COALESCE(tvdb_id, ''), title, COALESCE(thumb, ''), COALESCE(year, 0)
+		FROM Movies
+		WHERE tvdb_id IS NOT NULL AND tvdb_id != ''
+		ORDER BY title ASC
+	`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to query movies")
+		return nil, fmt.Errorf("failed to query movies: %w", err)
+	}
+	defer rows.Close()
+
+	var movies []library.LibraryMovie
+	for rows.Next() {
+		var movie library.LibraryMovie
+		if err := rows.Scan(&movie.TvdbId, &movie.Title, &movie.Thumb, &movie.Year); err != nil {
+			r.logger.ErrorContext(ctx, "Error scanning movie", "error", err)
+			span.RecordError(err)
+			continue
+		}
+		movies = append(movies, movie)
+	}
+
+	if err = rows.Err(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Error iterating movie rows")
+		return nil, fmt.Errorf("error iterating movie rows: %w", err)
+	}
+
+	span.SetAttributes(attribute.Int("movie_count", len(movies)))
+	span.SetStatus(codes.Ok, "Movies retrieved successfully")
+	return movies, nil
+}
