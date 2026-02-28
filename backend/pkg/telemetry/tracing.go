@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -13,13 +14,23 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 )
 
+// stripScheme removes http:// or https:// prefix from endpoint
+func stripScheme(endpoint string) string {
+	endpoint = strings.TrimPrefix(endpoint, "http://")
+	endpoint = strings.TrimPrefix(endpoint, "https://")
+	return endpoint
+}
+
 // InitTracer initializes the OpenTelemetry tracer provider
 func InitTracer(serviceName, serviceVersion, otlpEndpoint string) (func(), error) {
 	ctx := context.Background()
 
+	// Strip http:// or https:// prefix if present (WithEndpoint expects host:port only)
+	endpoint := stripScheme(otlpEndpoint)
+
 	// Create OTLP trace exporter with endpoint (host:port format)
 	exporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(otlpEndpoint),
+		otlptracegrpc.WithEndpoint(endpoint),
 		otlptracegrpc.WithInsecure(),
 	)
 	if err != nil {

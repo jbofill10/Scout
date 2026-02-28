@@ -18,9 +18,12 @@ import (
 func InitLogger(serviceName, serviceVersion, otlpEndpoint string) (*slog.Logger, func(), error) {
 	ctx := context.Background()
 
+	// Strip http:// or https:// prefix if present (WithEndpoint expects host:port only)
+	endpoint := stripScheme(otlpEndpoint)
+
 	// Create OTLP log exporter with endpoint (host:port format)
 	exporter, err := otlploggrpc.New(ctx,
-		otlploggrpc.WithEndpoint(otlpEndpoint),
+		otlploggrpc.WithEndpoint(endpoint),
 		otlploggrpc.WithInsecure(),
 	)
 	if err != nil {

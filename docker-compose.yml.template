@@ -29,7 +29,7 @@ services:
       BIND_ADDRESS: 0.0.0.0:22000
       TVDB_HOST: ${TVDB_HOST:-https://api4.thetvdb.com/v4}
       TVDB_API_KEY: ${TVDB_API_KEY}
-      TVDB_TOKEN: ${TVDB_TOKEN}
+      TVDB_PIN: ${TVDB_PIN}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-localhost:4317}
       OTEL_SERVICE_NAME: tvdb-proxy
     ports:
@@ -59,6 +59,8 @@ services:
       PLEX_MOVIE_SECTIONS: ${PLEX_MOVIE_SECTIONS:-3}
       PLEX_SHOW_SECTIONS: ${PLEX_SHOW_SECTIONS:-4}
       UI_ENDPOINT: ws://webserver:22920/status
+      WEBSERVER_HOST: ${WEBSERVER_HOST:-http://webserver:22920}
+      TVDB_REFRESH_INTERVAL: ${TVDB_REFRESH_INTERVAL:-6h}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-localhost:4317}
       OTEL_SERVICE_NAME: torrenter
     volumes:
@@ -128,6 +130,7 @@ services:
     restart: unless-stopped
     networks:
       - scout-network
+      - signoz-net
 
 volumes:
   postgres_data:
@@ -136,3 +139,5 @@ volumes:
 networks:
   scout-network:
     driver: bridge
+  signoz-net:
+    external: true

@@ -2,6 +2,8 @@ module github.com/jbofill10/scout/backend
 
 go 1.24
 
+toolchain go1.24.11
+
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/XSAM/otelsql v0.29.0
