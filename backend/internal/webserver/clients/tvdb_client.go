@@ -8,6 +8,7 @@ import (
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"log/slog"
 	"net/http"
+	"net/url"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
@@ -27,8 +28,12 @@ func NewTVDBProxyClient(host string) *TVDBProxyClient {
 }
 
 func (c *TVDBProxyClient) Search(ctx context.Context, mediaType, mediaName string) ([]tvdb.Media, error) {
-	url := fmt.Sprintf("http://%s/series?mediaType=%s&mediaName=%s", c.Host, mediaType, mediaName)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	params := url.Values{}
+	params.Set("mediaType", mediaType)
+	params.Set("mediaName", mediaName)
+
+	searchURL := fmt.Sprintf("http://%s/series?%s", c.Host, params.Encode())
+	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 	if err != nil {
 		return nil, err
 	}

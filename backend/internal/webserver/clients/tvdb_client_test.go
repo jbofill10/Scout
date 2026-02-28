@@ -60,6 +60,33 @@ func (s *TVDBProxyClientTestSuite) TestSearch_Success() {
 	s.Equal("Another Show", results[1].Name)
 }
 
+func (s *TVDBProxyClientTestSuite) TestSearch_QueryEncoding_SpacesAndSpecialCharacters() {
+	expectedResults := []tvdb.Media{
+		{
+			Id:   "123",
+			Name: "The Office",
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.Equal("/series", r.URL.Path)
+		s.Equal("series", r.URL.Query().Get("mediaType"))
+		s.Equal("The Office & Friends", r.URL.Query().Get("mediaName"))
+
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(expectedResults)
+	}))
+	defer server.Close()
+
+	client := NewTVDBProxyClient(server.URL[7:]) // Remove http://
+
+	results, err := client.Search(context.Background(), "series", "The Office & Friends")
+
+	s.NoError(err)
+	s.Len(results, 1)
+	s.Equal("The Office", results[0].Name)
+}
+
 func (s *TVDBProxyClientTestSuite) TestSearch_EmptyResults() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

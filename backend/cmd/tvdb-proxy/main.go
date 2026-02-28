@@ -141,6 +141,7 @@ func getSeries(c *gin.Context) {
 func queryShow(ctx context.Context, showName, mediaType string) ([]tvdb.Media, error) {
 
 	results := []tvdb.Media{}
+	var resultsMu sync.Mutex
 
 	uriQuery := fmt.Sprintf("/search?query=%s&type=%s", showName, mediaType)
 
@@ -172,11 +173,14 @@ func queryShow(ctx context.Context, showName, mediaType string) ([]tvdb.Media, e
 			imageUrl = item.ImageUrl
 		}
 
-		// TODO: Remove later
-		logger.InfoContext(ctx, "Is the URL here?", "image_url", item.ImageUrl)
-
+		parts := strings.SplitN(item.Id, "-", 2)
+		if len(parts) != 2 {
+			logger.WarnContext(ctx, "Skipping invalid TVDB item id format", "raw_id", item.Id)
+			wg.Done()
+			continue
+		}
 		mediaData := tvdb.Media{
-			Id:           strings.Split(item.Id, "-")[1],
+			Id:           parts[1],
 			Name:         item.Translations.Eng,
 			Category:     item.Category,
 			ImageUrl:     imageUrl,
@@ -191,13 +195,15 @@ func queryShow(ctx context.Context, showName, mediaType string) ([]tvdb.Media, e
 
 		go func(ctx context.Context, mediaData tvdb.Media) {
 			defer wg.Done()
+			defer func() { <-ch }()
 
 			// Skip episode metadata fetching for movies
 			if mediaData.Category == "movie" {
 				// Set empty metadata for movies
 				mediaData.Metadata = tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{}}
+				resultsMu.Lock()
 				results = append(results, mediaData)
-				<-ch
+				resultsMu.Unlock()
 				return
 			}
 
@@ -210,8 +216,9 @@ func queryShow(ctx context.Context, showName, mediaType string) ([]tvdb.Media, e
 					"error", err)
 				// Still add the media with empty metadata rather than dropping it
 				mediaData.Metadata = tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{}}
+				resultsMu.Lock()
 				results = append(results, mediaData)
-				<-ch
+				resultsMu.Unlock()
 				return
 			}
 
@@ -222,8 +229,9 @@ func queryShow(ctx context.Context, showName, mediaType string) ([]tvdb.Media, e
 			mediaData.Metadata.LastAired = seriesResponse.Data.LastAired
 			mediaData.Score = seriesResponse.Data.Score
 
+			resultsMu.Lock()
 			results = append(results, mediaData)
-			<-ch
+			resultsMu.Unlock()
 		}(ctx, mediaData)
 
 	}
@@ -260,7 +268,7 @@ func loadConfig() error {
 		tvDbConfig.Pin = pin
 	}
 
-	ctx := context.TODO()
+	ctx := context.Background()
 	token, err := getApiKey(ctx)
 	if err != nil {
 		logger.Error("Unable to get API Key, exiting")
