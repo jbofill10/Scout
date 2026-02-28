@@ -15,11 +15,14 @@ import TableRow from "@mui/material/TableRow";
 import Paper from "@mui/material/Paper";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
+import Alert from "@mui/material/Alert";
+import AlertTitle from "@mui/material/AlertTitle";
 import CloseIcon from "@mui/icons-material/Close";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import CancelIcon from "@mui/icons-material/Cancel";
 import type { ShowStatus, EnrichedMedia } from "../../types/MediaStatus";
 import { useTheme } from "@mui/material/styles";
+import { useShowMetadataStatus } from "../../hooks/useLibrary";
 
 export interface MediaStatusDialogProps {
   open: boolean;
@@ -69,6 +72,11 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
   const theme = useTheme();
   const [selectedSeasonIndex, setSelectedSeasonIndex] = useState(0);
 
+  // Fetch metadata status for TV shows
+  const { data: metadataStatus } = useShowMetadataStatus(
+    enrichedMedia?.status.type === "series" ? enrichedMedia?.media.id ?? null : null
+  );
+
   // Merge TVDB episode metadata with Plex download status
   const enrichedSeasons = useMemo<EnrichedSeasonInfo[]>(() => {
     // If no enriched data, fall back to status-only display
@@ -91,8 +99,10 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
     if (status?.seasons) {
       status.seasons.forEach((season) => {
         season.episodes.forEach((ep) => {
-          const key = `${season.seasonNum}-${ep.episodeNum}`;
-          downloadedEpisodesSet.add(key);
+          if (ep.downloaded) {  // Only add downloaded episodes to the set
+            const key = `${season.seasonNum}-${ep.episodeNum}`;
+            downloadedEpisodesSet.add(key);
+          }
         });
       });
     }
@@ -125,15 +135,11 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
       .sort((a, b) => a.seasonNum - b.seasonNum);
   }, [status, enrichedMedia]);
 
-  if (enrichedSeasons.length === 0) {
-    return null;
-  }
-
   const handleSeasonChange = (_event: React.SyntheticEvent, newValue: number) => {
     setSelectedSeasonIndex(newValue);
   };
 
-  const currentSeason = enrichedSeasons[selectedSeasonIndex];
+  const currentSeason = enrichedSeasons.length > 0 ? enrichedSeasons[selectedSeasonIndex] : null;
 
   return (
     <Dialog
@@ -191,136 +197,176 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
       </DialogTitle>
 
       <DialogContent sx={{ p: 0 }}>
-        {/* Season Tabs */}
-        <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
-          <Tabs
-            value={selectedSeasonIndex}
-            onChange={handleSeasonChange}
-            variant="scrollable"
-            scrollButtons="auto"
-            aria-label="season tabs"
-            sx={{
-              px: 2,
-            }}
-          >
-            {enrichedSeasons.map((season) => (
-              <Tab
-                key={season.seasonNum}
-                label={`Season ${season.seasonNum}`}
-                id={`season-tab-${season.seasonNum}`}
-                aria-controls={`season-panel-${season.seasonNum}`}
-              />
-            ))}
-          </Tabs>
-        </Box>
+        {/* TVDB Metadata Status Banner */}
+        {enrichedMedia?.status.type === "series" && metadataStatus && (
+          <Box sx={{ p: 2, pb: 0 }}>
+            {!metadataStatus.hasTvdbData && metadataStatus.plexEpisodeCount > 0 ? (
+              <Alert severity="info">
+                <AlertTitle>TVDB Sync in Progress</AlertTitle>
+                Episode metadata is being synced from TVDB. Missing episode detection will be available shortly.
+                Refresh this page in a few minutes to see complete episode status.
+              </Alert>
+            ) : metadataStatus.hasTvdbData && metadataStatus.missingCount > 0 ? (
+              <Alert severity="warning">
+                <AlertTitle>Missing Episodes Detected</AlertTitle>
+                {metadataStatus.missingCount} episode{metadataStatus.missingCount !== 1 ? 's' : ''} not yet downloaded.
+              </Alert>
+            ) : metadataStatus.hasTvdbData && metadataStatus.plexEpisodeCount > 0 ? (
+              <Alert severity="success">
+                <AlertTitle>All Episodes Downloaded 🎉</AlertTitle>
+                You have all {metadataStatus.tvdbEpisodeCount} aired episodes in your library!
+              </Alert>
+            ) : null}
+          </Box>
+        )}
 
-        {/* Episode List */}
-        <Box
-          role="tabpanel"
-          id={`season-panel-${currentSeason.seasonNum}`}
-          aria-labelledby={`season-tab-${currentSeason.seasonNum}`}
-          sx={{ p: 2 }}
-        >
-          {currentSeason.episodes.length === 0 ? (
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              align="center"
-              sx={{ py: 4 }}
-            >
-              No episodes found for this season
+        {enrichedSeasons.length === 0 ? (
+          <Box sx={{ p: 4, textAlign: "center" }}>
+            <Typography variant="h6" color="text.secondary" sx={{ mb: 2 }}>
+              No Episode Data Available
             </Typography>
-          ) : (
-            <TableContainer component={Paper} elevation={0}>
-              <Table aria-label="episode status table">
-                <TableBody>
-                  {currentSeason.episodes.map((episode) => (
-                    <TableRow
-                      key={episode.episodeNum}
-                      sx={{
-                        "&:last-child td, &:last-child th": { border: 0 },
-                        "&:hover": {
-                          backgroundColor: theme.palette.action.hover,
-                        },
-                      }}
-                    >
-                      <TableCell
-                        component="th"
-                        scope="row"
-                        sx={{
-                          fontWeight: 500,
-                          color: theme.palette.text.primary,
-                        }}
-                      >
-                        <Box>
-                          <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                            Episode {episode.episodeNum}
-                            {episode.name && `: ${episode.name}`}
-                          </Typography>
-                          {episode.aired && (
-                            <Typography
-                              variant="caption"
-                              sx={{ color: theme.palette.text.secondary }}
-                            >
-                              Aired: {new Date(episode.aired).toLocaleDateString()}
-                            </Typography>
-                          )}
-                        </Box>
-                      </TableCell>
-                      <TableCell align="right">
-                        {episode.downloaded ? (
-                          <Box
+            <Typography variant="body2" color="text.secondary">
+              This show was added to your library before episode tracking was enabled.
+              Download a new show to automatically sync episode data, or the data will
+              be synced the next time this show is updated.
+            </Typography>
+          </Box>
+        ) : (
+          <>
+            {/* Season Tabs */}
+            <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
+              <Tabs
+                value={selectedSeasonIndex}
+                onChange={handleSeasonChange}
+                variant="scrollable"
+                scrollButtons="auto"
+                aria-label="season tabs"
+                sx={{
+                  px: 2,
+                }}
+              >
+                {enrichedSeasons.map((season) => (
+                  <Tab
+                    key={season.seasonNum}
+                    label={`Season ${season.seasonNum}`}
+                    id={`season-tab-${season.seasonNum}`}
+                    aria-controls={`season-panel-${season.seasonNum}`}
+                  />
+                ))}
+              </Tabs>
+            </Box>
+
+            {/* Episode List */}
+            {currentSeason && (
+              <Box
+                role="tabpanel"
+                id={`season-panel-${currentSeason.seasonNum}`}
+                aria-labelledby={`season-tab-${currentSeason.seasonNum}`}
+                sx={{ p: 2 }}
+              >
+                {currentSeason.episodes.length === 0 ? (
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    align="center"
+                    sx={{ py: 4 }}
+                  >
+                    No episodes found for this season
+                  </Typography>
+                ) : (
+                  <TableContainer component={Paper} elevation={0}>
+                    <Table aria-label="episode status table">
+                      <TableBody>
+                        {currentSeason.episodes.map((episode) => (
+                          <TableRow
+                            key={episode.episodeNum}
                             sx={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "flex-end",
-                              gap: 1,
+                              "&:last-child td, &:last-child th": { border: 0 },
+                              "&:hover": {
+                                backgroundColor: theme.palette.action.hover,
+                              },
                             }}
                           >
-                            <Typography
-                              variant="body2"
-                              sx={{ color: theme.palette.success.main }}
-                            >
-                              Downloaded
-                            </Typography>
-                            <CheckCircleIcon
+                            <TableCell
+                              component="th"
+                              scope="row"
                               sx={{
-                                color: theme.palette.success.main,
-                                fontSize: 20,
+                                fontWeight: 500,
+                                color: theme.palette.text.primary,
                               }}
-                            />
-                          </Box>
-                        ) : (
-                          <Box
-                            sx={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "flex-end",
-                              gap: 1,
-                            }}
-                          >
-                            <Typography
-                              variant="body2"
-                              sx={{ color: theme.palette.error.main, fontWeight: 600 }}
                             >
-                              Missing
-                            </Typography>
-                            <CancelIcon
-                              sx={{
-                                color: theme.palette.error.main,
-                                fontSize: 20,
-                              }}
-                            />
-                          </Box>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-        </Box>
+                              <Box>
+                                <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                                  Episode {episode.episodeNum}
+                                  {episode.name && `: ${episode.name}`}
+                                </Typography>
+                                {episode.aired && (
+                                  <Typography
+                                    variant="caption"
+                                    sx={{ color: theme.palette.text.secondary }}
+                                  >
+                                    Aired: {new Date(episode.aired).toLocaleDateString()}
+                                  </Typography>
+                                )}
+                              </Box>
+                            </TableCell>
+                            <TableCell align="right">
+                              {episode.downloaded ? (
+                                <Box
+                                  sx={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "flex-end",
+                                    gap: 1,
+                                  }}
+                                >
+                                  <Typography
+                                    variant="body2"
+                                    sx={{ color: theme.palette.success.main }}
+                                  >
+                                    Downloaded
+                                  </Typography>
+                                  <CheckCircleIcon
+                                    sx={{
+                                      color: theme.palette.success.main,
+                                      fontSize: 20,
+                                    }}
+                                  />
+                                </Box>
+                              ) : (
+                                <Box
+                                  sx={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "flex-end",
+                                    gap: 1,
+                                  }}
+                                >
+                                  <Typography
+                                    variant="body2"
+                                    sx={{ color: theme.palette.error.main, fontWeight: 600 }}
+                                  >
+                                    Not Downloaded
+                                  </Typography>
+                                  <CancelIcon
+                                    sx={{
+                                      color: theme.palette.error.main,
+                                      fontSize: 20,
+                                    }}
+                                  />
+                                </Box>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                )}
+              </Box>
+            )}
+          </>
+        )}
       </DialogContent>
 
       {/* Dialog Actions */}

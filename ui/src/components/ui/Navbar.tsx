@@ -122,6 +122,27 @@ const Navbar: React.FC<NavbarProps> = ({ onSearchClick }) => {
           >
             Movies
           </Button>
+          <Button
+            component={Link}
+            to="/library"
+            aria-label="Navigate to library page"
+            sx={{
+              color: isActive('/library') ? theme.palette.primary.main : theme.palette.text.primary,
+              fontWeight: isActive('/library') ? 600 : 500,
+              fontSize: '1rem',
+              px: 2,
+              borderBottom: isActive('/library') ? `2px solid ${theme.palette.primary.main}` : '2px solid transparent',
+              borderRadius: 0,
+              transition: 'all 0.2s ease-in-out',
+              '&:hover': {
+                backgroundColor: 'transparent',
+                color: theme.palette.primary.light,
+                borderBottom: `2px solid ${theme.palette.primary.light}`,
+              },
+            }}
+          >
+            Library
+          </Button>
         </Box>
 
         {/* Right: Notifications and Search */}

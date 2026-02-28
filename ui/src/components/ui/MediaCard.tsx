@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 import Card from "@mui/material/Card";
-import CardMedia from "@mui/material/CardMedia";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import Chip from "@mui/material/Chip";
@@ -18,6 +17,7 @@ export interface MediaCardProps {
   onClick: (media: MediaCardProps["media"]) => void;
   statusBadge?: MediaStatusBadge;
   isLoadingStatus?: boolean;
+  onImageLoad?: () => void;
 }
 
 /**
@@ -37,6 +37,7 @@ const MediaCard: React.FC<MediaCardProps> = ({
   onClick,
   statusBadge,
   isLoadingStatus = false,
+  onImageLoad,
 }) => {
   const theme = useTheme();
   const [isHovered, setIsHovered] = useState(false);
@@ -120,15 +121,17 @@ const MediaCard: React.FC<MediaCardProps> = ({
         },
       }}
     >
-      <CardMedia
-        component="img"
-        image={media.imageUrl}
+      <img
+        src={media.imageUrl}
         alt={media.name}
-        loading="lazy"
-        sx={{
+        loading="eager"
+        onLoad={onImageLoad}
+        onError={onImageLoad}
+        style={{
           width: "100%",
           height: "100%",
           objectFit: "cover",
+          display: "block",
         }}
       />
 
