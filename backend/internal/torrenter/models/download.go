@@ -1,12 +1,17 @@
 package models
 
 import (
+	"errors"
 	"fmt"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 
 	"go.opentelemetry.io/otel/trace"
 	"golift.io/starr/prowlarr"
 )
+
+// ErrNoTorrentFound is returned when no suitable torrent could be found for any episode/movie.
+// The webserver's retry logic uses this to requeue scheduled downloads instead of deleting them.
+var ErrNoTorrentFound = errors.New("no suitable torrent found")
 
 type DownloadRequest struct {
 	MediaName   string `form:"mediaName" binding:"required"`

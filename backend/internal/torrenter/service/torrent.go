@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -140,10 +141,22 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 		)
 		defer searchSpan.End()
 
+		var notFoundCount int
 		for episodeIdx, strategies := range searchStrategies {
 			if err := q.processEpisodeDownload(ctx, episodeIdx, strategies, req, done, &wg); err != nil {
+				if errors.Is(err, models.ErrNoTorrentFound) {
+					notFoundCount++
+					continue
+				}
 				return err
 			}
+		}
+
+		// If ALL episodes failed to find torrents, return the sentinel error
+		// so the scheduler can requeue instead of deleting.
+		if notFoundCount == len(searchStrategies) {
+			close(done)
+			return models.ErrNoTorrentFound
 		}
 
 		// Close the channel after all monitoring goroutines complete
@@ -291,9 +304,9 @@ func (q *QbittHandler) processEpisodeDownload(
 		}
 		// Update notification to failed
 		q.updateNotificationStatus(episodeCtx, ss.TvdbId, "No torrents found matching criteria", notifications.StatusFailed)
-		episodeSpan.SetStatus(codes.Ok, "no suitable torrent found")
+		episodeSpan.SetStatus(codes.Error, "no suitable torrent found")
 		episodeSpan.End()
-		return nil
+		return models.ErrNoTorrentFound
 	}
 
 	// Download the torrent and start monitoring
@@ -473,7 +486,7 @@ func (q *QbittHandler) updateNotificationStatus(ctx context.Context, tvdbId, rea
 		return
 	}
 
-	// Build log attributes
+	// Build log attributes and emit success log
 	logAttrs := []any{
 		"notification_id", notification.ID,
 		"status", string(status),
@@ -481,6 +494,7 @@ func (q *QbittHandler) updateNotificationStatus(ctx context.Context, tvdbId, rea
 	if reason != "" {
 		logAttrs = append(logAttrs, "reason", reason)
 	}
+	q.logger.InfoContext(ctx, "Updated notification status", telemetry.WithTraceContext(ctx, logAttrs...)...)
 }
 
 // monitorTorrentCompletion watches a torrent until it completes and sends the completion event
@@ -640,11 +654,15 @@ func (q *QbittHandler) createMovieSearchStrategy(req *tvdb.Media) []*models.Sear
 }
 
 func (q *QbittHandler) didTorrentComplete(torrent *qbittorrent.Torrent) bool {
-	fmt.Printf("Torrent State: %s\n", torrent.State)
-	if torrent.Completed == torrent.Size && torrent.State == "stalledUP" {
-		return true
+	if torrent.Completed != torrent.Size {
+		return false
 	}
-	return false
+	switch torrent.State {
+	case "stalledUP", "uploading", "pausedUP", "queuedUP", "forcedUP":
+		return true
+	default:
+		return false
+	}
 }
 
 func (q *QbittHandler) calcCategories(show bool) []int64 {

@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jbofill10/scout/backend/internal/torrenter/interactors"
+	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 )
@@ -34,6 +36,11 @@ func (h *DownloadHandler) DownloadTorrent(c *gin.Context) {
 	}
 
 	if err := h.interactor.InitiateDownload(ctx, &req); err != nil {
+		if errors.Is(err, models.ErrNoTorrentFound) {
+			h.logger.WarnContext(ctx, "No torrent found for media", telemetry.WithTraceContext(ctx, "media", req.Name)...)
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
 		h.logger.ErrorContext(ctx, "Failed to initiate download", telemetry.WithTraceContext(ctx, "error", err, "media", req.Name)...)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
