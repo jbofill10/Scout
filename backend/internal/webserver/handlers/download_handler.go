@@ -2,11 +2,12 @@ package handlers
 
 import (
 	"log/slog"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jbofill10/scout/backend/internal/webserver/interactors"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
-	"github.com/jbofill10/scout/backend/internal/webserver/interactors"
 )
 
 type DownloadHandler struct {
@@ -33,6 +34,22 @@ func (h *DownloadHandler) DownloadShow(c *gin.Context) {
 
 	// Extract context for trace propagation and logging
 	ctx := c.Request.Context()
+
+	if req.Category != "series" {
+		h.logger.ErrorContext(ctx, "Invalid media type", telemetry.WithTraceContext(ctx, "category", req.Category)...)
+		c.JSON(400, gin.H{"error": "Invalid media type: expected 'series'"})
+		return
+	}
+	if strings.TrimSpace(req.Id) == "" || strings.TrimSpace(req.Name) == "" {
+		h.logger.ErrorContext(ctx, "Missing required fields", telemetry.WithTraceContext(ctx, "id", req.Id, "name", req.Name)...)
+		c.JSON(400, gin.H{"error": "Missing required fields: id and mediaName are required"})
+		return
+	}
+	if len(req.Metadata.Episodes) == 0 {
+		h.logger.ErrorContext(ctx, "Missing required episodes", telemetry.WithTraceContext(ctx)...)
+		c.JSON(400, gin.H{"error": "Missing required fields: metadata.episodes must contain at least one episode"})
+		return
+	}
 
 	err := h.interactor.DownloadShow(ctx, req)
 	if err != nil {
@@ -64,6 +81,11 @@ func (h *DownloadHandler) DownloadMovie(c *gin.Context) {
 	if req.Category != "movie" {
 		h.logger.ErrorContext(ctx, "Invalid media type", telemetry.WithTraceContext(ctx, "category", req.Category)...)
 		c.JSON(400, gin.H{"error": "Invalid media type: expected 'movie'"})
+		return
+	}
+	if strings.TrimSpace(req.Id) == "" || strings.TrimSpace(req.Name) == "" {
+		h.logger.ErrorContext(ctx, "Missing required fields", telemetry.WithTraceContext(ctx, "id", req.Id, "name", req.Name)...)
+		c.JSON(400, gin.H{"error": "Missing required fields: id and mediaName are required"})
 		return
 	}
 

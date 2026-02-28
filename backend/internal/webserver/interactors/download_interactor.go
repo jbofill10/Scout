@@ -9,6 +9,7 @@ import (
 	"github.com/jbofill10/scout/backend/internal/webserver/clients"
 	"github.com/jbofill10/scout/backend/internal/webserver/repository"
 	"github.com/jbofill10/scout/backend/internal/webserver/scheduler"
+	"github.com/jbofill10/scout/backend/pkg/library"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/notifications"
 	status "github.com/jbofill10/scout/backend/pkg/status"
@@ -20,6 +21,14 @@ import (
 )
 
 var tracer = otel.Tracer("webserver")
+
+const (
+	defaultImmediateDownloadAttempts = 3
+	immediateRetryBaseDelay          = 2 * time.Second
+	scheduledRetryBaseDelay          = 5 * time.Minute
+	scheduledMaxRetries              = 5
+	failedDownloadFollowUpDelay      = 10 * time.Minute
+)
 
 type DownloadInteractor struct {
 	scheduler        *scheduler.Scheduler
@@ -76,18 +85,113 @@ func (i *DownloadInteractor) WatchForDueMedia() {
 				traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
 
 				// Media is already complete and ready for Download()
-				err := i.torrenterClient.Download(ctx, media)
+				err := i.downloadWithRetry(ctx, media, defaultImmediateDownloadAttempts, immediateRetryBaseDelay)
 				if err != nil {
 					i.logger.ErrorContext(ctx, "Failed to download media", "error", err)
+
+					retryScheduled, attempt, nextAttemptAt, retryErr := i.repo.RequeueOrFail(
+						ctx,
+						media,
+						err.Error(),
+						scheduledMaxRetries,
+						scheduledRetryBaseDelay,
+					)
+					if retryErr != nil {
+						i.logger.ErrorContext(ctx, "Failed to requeue scheduled media", "error", retryErr)
+					} else if retryScheduled {
+						i.logger.WarnContext(
+							ctx,
+							"Scheduled media requeued after failure",
+							"retry_attempt",
+							attempt,
+							"next_attempt_at",
+							nextAttemptAt.Format(time.RFC3339),
+						)
+					} else {
+						i.logger.ErrorContext(ctx, "Scheduled media retries exhausted", "media", media.Name, "attempt", attempt)
+					}
+
 					// Log failure for each episode in the media
 					for _, ep := range media.Metadata.Episodes {
 						_ = i.repo.InsertDownloadHistory(media.Name, ep.SeasonNumber, ep.Number, ep.AbsoluteNumber,
 							status.Failure, "[Scheduled Download Error]: "+err.Error(), traceID, spanID)
 					}
+					return
+				}
+
+				if err := i.repo.MarkCompleted(ctx, media); err != nil {
+					i.logger.WarnContext(ctx, "Failed to mark scheduled media complete", "error", err)
 				}
 			}(media)
 		}
 	}()
+}
+
+func (i *DownloadInteractor) downloadWithRetry(
+	ctx context.Context,
+	media tvdb.Media,
+	maxAttempts int,
+	baseDelay time.Duration,
+) error {
+	if maxAttempts <= 1 {
+		return i.torrenterClient.Download(ctx, media)
+	}
+
+	delay := baseDelay
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		err := i.torrenterClient.Download(ctx, media)
+		if err == nil {
+			if attempt > 1 {
+				i.logger.InfoContext(ctx, "Download succeeded after retry", "attempt", attempt, "media", media.Name)
+			}
+			return nil
+		}
+		lastErr = err
+
+		if attempt == maxAttempts {
+			break
+		}
+
+		i.logger.WarnContext(ctx, "Download attempt failed, retrying",
+			"attempt", attempt, "max_attempts", maxAttempts, "media", media.Name, "retry_delay", delay.String(), "error", err)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+
+		delay *= 2
+	}
+
+	return lastErr
+}
+
+func (i *DownloadInteractor) scheduleFollowUpRetry(ctx context.Context, media tvdb.Media, reason error) {
+	traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
+	retryAt := time.Now().UTC().Add(failedDownloadFollowUpDelay)
+
+	err := i.repo.Schedule(ctx, media, retryAt, traceID, spanID)
+	if err != nil {
+		if err == repository.ErrDuplicateScheduled {
+			i.logger.InfoContext(ctx, "Follow-up retry already scheduled", "media", media.Name)
+			return
+		}
+		i.logger.ErrorContext(ctx, "Failed to schedule follow-up retry", "media", media.Name, "error", err)
+		return
+	}
+
+	i.logger.WarnContext(
+		ctx,
+		"Scheduled follow-up retry after download failure",
+		"media",
+		media.Name,
+		"retry_at",
+		retryAt.Format(time.RFC3339),
+		"reason",
+		reason.Error(),
+	)
 }
 
 func (i *DownloadInteractor) extractAliases(aliases []tvdb.Alias) []string {
@@ -108,7 +212,7 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 
 	isAnime := isMediaAnime(extendedInfo)
 
-	today := time.Now()
+	today := normalizeDateUTC(time.Now())
 	i.logger.InfoContext(ctx, "Download request",
 		"media_id", req.Id,
 		"media_name", req.Name,
@@ -133,6 +237,7 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 		if episode.SeasonNumber == 0 {
 			// Temporary, skip specials
 			i.logger.InfoContext(episodeCtx, "Skipping special episode", "episode", episode.Number)
+			episodeSpan.End()
 			continue
 		}
 
@@ -151,7 +256,9 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 		traceID, spanID := telemetry.GetTraceSpanIDs(episodeCtx)
 
 		// Has the episode aired yet?
-		if today.After(episodeAired) {
+		episodeAired = normalizeDateUTC(episodeAired)
+
+		if !today.Before(episodeAired) {
 			episodeSpan.SetAttributes(attribute.String("episode.status", "downloading"))
 			mediaToDownload = append(mediaToDownload, episode)
 			err = i.repo.InsertDownloadHistory(req.Name, episode.SeasonNumber, episode.Number, episode.AbsoluteNumber,
@@ -251,14 +358,34 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 		}
 		downloadPayload.Metadata.Episodes = mediaToDownload
 
-		err = i.torrenterClient.Download(ctx, downloadPayload)
+		err = i.downloadWithRetry(ctx, downloadPayload, defaultImmediateDownloadAttempts, immediateRetryBaseDelay)
 		if err != nil {
 			i.logger.ErrorContext(ctx, "Failed to download show", "error", err)
+
+			for _, ep := range mediaToDownload {
+				retryMedia := downloadPayload
+				retryMedia.Metadata.Episodes = []tvdb.Episode{ep}
+				i.scheduleFollowUpRetry(ctx, retryMedia, err)
+			}
+
 			return err
 		}
 		i.logger.InfoContext(ctx, "Sent aired episodes to torrenter", "count", len(mediaToDownload))
 	} else {
 		i.logger.InfoContext(ctx, "No aired episodes to download immediately")
+	}
+
+	// Sync ALL episodes (aired + future) to TvdbEpisodes table for missing episode detection
+	// This leverages the download payload - we already have this data from TVDB!
+	tvdbEpisodes := convertToTvdbEpisodes(req.Id, req.Metadata.Episodes)
+	if len(tvdbEpisodes) > 0 {
+		err = i.torrenterClient.SyncEpisodes(ctx, req.Id, tvdbEpisodes)
+		if err != nil {
+			// Non-fatal - download continues even if sync fails
+			i.logger.WarnContext(ctx, "Failed to sync episodes to library", "error", err)
+		} else {
+			i.logger.InfoContext(ctx, "Successfully synced episodes to library", "count", len(tvdbEpisodes))
+		}
 	}
 
 	return nil
@@ -284,9 +411,10 @@ func (i *DownloadInteractor) DownloadMovie(ctx context.Context, req tvdb.Media) 
 		i.logger.WarnContext(ctx, "Failed to parse movie release date, treating as released",
 			"error", err, "first_aired", req.Metadata.FirstAired)
 		// Download immediately
-		err = i.torrenterClient.Download(ctx, req)
+		err = i.downloadWithRetry(ctx, req, defaultImmediateDownloadAttempts, immediateRetryBaseDelay)
 		if err != nil {
 			i.logger.ErrorContext(ctx, "Failed to download movie", "error", err)
+			i.scheduleFollowUpRetry(ctx, req, err)
 			return err
 		}
 		i.logger.InfoContext(ctx, "Sent movie to torrenter", "movie", req.Name)
@@ -294,7 +422,8 @@ func (i *DownloadInteractor) DownloadMovie(ctx context.Context, req tvdb.Media) 
 	}
 
 	// Check if release date is in the future
-	today := time.Now()
+	today := normalizeDateUTC(time.Now())
+	releaseDate = normalizeDateUTC(releaseDate)
 	if releaseDate.After(today) {
 		// Schedule for future download
 		traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
@@ -342,9 +471,10 @@ func (i *DownloadInteractor) DownloadMovie(ctx context.Context, req tvdb.Media) 
 		}
 	}
 
-	err = i.torrenterClient.Download(ctx, req)
+	err = i.downloadWithRetry(ctx, req, defaultImmediateDownloadAttempts, immediateRetryBaseDelay)
 	if err != nil {
 		i.logger.ErrorContext(ctx, "Failed to download movie", "error", err)
+		i.scheduleFollowUpRetry(ctx, req, err)
 		return err
 	}
 	i.logger.InfoContext(ctx, "Sent movie to torrenter", "movie", req.Name)
@@ -370,4 +500,26 @@ func isMediaAnime(req tvdb.TVDBSeriesExtendedResponse) bool {
 		}
 	}
 	return false
+}
+
+// convertToTvdbEpisodes converts tvdb.Episode objects to library.TvdbEpisode for storage
+func convertToTvdbEpisodes(seriesTvdbId string, episodes []tvdb.Episode) []library.TvdbEpisode {
+	tvdbEpisodes := make([]library.TvdbEpisode, 0, len(episodes))
+	for _, ep := range episodes {
+		tvdbEpisodes = append(tvdbEpisodes, library.TvdbEpisode{
+			TvdbId:         fmt.Sprintf("%d", ep.Id),
+			SeriesTvdbId:   seriesTvdbId,
+			SeasonNumber:   ep.SeasonNumber,
+			EpisodeNumber:  ep.Number,
+			AbsoluteNumber: ep.AbsoluteNumber,
+			Name:           ep.Name,
+			Aired:          ep.Aired,
+		})
+	}
+	return tvdbEpisodes
+}
+
+// normalizeDateUTC truncates time to YYYY-MM-DD in UTC for stable date-only comparisons.
+func normalizeDateUTC(t time.Time) time.Time {
+	return time.Date(t.UTC().Year(), t.UTC().Month(), t.UTC().Day(), 0, 0, 0, 0, time.UTC)
 }

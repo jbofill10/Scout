@@ -53,61 +53,22 @@ func (s *SchedulerTestSuite) TestStart_VariousScenarios() {
 		description    string
 	}{
 		{
-			name: "media already due - immediate send",
+			name: "media due - immediate send",
 			mediaList: []tvdb.Media{
 				{
 					Name: "Test Show",
-					Metadata: tvdb.TVDBSeriesMetadata{
-						Episodes: []tvdb.Episode{
-							{Aired: time.Now().AddDate(0, 0, -1).Format("2006-01-02")},
-						},
-					},
 				},
 			},
 			repoError:      nil,
 			expectedQueued: 1,
-			description:    "Should immediately queue media that has already aired",
+			description:    "Should immediately queue due media returned by repository",
 		},
 		{
-			name: "media in future - scheduled send",
-			mediaList: []tvdb.Media{
-				{
-					Name: "Future Show",
-					Metadata: tvdb.TVDBSeriesMetadata{
-						Episodes: []tvdb.Episode{
-							{Aired: time.Now().AddDate(0, 0, 2).Format("2006-01-02")},
-						},
-					},
-				},
-			},
-			repoError:      nil,
-			expectedQueued: 0, // Won't queue - outside 24hr polling window
-			description:    "Should schedule media for future release (beyond polling window)",
-		},
-		{
-			name: "invalid aired date",
-			mediaList: []tvdb.Media{
-				{
-					Name: "Invalid Show",
-					Metadata: tvdb.TVDBSeriesMetadata{
-						Episodes: []tvdb.Episode{
-							{Aired: "invalid-date"},
-						},
-					},
-				},
-			},
+			name:           "no due media",
+			mediaList:      []tvdb.Media{},
 			repoError:      nil,
 			expectedQueued: 0,
-			description:    "Should skip media with invalid aired date",
-		},
-		{
-			name: "empty episodes",
-			mediaList: []tvdb.Media{
-				{Name: "Empty Show", Metadata: tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{}}},
-			},
-			repoError:      nil,
-			expectedQueued: 0,
-			description:    "Should not queue media with no episodes",
+			description:    "Should not queue when repository returns no due media",
 		},
 		{
 			name:           "repository error",
@@ -148,25 +109,14 @@ func (s *SchedulerTestSuite) TestStart_VariousScenarios() {
 	}
 }
 
-func (s *SchedulerTestSuite) TestStart_MultipleFutureMedia() {
+func (s *SchedulerTestSuite) TestStart_QueuesAllDueMedia() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mockRepo := repoMocks.NewSchedulerRepository(s.T())
 	scheduler := NewScheduler(mockRepo, logger)
 
-	// Create media with staggered future release times (2 and 3 days ahead, beyond 24hr window)
 	mediaList := []tvdb.Media{
-		{
-			Name: "Show 1",
-			Metadata: tvdb.TVDBSeriesMetadata{
-				Episodes: []tvdb.Episode{{Aired: time.Now().AddDate(0, 0, 2).Format("2006-01-02")}},
-			},
-		},
-		{
-			Name: "Show 2",
-			Metadata: tvdb.TVDBSeriesMetadata{
-				Episodes: []tvdb.Episode{{Aired: time.Now().AddDate(0, 0, 3).Format("2006-01-02")}},
-			},
-		},
+		{Name: "Show 1"},
+		{Name: "Show 2"},
 	}
 
 	mockRepo.On("GetDueMedia", mock.Anything, mock.Anything).Return(mediaList, nil)
@@ -174,10 +124,9 @@ func (s *SchedulerTestSuite) TestStart_MultipleFutureMedia() {
 	queue := make(chan tvdb.Media, 10)
 	scheduler.Start(queue)
 
-	// Give time for scheduler to process and create timers
+	// Give time for scheduler to process
 	time.Sleep(100 * time.Millisecond)
 
-	// Since both are tomorrow/day after, they won't queue during this test
 	queuedCount := 0
 	timeout := time.After(50 * time.Millisecond)
 collecting:
@@ -190,49 +139,22 @@ collecting:
 		}
 	}
 
-	s.Equal(0, queuedCount, "Future media should be scheduled but not queued immediately")
+	s.Equal(2, queuedCount, "All due media returned by repository should be queued")
 	// Verify scheduler created timers by checking it doesn't error
 	scheduler.Stop()
 }
 
-func (s *SchedulerTestSuite) TestStart_MixedDueAndFutureMedia() {
+func (s *SchedulerTestSuite) TestStart_RepoCalledWithCurrentTime() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mockRepo := repoMocks.NewSchedulerRepository(s.T())
 	scheduler := NewScheduler(mockRepo, logger)
 
-	mediaList := []tvdb.Media{
-		{
-			Name: "Already Due",
-			Metadata: tvdb.TVDBSeriesMetadata{
-				Episodes: []tvdb.Episode{{Aired: time.Now().AddDate(0, 0, -1).Format("2006-01-02")}},
-			},
-		},
-		{
-			Name: "Future",
-			Metadata: tvdb.TVDBSeriesMetadata{
-				Episodes: []tvdb.Episode{{Aired: time.Now().AddDate(0, 0, 1).Format("2006-01-02")}},
-			},
-		},
-	}
-
-	mockRepo.On("GetDueMedia", mock.Anything, mock.Anything).Return(mediaList, nil)
+	mockRepo.On("GetDueMedia", mock.Anything, mock.AnythingOfType("time.Time")).Return([]tvdb.Media{}, nil)
 
 	queue := make(chan tvdb.Media, 10)
 	scheduler.Start(queue)
 
-	// Collect items with timeout
-	timeout := time.After(100 * time.Millisecond)
-	queuedCount := 0
-collecting:
-	for {
-		select {
-		case <-queue:
-			queuedCount++
-		case <-timeout:
-			break collecting
-		}
-	}
-
-	s.Equal(1, queuedCount, "Should queue only the already-due media, not future media")
+	time.Sleep(100 * time.Millisecond)
+	mockRepo.AssertNumberOfCalls(s.T(), "GetDueMedia", 1)
 	scheduler.Stop()
 }

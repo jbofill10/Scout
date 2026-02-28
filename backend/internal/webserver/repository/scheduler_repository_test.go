@@ -128,13 +128,15 @@ func (s *SchedulerRepoTestSuite) TestGetDueMedia_Success() {
 	rows := sqlmock.NewRows([]string{"id", "media"}).
 		AddRow(1, mediaJSON)
 
+	s.mock.ExpectBegin()
 	s.mock.ExpectQuery(`SELECT id, media FROM ScheduledDownloads`).
-		WithArgs(StatusPending, sqlmock.AnyArg()).
+		WithArgs(StatusPending, StatusQueued, sqlmock.AnyArg()).
 		WillReturnRows(rows)
 
 	s.mock.ExpectExec(`UPDATE ScheduledDownloads SET schedule_status`).
 		WithArgs(StatusQueued, 1).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectCommit()
 
 	results, err := s.repo.GetDueMedia(context.Background(), windowEnd)
 
@@ -149,9 +151,11 @@ func (s *SchedulerRepoTestSuite) TestGetDueMedia_EmptyResults() {
 
 	rows := sqlmock.NewRows([]string{"id", "media"})
 
+	s.mock.ExpectBegin()
 	s.mock.ExpectQuery(`SELECT id, media FROM ScheduledDownloads`).
-		WithArgs(StatusPending, sqlmock.AnyArg()).
+		WithArgs(StatusPending, StatusQueued, sqlmock.AnyArg()).
 		WillReturnRows(rows)
+	s.mock.ExpectCommit()
 
 	results, err := s.repo.GetDueMedia(context.Background(), windowEnd)
 
@@ -163,9 +167,11 @@ func (s *SchedulerRepoTestSuite) TestGetDueMedia_EmptyResults() {
 func (s *SchedulerRepoTestSuite) TestGetDueMedia_QueryError() {
 	windowEnd := time.Now().Add(24 * time.Hour)
 
+	s.mock.ExpectBegin()
 	s.mock.ExpectQuery(`SELECT id, media FROM ScheduledDownloads`).
-		WithArgs(StatusPending, sqlmock.AnyArg()).
+		WithArgs(StatusPending, StatusQueued, sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
 
 	results, err := s.repo.GetDueMedia(context.Background(), windowEnd)
 
@@ -180,9 +186,11 @@ func (s *SchedulerRepoTestSuite) TestGetDueMedia_InvalidJSON() {
 	rows := sqlmock.NewRows([]string{"id", "media"}).
 		AddRow(1, []byte("invalid json"))
 
+	s.mock.ExpectBegin()
 	s.mock.ExpectQuery(`SELECT id, media FROM ScheduledDownloads`).
-		WithArgs(StatusPending, sqlmock.AnyArg()).
+		WithArgs(StatusPending, StatusQueued, sqlmock.AnyArg()).
 		WillReturnRows(rows)
+	s.mock.ExpectCommit()
 
 	results, err := s.repo.GetDueMedia(context.Background(), windowEnd)
 
@@ -203,8 +211,9 @@ func (s *SchedulerRepoTestSuite) TestGetDueMedia_MultipleResults() {
 		AddRow(1, mediaJSON1).
 		AddRow(2, mediaJSON2)
 
+	s.mock.ExpectBegin()
 	s.mock.ExpectQuery(`SELECT id, media FROM ScheduledDownloads`).
-		WithArgs(StatusPending, sqlmock.AnyArg()).
+		WithArgs(StatusPending, StatusQueued, sqlmock.AnyArg()).
 		WillReturnRows(rows)
 
 	s.mock.ExpectExec(`UPDATE ScheduledDownloads SET schedule_status`).
@@ -214,6 +223,7 @@ func (s *SchedulerRepoTestSuite) TestGetDueMedia_MultipleResults() {
 	s.mock.ExpectExec(`UPDATE ScheduledDownloads SET schedule_status`).
 		WithArgs(StatusQueued, 2).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectCommit()
 
 	results, err := s.repo.GetDueMedia(context.Background(), windowEnd)
 
@@ -254,5 +264,89 @@ func (s *SchedulerRepoTestSuite) TestInsertDownloadHistory_DatabaseError() {
 	err := s.repo.InsertDownloadHistory("Test Show", 1, 2, 0, "searching", "", "test-trace-id", "test-span-id")
 
 	s.Error(err)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestMarkCompleted_Success() {
+	media := tvdb.Media{
+		Id:       "123",
+		Name:     "Test Movie",
+		Category: "movie",
+		Metadata: tvdb.TVDBSeriesMetadata{
+			FirstAired: "2026-02-07",
+		},
+	}
+
+	s.mock.ExpectExec(`DELETE FROM ScheduledDownloads WHERE content_hash`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := s.repo.MarkCompleted(context.Background(), media)
+
+	s.NoError(err)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestRequeueOrFail_Requeue() {
+	media := tvdb.Media{
+		Id:   "123",
+		Name: "Test Show",
+		Metadata: tvdb.TVDBSeriesMetadata{
+			Episodes: []tvdb.Episode{{SeasonNumber: 1, Number: 1, AbsoluteNumber: 0}},
+		},
+	}
+
+	s.mock.ExpectQuery(`SELECT retry_count, max_retries FROM ScheduledDownloads WHERE content_hash`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"retry_count", "max_retries"}).AddRow(1, 3))
+
+	s.mock.ExpectExec(`UPDATE ScheduledDownloads`).
+		WithArgs(StatusPending, 2, 3, "boom", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	retryScheduled, attempt, nextAttemptAt, err := s.repo.RequeueOrFail(
+		context.Background(),
+		media,
+		"boom",
+		5,
+		time.Minute,
+	)
+
+	s.NoError(err)
+	s.True(retryScheduled)
+	s.Equal(2, attempt)
+	s.False(nextAttemptAt.IsZero())
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestRequeueOrFail_ExhaustedDeletes() {
+	media := tvdb.Media{
+		Id:   "123",
+		Name: "Test Show",
+		Metadata: tvdb.TVDBSeriesMetadata{
+			Episodes: []tvdb.Episode{{SeasonNumber: 1, Number: 1, AbsoluteNumber: 0}},
+		},
+	}
+
+	s.mock.ExpectQuery(`SELECT retry_count, max_retries FROM ScheduledDownloads WHERE content_hash`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"retry_count", "max_retries"}).AddRow(5, 5))
+
+	s.mock.ExpectExec(`DELETE FROM ScheduledDownloads WHERE content_hash`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	retryScheduled, attempt, nextAttemptAt, err := s.repo.RequeueOrFail(
+		context.Background(),
+		media,
+		"boom",
+		5,
+		time.Minute,
+	)
+
+	s.NoError(err)
+	s.False(retryScheduled)
+	s.Equal(6, attempt)
+	s.True(nextAttemptAt.IsZero())
 	s.NoError(s.mock.ExpectationsWereMet())
 }
