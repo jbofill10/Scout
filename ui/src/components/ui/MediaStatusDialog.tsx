@@ -95,11 +95,13 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
     if (statusSeasons) {
       statusSeasons.forEach((season) => {
         season.episodes.forEach((ep) => {
-          if (ep.tvdbId) {
-            downloadedByTvdbId.add(ep.tvdbId);
+          if (ep.downloaded) {
+            if (ep.tvdbId) {
+              downloadedByTvdbId.add(ep.tvdbId);
+            }
+            const key = `${season.seasonNum}-${ep.episodeNum}`;
+            downloadedByKey.add(key);
           }
-          const key = `${season.seasonNum}-${ep.episodeNum}`;
-          downloadedByKey.add(key);
         });
       });
     }

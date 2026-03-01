@@ -2,7 +2,6 @@ package interactors
 
 import (
 	"fmt"
-	"log/slog"
 
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 )
@@ -77,15 +76,6 @@ func calculateEpisodeCountsFromMetadata(media tvdb.Media, showStatus tvdb.ShowSt
 			downloaded++
 		}
 	}
-
-	slog.Info("episode_counts",
-		"tvdbId", media.Id,
-		"name", media.Name,
-		"anime", media.Anime,
-		"absoluteNumbering", absoluteDetected,
-		"downloaded", downloaded,
-		"total", total,
-	)
 
 	return downloaded, total
 }
