@@ -477,7 +477,7 @@ func TestMergeStatusWithMedia_CalculatesEpisodeCounts_AnimeMultiSeasonAbsolute(t
 						Episodes: []tvdb.EpisodeStatus{
 							{EpisodeNum: 1, Downloaded: true},
 							{EpisodeNum: 2, Downloaded: true},
-							{EpisodeNum: 25, Downloaded: true},
+							{EpisodeNum: 24, Downloaded: true},
 						},
 					},
 					{
