@@ -354,10 +354,11 @@ func TestEnrichedPopularMovies_HappyPath(t *testing.T) {
 	mockTorrenter.AssertExpectations(t)
 }
 
-func TestMergeStatusWithMedia_CalculatesEpisodeCounts(t *testing.T) {
+func TestMergeStatusWithMedia_CalculatesEpisodeCounts_NoMetadata(t *testing.T) {
 	interactor, _, _ := setupPopularEnrichedInteractor()
 	ctx := context.Background()
 
+	// No TVDB metadata - falls back to DB-only counting
 	mediaList := []tvdb.Media{
 		{Id: "12345", Category: "series"},
 	}
@@ -383,9 +384,152 @@ func TestMergeStatusWithMedia_CalculatesEpisodeCounts(t *testing.T) {
 	// Execute
 	result := interactor.mergeStatusWithMedia(ctx, mediaList, statusResponse)
 
-	// Assert
+	// Assert - fallback to DB counting
 	assert.Len(t, result, 1)
 	assert.Equal(t, 2, result[0].Status.Downloaded, "Should count 2 downloaded episodes")
 	assert.Equal(t, 3, result[0].Status.Total, "Should count 3 total episodes")
 	assert.Len(t, result[0].Status.Seasons, 1)
+}
+
+func TestMergeStatusWithMedia_CalculatesEpisodeCounts_AnimeAbsoluteNumbering(t *testing.T) {
+	interactor, _, _ := setupPopularEnrichedInteractor()
+	ctx := context.Background()
+
+	// Anime show: TVDB has standard seasonal numbering with AbsoluteNumber set
+	// Plex stores everything under Season 1 with absolute episode numbers
+	mediaList := []tvdb.Media{
+		{
+			Id:       "99999",
+			Category: "series",
+			Anime:    true,
+			Metadata: tvdb.TVDBSeriesMetadata{
+				Episodes: []tvdb.Episode{
+					{Id: 500, Name: "Ep 1", SeasonNumber: 1, Number: 1, AbsoluteNumber: 1},
+					{Id: 501, Name: "Ep 2", SeasonNumber: 1, Number: 2, AbsoluteNumber: 2},
+					{Id: 600, Name: "S2 Ep 1", SeasonNumber: 2, Number: 1, AbsoluteNumber: 25},
+					{Id: 601, Name: "S2 Ep 2", SeasonNumber: 2, Number: 2, AbsoluteNumber: 26},
+				},
+			},
+		},
+	}
+
+	// Plex status: all episodes under Season 1 with absolute numbering
+	statusResponse := tvdb.StatusBatchResponse{
+		Shows: []tvdb.ShowStatus{
+			{
+				TvdbId: "99999",
+				Seasons: []tvdb.SeasonStatus{
+					{
+						SeasonNum: 1,
+						Episodes: []tvdb.EpisodeStatus{
+							{EpisodeNum: 1, Downloaded: true},
+							{EpisodeNum: 2, Downloaded: true},
+							{EpisodeNum: 25, Downloaded: true},  // S02E01 in TVDB
+							{EpisodeNum: 26, Downloaded: false}, // S02E02 not downloaded
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := interactor.mergeStatusWithMedia(ctx, mediaList, statusResponse)
+
+	// S1E1 matches by key "1-1", S1E2 matches by key "1-2",
+	// S2E1 matches by absolute number 25, S2E2 not downloaded
+	assert.Len(t, result, 1)
+	assert.Equal(t, 3, result[0].Status.Downloaded, "Should match 3 episodes (2 by key + 1 by absolute number)")
+	assert.Equal(t, 4, result[0].Status.Total, "Should count 4 total episodes from TVDB metadata")
+}
+
+func TestMergeStatusWithMedia_CalculatesEpisodeCounts_NonAnimeSkipsAbsolute(t *testing.T) {
+	interactor, _, _ := setupPopularEnrichedInteractor()
+	ctx := context.Background()
+
+	// Non-anime show: even with AbsoluteNumber set and Season 1 only status,
+	// absolute matching should NOT activate
+	mediaList := []tvdb.Media{
+		{
+			Id:       "88888",
+			Category: "series",
+			Anime:    false,
+			Metadata: tvdb.TVDBSeriesMetadata{
+				Episodes: []tvdb.Episode{
+					{Id: 700, Name: "Ep 1", SeasonNumber: 1, Number: 1, AbsoluteNumber: 1},
+					{Id: 800, Name: "S2 Ep 1", SeasonNumber: 2, Number: 1, AbsoluteNumber: 13},
+				},
+			},
+		},
+	}
+
+	// Status has Season 1 only with episode 13
+	statusResponse := tvdb.StatusBatchResponse{
+		Shows: []tvdb.ShowStatus{
+			{
+				TvdbId: "88888",
+				Seasons: []tvdb.SeasonStatus{
+					{
+						SeasonNum: 1,
+						Episodes: []tvdb.EpisodeStatus{
+							{EpisodeNum: 1, Downloaded: true},
+							{EpisodeNum: 13, Downloaded: true},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := interactor.mergeStatusWithMedia(ctx, mediaList, statusResponse)
+
+	// Only S1E1 matches by key "1-1". S2E1 should NOT match via absolute (non-anime).
+	assert.Len(t, result, 1)
+	assert.Equal(t, 1, result[0].Status.Downloaded, "Non-anime should not use absolute matching")
+	assert.Equal(t, 2, result[0].Status.Total)
+}
+
+func TestMergeStatusWithMedia_CalculatesEpisodeCounts_WithMetadata(t *testing.T) {
+	interactor, _, _ := setupPopularEnrichedInteractor()
+	ctx := context.Background()
+
+	// With TVDB metadata - uses metadata for total, matches by TVDB ID
+	mediaList := []tvdb.Media{
+		{
+			Id:       "12345",
+			Category: "series",
+			Metadata: tvdb.TVDBSeriesMetadata{
+				Episodes: []tvdb.Episode{
+					{Id: 100, Name: "Ep 1", SeasonNumber: 1, Number: 1},
+					{Id: 101, Name: "Ep 2", SeasonNumber: 1, Number: 2},
+					{Id: 102, Name: "Ep 3", SeasonNumber: 1, Number: 3},
+					{Id: 200, Name: "Ep 1 S2", SeasonNumber: 2, Number: 1},
+				},
+			},
+		},
+	}
+
+	statusResponse := tvdb.StatusBatchResponse{
+		Shows: []tvdb.ShowStatus{
+			{
+				TvdbId: "12345",
+				Seasons: []tvdb.SeasonStatus{
+					{
+						SeasonNum: 1,
+						Episodes: []tvdb.EpisodeStatus{
+							{EpisodeNum: 1, Downloaded: true, TvdbId: "100"},
+							{EpisodeNum: 2, Downloaded: true, TvdbId: "101"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Execute
+	result := interactor.mergeStatusWithMedia(ctx, mediaList, statusResponse)
+
+	// Assert - total from TVDB metadata (4 eps), downloaded matched by TVDB ID (2 eps)
+	assert.Len(t, result, 1)
+	assert.Equal(t, 2, result[0].Status.Downloaded, "Should count 2 downloaded episodes matched by TVDB ID")
+	assert.Equal(t, 4, result[0].Status.Total, "Should count 4 total episodes from TVDB metadata")
 }

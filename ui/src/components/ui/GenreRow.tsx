@@ -12,7 +12,7 @@ import type { SearchResult } from "../SearchResultsList";
 import type { ShowStatus, EnrichedMedia } from "../../types/MediaStatus";
 import { useMediaStatus } from "../../hooks/useMediaStatus";
 import { useEnrichedPopular } from "../../hooks/useProgressiveEnrichment";
-import { getStatusBadgeForMedia } from "../../utils/statusHelpers";
+import { getStatusBadgeForMediaWithEnriched } from "../../utils/statusHelpers";
 import { logError } from "../../lib/logger";
 
 interface GenreRowProps {
@@ -258,10 +258,11 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
               imageUrl: item.image_url,
             }}
             onClick={handleMediaClick}
-            statusBadge={getStatusBadgeForMedia(
+            statusBadge={getStatusBadgeForMediaWithEnriched(
               item.id,
               statusData,
-              mediaType === "series" ? "show" : "movie"
+              mediaType === "series" ? "show" : "movie",
+              enrichedData?.find((e) => e.media.id === item.id)
             )}
           />
         )}

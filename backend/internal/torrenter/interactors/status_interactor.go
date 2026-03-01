@@ -85,17 +85,18 @@ func (i *StatusInteractor) getShowStatus(ctx context.Context, tvdbId string) (me
 	}
 
 	// Convert map to structured SeasonStatus objects
-	for seasonNum, episodeNums := range seasonEpisodes {
+	for seasonNum, episodeInfos := range seasonEpisodes {
 		seasonStatus := media.SeasonStatus{
 			SeasonNum: seasonNum,
 			Episodes:  make([]media.EpisodeStatus, 0),
 		}
 
 		// Create episode status entries
-		for _, episodeNum := range episodeNums {
+		for _, epInfo := range episodeInfos {
 			seasonStatus.Episodes = append(seasonStatus.Episodes, media.EpisodeStatus{
-				EpisodeNum: episodeNum,
+				EpisodeNum: epInfo.EpisodeNum,
 				Downloaded: true, // If it's in the DB, it's downloaded
+				TvdbId:     epInfo.TvdbId,
 			})
 		}
 

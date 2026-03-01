@@ -5,6 +5,7 @@ package mocks
 import (
 	context "context"
 
+	media "github.com/jbofill10/scout/backend/pkg/media"
 	models "github.com/jbofill10/scout/backend/internal/torrenter/models"
 	notifications "github.com/jbofill10/scout/backend/pkg/notifications"
 
@@ -187,23 +188,23 @@ func (_m *Repository) GetShowBaseDirectory(ctx context.Context, tvdbId string) (
 }
 
 // GetShowSeasonEpisodes provides a mock function with given fields: ctx, tvdbId
-func (_m *Repository) GetShowSeasonEpisodes(ctx context.Context, tvdbId string) (map[int][]int, error) {
+func (_m *Repository) GetShowSeasonEpisodes(ctx context.Context, tvdbId string) (map[int][]media.EpisodeInfo, error) {
 	ret := _m.Called(ctx, tvdbId)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetShowSeasonEpisodes")
 	}
 
-	var r0 map[int][]int
+	var r0 map[int][]media.EpisodeInfo
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string) (map[int][]int, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, string) (map[int][]media.EpisodeInfo, error)); ok {
 		return rf(ctx, tvdbId)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string) map[int][]int); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, string) map[int][]media.EpisodeInfo); ok {
 		r0 = rf(ctx, tvdbId)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(map[int][]int)
+			r0 = ret.Get(0).(map[int][]media.EpisodeInfo)
 		}
 	}
 
