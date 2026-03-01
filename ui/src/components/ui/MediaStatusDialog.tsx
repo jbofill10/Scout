@@ -114,7 +114,7 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
       const nonSpecials = statusSeasons.filter((s) => s.seasonNum > 0);
       if (nonSpecials.length < 2) return false;
       return statusSeasons.some((s) => {
-        if (s.seasonNum <= 1) return false;
+        if (s.seasonNum <= 1 || s.episodes.length === 0) return false;
         const minEp = Math.min(...s.episodes.map((ep) => ep.episodeNum));
         return minEp > 1;
       });
@@ -123,7 +123,9 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
       statusSeasons.forEach((season) => {
         if (season.seasonNum === 0) return;
         season.episodes.forEach((ep) => {
-          downloadedByAbsolute.add(ep.episodeNum);
+          if (ep.downloaded) {
+            downloadedByAbsolute.add(ep.episodeNum);
+          }
         });
       });
     }

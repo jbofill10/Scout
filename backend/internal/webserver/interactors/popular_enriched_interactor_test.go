@@ -391,7 +391,7 @@ func TestMergeStatusWithMedia_CalculatesEpisodeCounts_NoMetadata(t *testing.T) {
 	assert.Len(t, result[0].Status.Seasons, 1)
 }
 
-func TestMergeStatusWithMedia_CalculatesEpisodeCounts_AnimeAbsoluteNumbering(t *testing.T) {
+func TestMergeStatusWithMedia_CalculatesEpisodeCounts_AnimeSingleSeasonSkipsAbsolute(t *testing.T) {
 	interactor, _, _ := setupPopularEnrichedInteractor()
 	ctx := context.Background()
 
