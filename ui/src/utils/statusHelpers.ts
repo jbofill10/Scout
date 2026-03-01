@@ -3,6 +3,7 @@ import type {
   SeasonStatus,
   MediaStatusBadge,
   MediaStatusInfo,
+  EnrichedMedia,
 } from '../types/MediaStatus';
 
 /**
@@ -117,4 +118,30 @@ export function buildStatusBadgeFromEnriched(
   }
 
   return undefined;
+}
+
+/**
+ * Gets the status badge preferring enriched data (accurate TVDB-based counts)
+ * over batch status data (DB-only counts that may always show 100%).
+ *
+ * @param tvdbId - TVDB ID of the media item
+ * @param statusData - Status batch response from the API
+ * @param mediaType - Type of media ('show' or 'movie')
+ * @param enrichedMedia - Optional enriched media data with accurate counts
+ * @returns MediaStatusBadge object or undefined if no status found
+ */
+export function getStatusBadgeForMediaWithEnriched(
+  tvdbId: string,
+  statusData: StatusBatchResponse | undefined,
+  mediaType: 'show' | 'movie',
+  enrichedMedia?: EnrichedMedia | null
+): MediaStatusBadge | undefined {
+  // Prefer enriched data if available (has accurate TVDB-based counts)
+  if (enrichedMedia?.status) {
+    const badge = buildStatusBadgeFromEnriched(enrichedMedia.status);
+    if (badge) return badge;
+  }
+
+  // Fall back to batch status
+  return getStatusBadgeForMedia(tvdbId, statusData, mediaType);
 }

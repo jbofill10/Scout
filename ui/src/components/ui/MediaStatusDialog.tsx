@@ -71,12 +71,15 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
 
   // Merge TVDB episode metadata with Plex download status
   const enrichedSeasons = useMemo<EnrichedSeasonInfo[]>(() => {
+    // Prefer enriched status seasons (has TVDB IDs) over batch status prop
+    const statusSeasons = enrichedMedia?.status?.seasons ?? status?.seasons;
+
     // If no enriched data, fall back to status-only display
     if (!enrichedMedia || !enrichedMedia.media.metadata?.episodes) {
-      if (!status || !status.seasons || status.seasons.length === 0) {
+      if (!statusSeasons || statusSeasons.length === 0) {
         return [];
       }
-      return status.seasons.map((season): EnrichedSeasonInfo => ({
+      return statusSeasons.map((season): EnrichedSeasonInfo => ({
         seasonNum: season.seasonNum,
         episodes: season.episodes.map((ep): EnrichedEpisodeInfo => ({
           episodeNum: ep.episodeNum,
@@ -86,22 +89,49 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
       }));
     }
 
-    // Build set of downloaded episodes from status data
-    const downloadedEpisodesSet = new Set<string>();
-    if (status?.seasons) {
-      status.seasons.forEach((season) => {
+    // Build lookup sets from status data for matching
+    const downloadedByTvdbId = new Set<string>();
+    const downloadedByKey = new Set<string>();
+    if (statusSeasons) {
+      statusSeasons.forEach((season) => {
         season.episodes.forEach((ep) => {
+          if (ep.tvdbId) {
+            downloadedByTvdbId.add(ep.tvdbId);
+          }
           const key = `${season.seasonNum}-${ep.episodeNum}`;
-          downloadedEpisodesSet.add(key);
+          downloadedByKey.add(key);
         });
+      });
+    }
+
+    // Build absolute number lookup for anime shows.
+    // Anime in Plex stores all episodes under Season 1 with absolute numbering
+    // while TVDB uses standard seasonal numbering. The absolute number bridges these.
+    const downloadedByAbsolute = new Set<number>();
+    const hasOnlySeason1 = statusSeasons
+      ? statusSeasons.every((s) => s.seasonNum === 0 || s.seasonNum === 1)
+      : false;
+    if (enrichedMedia.media.anime === true && hasOnlySeason1 && statusSeasons) {
+      statusSeasons.forEach((season) => {
+        if (season.seasonNum === 1) {
+          season.episodes.forEach((ep) => {
+            downloadedByAbsolute.add(ep.episodeNum);
+          });
+        }
       });
     }
 
     // Build complete episode list from TVDB metadata
     const seasonsMap = new Map<number, EnrichedEpisodeInfo[]>();
     enrichedMedia.media.metadata.episodes.forEach((ep) => {
-      const key = `${ep.seasonNumber}-${ep.number}`;
-      const downloaded = downloadedEpisodesSet.has(key);
+      // Match by TVDB ID first, then season-episode key, then absolute number
+      const matchByTvdbId = downloadedByTvdbId.has(String(ep.id));
+      const matchByKey = downloadedByKey.has(`${ep.seasonNumber}-${ep.number}`);
+      const matchByAbsolute =
+        ep.absoluteNumber != null &&
+        ep.absoluteNumber > 0 &&
+        downloadedByAbsolute.has(ep.absoluteNumber);
+      const downloaded = matchByTvdbId || matchByKey || matchByAbsolute;
 
       if (!seasonsMap.has(ep.seasonNumber)) {
         seasonsMap.set(ep.seasonNumber, []);

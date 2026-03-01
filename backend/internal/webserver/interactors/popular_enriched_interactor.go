@@ -366,8 +366,8 @@ func (i *PopularEnrichedInteractor) mergeStatusWithMedia(
 			// Merge show status
 			if showStatus, found := showStatusMap[media.Id]; found {
 				statusInfo.Seasons = showStatus.Seasons
-				// Calculate downloaded/total episodes
-				downloaded, total := i.calculateEpisodeCounts(showStatus.Seasons)
+				// Calculate downloaded/total using TVDB metadata for accurate counts
+				downloaded, total := calculateEpisodeCountsFromMetadata(media, showStatus)
 				statusInfo.Downloaded = downloaded
 				statusInfo.Total = total
 			}
@@ -385,17 +385,4 @@ func (i *PopularEnrichedInteractor) mergeStatusWithMedia(
 	}
 
 	return enrichedResults
-}
-
-// calculateEpisodeCounts calculates the total and downloaded episode counts from season status
-func (i *PopularEnrichedInteractor) calculateEpisodeCounts(seasons []tvdb.SeasonStatus) (downloaded, total int) {
-	for _, season := range seasons {
-		for _, episode := range season.Episodes {
-			total++
-			if episode.Downloaded {
-				downloaded++
-			}
-		}
-	}
-	return downloaded, total
 }

@@ -12,10 +12,17 @@ type MovieStatus struct {
 	InLibrary bool   `json:"inLibrary"`
 }
 
+// EpisodeInfo holds episode data from the repository layer (episode number + TVDB ID)
+type EpisodeInfo struct {
+	EpisodeNum int
+	TvdbId     string
+}
+
 // EpisodeStatus represents the download status of a single episode
 type EpisodeStatus struct {
-	EpisodeNum int  `json:"episodeNum"`
-	Downloaded bool `json:"downloaded"`
+	EpisodeNum int    `json:"episodeNum"`
+	Downloaded bool   `json:"downloaded"`
+	TvdbId     string `json:"tvdbId,omitempty"`
 }
 
 // SeasonStatus represents the download status of all episodes in a season

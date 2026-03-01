@@ -4,13 +4,13 @@ import (
 	"context"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
-	tvdb "github.com/jbofill10/scout/backend/pkg/media"
+	"github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/notifications"
 )
 
 // TorrentService handles torrent search and download operations
 type TorrentService interface {
-	HandleDownload(ctx context.Context, req *tvdb.Media, done chan<- models.TorrentCompleteEvent) error
+	HandleDownload(ctx context.Context, req *media.Media, done chan<- models.TorrentCompleteEvent) error
 	RemoveUUIDTag(ctx context.Context, hash string, uuid string) error
 }
 
@@ -38,7 +38,7 @@ type Repository interface {
 	EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season, episode int) (bool, error)
 	MovieExistsByTvdbId(ctx context.Context, tvdbId string) (bool, error)
 	MediaExists(ctx context.Context, id string) (bool, error)
-	GetShowSeasonEpisodes(ctx context.Context, tvdbId string) (map[int][]int, error)
+	GetShowSeasonEpisodes(ctx context.Context, tvdbId string) (map[int][]media.EpisodeInfo, error)
 	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
 	UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error
 	GetPreferredUploaders(ctx context.Context, mediaType string, isAnime bool) ([]string, error)

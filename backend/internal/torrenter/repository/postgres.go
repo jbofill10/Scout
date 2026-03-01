@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	"github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/notifications"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
@@ -38,7 +39,7 @@ type Repository interface {
 	EpisodeExistsByTvdbId(ctx context.Context, tvdbId string, season, episode int) (bool, error)
 	MovieExistsByTvdbId(ctx context.Context, tvdbId string) (bool, error)
 	MediaExists(ctx context.Context, id string) (bool, error)
-	GetShowSeasonEpisodes(ctx context.Context, tvdbId string) (map[int][]int, error)
+	GetShowSeasonEpisodes(ctx context.Context, tvdbId string) (map[int][]media.EpisodeInfo, error)
 	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
 	UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error
 	GetPreferredUploaders(ctx context.Context, mediaType string, isAnime bool) ([]string, error)
@@ -443,14 +444,14 @@ func (r *Repo) GetPreferredUploaders(ctx context.Context, mediaType string, isAn
 	return preferred, nil
 }
 
-// GetShowSeasonEpisodes returns all episodes in a show grouped by season number
-func (r *Repo) GetShowSeasonEpisodes(ctx context.Context, tvdbId string) (map[int][]int, error) {
+// GetShowSeasonEpisodes returns all episodes in a show grouped by season number, including TVDB IDs
+func (r *Repo) GetShowSeasonEpisodes(ctx context.Context, tvdbId string) (map[int][]media.EpisodeInfo, error) {
 	if tvdbId == "" {
-		return make(map[int][]int), nil
+		return make(map[int][]media.EpisodeInfo), nil
 	}
 
 	query := `
-		SELECT s.season_number, e.episode_number
+		SELECT s.season_number, e.episode_number, COALESCE(e.tvdb_id, '')
 		FROM Episodes e
 		JOIN Seasons s ON e.parentId = s.id
 		JOIN Shows sh ON s.parentId = sh.id
@@ -464,15 +465,19 @@ func (r *Repo) GetShowSeasonEpisodes(ctx context.Context, tvdbId string) (map[in
 	}
 	defer rows.Close()
 
-	result := make(map[int][]int)
+	result := make(map[int][]media.EpisodeInfo)
 	for rows.Next() {
 		var seasonNum, episodeNum int
-		if err := rows.Scan(&seasonNum, &episodeNum); err != nil {
+		var epTvdbId string
+		if err := rows.Scan(&seasonNum, &episodeNum, &epTvdbId); err != nil {
 			r.logger.ErrorContext(ctx, "Error scanning episode", "error", err, "tvdb_id", tvdbId)
 			continue
 		}
 
-		result[seasonNum] = append(result[seasonNum], episodeNum)
+		result[seasonNum] = append(result[seasonNum], media.EpisodeInfo{
+			EpisodeNum: episodeNum,
+			TvdbId:     epTvdbId,
+		})
 	}
 
 	if err = rows.Err(); err != nil {

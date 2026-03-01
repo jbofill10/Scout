@@ -11,6 +11,7 @@ export interface StatusRequest {
 export interface EpisodeStatus {
   episodeNum: number;
   downloaded: boolean;
+  tvdbId?: string;
 }
 
 export interface SeasonStatus {
@@ -87,6 +88,7 @@ export interface EnrichedMedia {
     id: string;
     image_url: string;
     mediaName: string;
+    anime?: boolean;
     metadata?: {
       episodes?: Array<{
         aired: string;
@@ -95,6 +97,7 @@ export interface EnrichedMedia {
         name: string;
         number: number;
         seasonNumber: number;
+        absoluteNumber?: number;
       }>;
     };
   };

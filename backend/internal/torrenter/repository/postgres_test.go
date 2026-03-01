@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"testing"
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	"github.com/jbofill10/scout/backend/pkg/media"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/suite"
@@ -447,12 +448,12 @@ func (s *RepoTestSuite) TestUpsertShows_MultipleEpisodes() {
 }
 
 func (s *RepoTestSuite) TestGetShowSeasonEpisodes_MultipleSeasons() {
-	rows := sqlmock.NewRows([]string{"season_number", "episode_number"}).
-		AddRow(1, 1).
-		AddRow(1, 2).
-		AddRow(1, 3).
-		AddRow(2, 1).
-		AddRow(2, 2)
+	rows := sqlmock.NewRows([]string{"season_number", "episode_number", "tvdb_id"}).
+		AddRow(1, 1, "ep100").
+		AddRow(1, 2, "ep101").
+		AddRow(1, 3, "ep102").
+		AddRow(2, 1, "ep200").
+		AddRow(2, 2, "ep201")
 
 	s.mock.ExpectQuery(`SELECT s.season_number, e.episode_number`).
 		WithArgs("123").
@@ -462,13 +463,20 @@ func (s *RepoTestSuite) TestGetShowSeasonEpisodes_MultipleSeasons() {
 
 	s.NoError(err)
 	s.Len(result, 2)
-	s.Equal([]int{1, 2, 3}, result[1])
-	s.Equal([]int{1, 2}, result[2])
+	s.Equal([]media.EpisodeInfo{
+		{EpisodeNum: 1, TvdbId: "ep100"},
+		{EpisodeNum: 2, TvdbId: "ep101"},
+		{EpisodeNum: 3, TvdbId: "ep102"},
+	}, result[1])
+	s.Equal([]media.EpisodeInfo{
+		{EpisodeNum: 1, TvdbId: "ep200"},
+		{EpisodeNum: 2, TvdbId: "ep201"},
+	}, result[2])
 	s.NoError(s.mock.ExpectationsWereMet())
 }
 
 func (s *RepoTestSuite) TestGetShowSeasonEpisodes_NoShow() {
-	rows := sqlmock.NewRows([]string{"season_number", "episode_number"})
+	rows := sqlmock.NewRows([]string{"season_number", "episode_number", "tvdb_id"})
 
 	s.mock.ExpectQuery(`SELECT s.season_number, e.episode_number`).
 		WithArgs("nonexistent").
