@@ -41,17 +41,18 @@ func calculateEpisodeCountsFromMetadata(media tvdb.Media, showStatus tvdb.ShowSt
 	}
 
 	// Build absolute number lookup for anime shows.
-	// Anime in Plex stores all episodes under Season 1 with absolute numbering
-	// (e.g., S01E25) while TVDB uses standard seasonal numbering (S02E01).
-	// The absolute number bridges these two schemes.
+	// Plex uses absolute episode numbering for anime (e.g., S01E25, S02E25, S03E48)
+	// while TVDB uses standard per-season numbering (S02E01). The absolute number
+	// from TVDB metadata bridges these two schemes.
 	downloadedByAbsolute := make(map[int]bool)
-	if media.Anime && hasOnlySeason1(showStatus.Seasons) {
+	if media.Anime && usesAbsoluteNumbering(showStatus.Seasons) {
 		for _, season := range showStatus.Seasons {
-			if season.SeasonNum == 1 {
-				for _, ep := range season.Episodes {
-					if ep.Downloaded {
-						downloadedByAbsolute[ep.EpisodeNum] = true
-					}
+			if season.SeasonNum == 0 {
+				continue
+			}
+			for _, ep := range season.Episodes {
+				if ep.Downloaded {
+					downloadedByAbsolute[ep.EpisodeNum] = true
 				}
 			}
 		}
@@ -78,13 +79,32 @@ func calculateEpisodeCountsFromMetadata(media tvdb.Media, showStatus tvdb.ShowSt
 	return downloaded, total
 }
 
-// hasOnlySeason1 returns true when the only non-specials season is Season 1.
-// This is the characteristic pattern of Plex storing anime with absolute numbering.
-func hasOnlySeason1(seasons []tvdb.SeasonStatus) bool {
+// usesAbsoluteNumbering detects whether Plex is using absolute episode numbering.
+// For shows with 2+ non-specials seasons, if any season > 1 has a minimum
+// episode number > 1, the show uses absolute numbering (e.g. JJK S2 starts at ep 25).
+func usesAbsoluteNumbering(seasons []tvdb.SeasonStatus) bool {
+	nonSpecials := 0
 	for _, s := range seasons {
-		if s.SeasonNum != 0 && s.SeasonNum != 1 {
-			return false
+		if s.SeasonNum > 0 {
+			nonSpecials++
 		}
 	}
-	return true
+	if nonSpecials < 2 {
+		return false
+	}
+	for _, s := range seasons {
+		if s.SeasonNum <= 1 {
+			continue
+		}
+		minEp := 0
+		for _, ep := range s.Episodes {
+			if minEp == 0 || ep.EpisodeNum < minEp {
+				minEp = ep.EpisodeNum
+			}
+		}
+		if minEp > 1 {
+			return true
+		}
+	}
+	return false
 }
