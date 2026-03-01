@@ -3,12 +3,21 @@ set -e
 
 # Scout Docker-Compose Deployment Script
 # Usage:
-#   ./compose-deploy.sh          - Full deployment (build + start)
-#   ./compose-deploy.sh rebuild  - Rebuild all services and restart
-#   ./compose-deploy.sh rebuild <service> - Rebuild specific service
+#   ./compose-deploy.sh                        - Full deployment (build + start)
+#   ./compose-deploy.sh rebuild                - Rebuild all services and restart
+#   ./compose-deploy.sh rebuild <service>      - Rebuild specific service
+#   ./compose-deploy.sh -C <dir> rebuild ...   - Use <dir> as project root (or set SCOUT_DIR)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+
+# Allow overriding the working directory with -C <dir> or SCOUT_DIR env var
+WORK_DIR="${SCOUT_DIR:-$SCRIPT_DIR}"
+while [[ "$1" == "-C" ]]; do
+    WORK_DIR="$2"
+    shift 2
+done
+
+cd "$WORK_DIR"
 
 # Colors for output
 RED='\033[0;31m'
@@ -254,20 +263,27 @@ if [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
     echo "Scout Docker-Compose Deployment Script"
     echo ""
     echo "Usage:"
-    echo "  ./compose-deploy.sh                  - Full deployment (build + start)"
-    echo "  ./compose-deploy.sh rebuild          - Rebuild all services and restart"
-    echo "  ./compose-deploy.sh rebuild <service> - Rebuild specific service"
-    echo "  ./compose-deploy.sh stop             - Stop all services"
-    echo "  ./compose-deploy.sh restart <service> - Restart specific service"
-    echo "  ./compose-deploy.sh status           - Show service status"
-    echo "  ./compose-deploy.sh logs [service]   - View logs (all or specific service)"
+    echo "  ./compose-deploy.sh                           - Full deployment (build + start)"
+    echo "  ./compose-deploy.sh rebuild                   - Rebuild all services and restart"
+    echo "  ./compose-deploy.sh rebuild <service>         - Rebuild specific service"
+    echo "  ./compose-deploy.sh -C <dir> <command> ...    - Use <dir> as project root"
+    echo "  ./compose-deploy.sh stop                      - Stop all services"
+    echo "  ./compose-deploy.sh restart <service>         - Restart specific service"
+    echo "  ./compose-deploy.sh status                    - Show service status"
+    echo "  ./compose-deploy.sh logs [service]            - View logs (all or specific service)"
+    echo ""
+    echo "Options:"
+    echo "  -C <dir>    Use <dir> as the project root instead of the script's directory."
+    echo "              Can also be set via SCOUT_DIR environment variable."
     echo ""
     echo "Services: postgres, tvdb-proxy, torrenter, webserver, ui, nginx"
     echo ""
     echo "Examples:"
-    echo "  ./compose-deploy.sh                  # Deploy everything"
-    echo "  ./compose-deploy.sh rebuild torrenter # Rebuild just torrenter"
-    echo "  ./compose-deploy.sh logs webserver   # View webserver logs"
+    echo "  ./compose-deploy.sh                              # Deploy everything"
+    echo "  ./compose-deploy.sh rebuild torrenter             # Rebuild just torrenter"
+    echo "  ./compose-deploy.sh -C ~/worktree rebuild ui     # Build from a worktree"
+    echo "  SCOUT_DIR=~/worktree ./compose-deploy.sh rebuild # Same, via env var"
+    echo "  ./compose-deploy.sh logs webserver               # View webserver logs"
     exit 0
 fi
 
