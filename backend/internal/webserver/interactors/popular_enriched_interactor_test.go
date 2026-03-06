@@ -391,7 +391,7 @@ func TestMergeStatusWithMedia_CalculatesEpisodeCounts_NoMetadata(t *testing.T) {
 	assert.Len(t, result[0].Status.Seasons, 1)
 }
 
-func TestMergeStatusWithMedia_CalculatesEpisodeCounts_AnimeAbsoluteNumbering(t *testing.T) {
+func TestMergeStatusWithMedia_CalculatesEpisodeCounts_AnimeSingleSeasonSkipsAbsolute(t *testing.T) {
 	interactor, _, _ := setupPopularEnrichedInteractor()
 	ctx := context.Background()
 
@@ -435,11 +435,130 @@ func TestMergeStatusWithMedia_CalculatesEpisodeCounts_AnimeAbsoluteNumbering(t *
 
 	result := interactor.mergeStatusWithMedia(ctx, mediaList, statusResponse)
 
-	// S1E1 matches by key "1-1", S1E2 matches by key "1-2",
-	// S2E1 matches by absolute number 25, S2E2 not downloaded
+	// Single-season Plex layout: usesAbsoluteNumbering returns false (only 1 non-specials season).
+	// S1E1 matches by key "1-1", S1E2 matches by key "1-2".
+	// S2E1/S2E2 from TVDB don't match (no absolute matching, no season 2 in Plex).
 	assert.Len(t, result, 1)
-	assert.Equal(t, 3, result[0].Status.Downloaded, "Should match 3 episodes (2 by key + 1 by absolute number)")
+	assert.Equal(t, 2, result[0].Status.Downloaded, "Should match 2 episodes by season-episode key only")
 	assert.Equal(t, 4, result[0].Status.Total, "Should count 4 total episodes from TVDB metadata")
+}
+
+func TestMergeStatusWithMedia_CalculatesEpisodeCounts_AnimeMultiSeasonAbsolute(t *testing.T) {
+	interactor, _, _ := setupPopularEnrichedInteractor()
+	ctx := context.Background()
+
+	// Anime show: Plex has multiple seasons all using absolute numbering (like JJK)
+	// TVDB uses standard per-season numbering
+	mediaList := []tvdb.Media{
+		{
+			Id:       "377543",
+			Category: "series",
+			Anime:    true,
+			Metadata: tvdb.TVDBSeriesMetadata{
+				Episodes: []tvdb.Episode{
+					{Id: 500, Name: "Ep 1", SeasonNumber: 1, Number: 1, AbsoluteNumber: 1},
+					{Id: 501, Name: "Ep 2", SeasonNumber: 1, Number: 2, AbsoluteNumber: 2},
+					{Id: 600, Name: "S2 Ep 1", SeasonNumber: 2, Number: 1, AbsoluteNumber: 25},
+					{Id: 601, Name: "S2 Ep 2", SeasonNumber: 2, Number: 2, AbsoluteNumber: 26},
+					{Id: 700, Name: "S3 Ep 1", SeasonNumber: 3, Number: 1, AbsoluteNumber: 48},
+				},
+			},
+		},
+	}
+
+	// Plex status: episodes spread across 3 seasons, all using absolute numbering
+	statusResponse := tvdb.StatusBatchResponse{
+		Shows: []tvdb.ShowStatus{
+			{
+				TvdbId: "377543",
+				Seasons: []tvdb.SeasonStatus{
+					{
+						SeasonNum: 1,
+						Episodes: []tvdb.EpisodeStatus{
+							{EpisodeNum: 1, Downloaded: true},
+							{EpisodeNum: 2, Downloaded: true},
+							{EpisodeNum: 24, Downloaded: true},
+						},
+					},
+					{
+						SeasonNum: 2,
+						Episodes: []tvdb.EpisodeStatus{
+							{EpisodeNum: 25, Downloaded: true},
+							{EpisodeNum: 26, Downloaded: true},
+						},
+					},
+					{
+						SeasonNum: 3,
+						Episodes: []tvdb.EpisodeStatus{
+							{EpisodeNum: 48, Downloaded: true},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := interactor.mergeStatusWithMedia(ctx, mediaList, statusResponse)
+
+	// S1E1 matches by key, S1E2 by key, S2E1 by absolute 25, S2E2 by absolute 26, S3E1 by absolute 48
+	assert.Len(t, result, 1)
+	assert.Equal(t, 5, result[0].Status.Downloaded, "Should match all 5 episodes across multi-season anime")
+	assert.Equal(t, 5, result[0].Status.Total)
+}
+
+func TestMergeStatusWithMedia_CalculatesEpisodeCounts_AnimeStandardNumbering(t *testing.T) {
+	interactor, _, _ := setupPopularEnrichedInteractor()
+	ctx := context.Background()
+
+	// Anime show where Plex uses standard per-season numbering (each season starts at 1).
+	// usesAbsoluteNumbering should return false, so no absolute matching.
+	mediaList := []tvdb.Media{
+		{
+			Id:       "11111",
+			Category: "series",
+			Anime:    true,
+			Metadata: tvdb.TVDBSeriesMetadata{
+				Episodes: []tvdb.Episode{
+					{Id: 100, Name: "Ep 1", SeasonNumber: 1, Number: 1, AbsoluteNumber: 1},
+					{Id: 101, Name: "Ep 2", SeasonNumber: 1, Number: 2, AbsoluteNumber: 2},
+					{Id: 200, Name: "S2 Ep 1", SeasonNumber: 2, Number: 1, AbsoluteNumber: 13},
+					{Id: 201, Name: "S2 Ep 2", SeasonNumber: 2, Number: 2, AbsoluteNumber: 14},
+				},
+			},
+		},
+	}
+
+	// Plex status: standard numbering — Season 2 starts at episode 1
+	statusResponse := tvdb.StatusBatchResponse{
+		Shows: []tvdb.ShowStatus{
+			{
+				TvdbId: "11111",
+				Seasons: []tvdb.SeasonStatus{
+					{
+						SeasonNum: 1,
+						Episodes: []tvdb.EpisodeStatus{
+							{EpisodeNum: 1, Downloaded: true},
+							{EpisodeNum: 2, Downloaded: true},
+						},
+					},
+					{
+						SeasonNum: 2,
+						Episodes: []tvdb.EpisodeStatus{
+							{EpisodeNum: 1, Downloaded: true},
+							{EpisodeNum: 2, Downloaded: false},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := interactor.mergeStatusWithMedia(ctx, mediaList, statusResponse)
+
+	// All match by season-episode key: S1E1, S1E2, S2E1. S2E2 not downloaded.
+	assert.Len(t, result, 1)
+	assert.Equal(t, 3, result[0].Status.Downloaded, "Standard-numbered anime should match by key, not absolute")
+	assert.Equal(t, 4, result[0].Status.Total)
 }
 
 func TestMergeStatusWithMedia_CalculatesEpisodeCounts_NonAnimeSkipsAbsolute(t *testing.T) {

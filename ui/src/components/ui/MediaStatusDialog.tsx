@@ -95,29 +95,40 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
     if (statusSeasons) {
       statusSeasons.forEach((season) => {
         season.episodes.forEach((ep) => {
-          if (ep.tvdbId) {
-            downloadedByTvdbId.add(ep.tvdbId);
+          if (ep.downloaded) {
+            if (ep.tvdbId) {
+              downloadedByTvdbId.add(ep.tvdbId);
+            }
+            const key = `${season.seasonNum}-${ep.episodeNum}`;
+            downloadedByKey.add(key);
           }
-          const key = `${season.seasonNum}-${ep.episodeNum}`;
-          downloadedByKey.add(key);
         });
       });
     }
 
     // Build absolute number lookup for anime shows.
-    // Anime in Plex stores all episodes under Season 1 with absolute numbering
-    // while TVDB uses standard seasonal numbering. The absolute number bridges these.
+    // Plex uses absolute episode numbering for anime (e.g., S01E25, S02E25, S03E48)
+    // while TVDB uses standard per-season numbering (S02E01). The absolute number
+    // from TVDB metadata bridges these two schemes.
     const downloadedByAbsolute = new Set<number>();
-    const hasOnlySeason1 = statusSeasons
-      ? statusSeasons.every((s) => s.seasonNum === 0 || s.seasonNum === 1)
-      : false;
-    if (enrichedMedia.media.anime === true && hasOnlySeason1 && statusSeasons) {
+    const usesAbsoluteNumbering = (() => {
+      if (!statusSeasons) return false;
+      const nonSpecials = statusSeasons.filter((s) => s.seasonNum > 0);
+      if (nonSpecials.length < 2) return false;
+      return statusSeasons.some((s) => {
+        if (s.seasonNum <= 1 || s.episodes.length === 0) return false;
+        const minEp = Math.min(...s.episodes.map((ep) => ep.episodeNum));
+        return minEp > 1;
+      });
+    })();
+    if (enrichedMedia.media.anime === true && usesAbsoluteNumbering && statusSeasons) {
       statusSeasons.forEach((season) => {
-        if (season.seasonNum === 1) {
-          season.episodes.forEach((ep) => {
+        if (season.seasonNum === 0) return;
+        season.episodes.forEach((ep) => {
+          if (ep.downloaded) {
             downloadedByAbsolute.add(ep.episodeNum);
-          });
-        }
+          }
+        });
       });
     }
 
