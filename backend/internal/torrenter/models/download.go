@@ -46,6 +46,13 @@ type SearchStrategy struct {
 	ReleaseYear string
 	TvdbId      string
 	IsMovie     bool // True if this is a movie search strategy
+	// RelaxLevel is the query-relaxation tier this strategy belongs to.
+	// 0 = strict (exact S##E## / padded absolute), 1 = relaxed (alternate
+	// episode formats, unpadded absolute, punctuation-stripped names),
+	// 2 = broad (loose tokens / name-only). Higher tiers are only tried when
+	// lower ones yield no confident match, and matches from tier >= 2 are
+	// gated behind a higher minimum confidence in pickBestTorrent.
+	RelaxLevel int
 }
 
 type TorrentMatch struct {

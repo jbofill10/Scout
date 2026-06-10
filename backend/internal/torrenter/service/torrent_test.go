@@ -362,8 +362,19 @@ func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithSpaces() {
 	}
 
 	s.True(hasSpaced)
-	// Should have 2 strategies for non-anime (2 query formats)
-	s.Equal(2, len(strategies))
+	// Tier 0 (strict): 2 query formats for non-anime.
+	s.Equal(2, countRelaxLevel(strategies, 0))
+}
+
+// countRelaxLevel counts strategies at a given relaxation tier.
+func countRelaxLevel(strategies []*models.SearchStrategy, level int) int {
+	n := 0
+	for _, ss := range strategies {
+		if ss.RelaxLevel == level {
+			n++
+		}
+	}
+	return n
 }
 
 func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithAliases() {
@@ -380,9 +391,8 @@ func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithAliases() {
 
 	strategies := s.handler.createSearchStrategy(media, episode)
 
-	// Should create strategies for original name + all aliases
-	// 3 names × 2 query formats = 6 strategies
-	s.Equal(6, len(strategies))
+	// Tier 0 (strict): 3 names × 2 query formats = 6 strategies
+	s.Equal(6, countRelaxLevel(strategies, 0))
 
 	// Verify all three names are present in strategies
 	mediaNames := make(map[string]bool)
@@ -410,8 +420,8 @@ func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithDuplicateAliases() 
 	strategies := s.handler.createSearchStrategy(media, episode)
 
 	// Should deduplicate: "Test Show" appears once, "TestShow" appears once
-	// 2 unique names × 2 query formats = 4 strategies
-	s.Equal(4, len(strategies))
+	// Tier 0 (strict): 2 unique names × 2 query formats = 4 strategies
+	s.Equal(4, countRelaxLevel(strategies, 0))
 
 	// Verify only unique names are used
 	mediaNames := make(map[string]bool)
@@ -439,8 +449,8 @@ func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithEmptyAliases() {
 	strategies := s.handler.createSearchStrategy(media, episode)
 
 	// Should filter empty strings: "Test Show" + "Valid Alias"
-	// 2 names × 2 query formats = 4 strategies
-	s.Equal(4, len(strategies))
+	// Tier 0 (strict): 2 names × 2 query formats = 4 strategies
+	s.Equal(4, countRelaxLevel(strategies, 0))
 
 	// Verify only non-empty names are used
 	for _, strategy := range strategies {

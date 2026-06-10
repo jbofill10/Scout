@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,6 +32,10 @@ var (
 	baseSavePath  = "/data/Downloads"
 	scoutTag      = "scout"
 	torrentTracer = otel.Tracer("torrenter/torrent")
+
+	// trailingYearRe matches a trailing parenthesized or bracketed year, e.g.
+	// " (2019)" or " [2019]", optionally preceded by whitespace.
+	trailingYearRe = regexp.MustCompile(`\s*[\(\[]\d{4}[\)\]]\s*$`)
 )
 
 type QbittHandler struct {
@@ -74,22 +79,68 @@ func NewQbittHandler(qCfg *models.QbittCfg, pCfg *models.ProwlarrCfg, repo Repos
 	}, nil
 }
 
+// prowlarrSearchBackoffs is the sleep applied BEFORE each retry attempt.
+// len(backoffs)+1 total attempts: attempt 1 (no sleep), then 2s, then 8s.
+var prowlarrSearchBackoffs = []time.Duration{2 * time.Second, 8 * time.Second}
+
+const prowlarrSearchTimeout = 45 * time.Second
+
 func (q *QbittHandler) searchProwlarr(ctx context.Context, query, category string, isAnime bool) ([]*prowlarr.Search, error) {
 	q.logger.InfoContext(ctx, "Searching Prowlarr", "query", query, "category", category)
 
-	resp, err := q.p.SearchContext(ctx, prowlarr.SearchInput{
+	input := prowlarr.SearchInput{
 		Query:      query,
 		IndexerIDs: q.calcIndexerIDs(category, isAnime),
 		Limit:      500,
 		Categories: q.calcCategories(category == "series"),
-	})
-
-	if err != nil {
-		q.logger.Error("Error searching Prowlarr", "error", err)
-		return nil, err
 	}
 
-	return resp, nil
+	totalAttempts := len(prowlarrSearchBackoffs) + 1
+	var lastErr error
+	for attempt := 1; attempt <= totalAttempts; attempt++ {
+		// Abort immediately on parent cancellation — don't burn retries on a dead request.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		resp, err := q.searchProwlarrOnce(ctx, input)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+
+		// If the parent context was cancelled, the error is terminal — don't retry.
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		if attempt < totalAttempts {
+			backoff := prowlarrSearchBackoffs[attempt-1]
+			q.logger.WarnContext(ctx, "Prowlarr search failed, retrying",
+				telemetry.WithTraceContext(ctx,
+					"query", query,
+					"attempt", attempt,
+					"max_attempts", totalAttempts,
+					"backoff", backoff.String(),
+					"error", err.Error())...)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+	}
+
+	q.logger.ErrorContext(ctx, "Prowlarr search failed after all attempts",
+		telemetry.WithTraceContext(ctx, "query", query, "attempts", totalAttempts, "error", lastErr.Error())...)
+	return nil, lastErr
+}
+
+// searchProwlarrOnce performs a single Prowlarr search bounded by a per-attempt timeout.
+func (q *QbittHandler) searchProwlarrOnce(ctx context.Context, input prowlarr.SearchInput) ([]*prowlarr.Search, error) {
+	attemptCtx, cancel := context.WithTimeout(ctx, prowlarrSearchTimeout)
+	defer cancel()
+	return q.p.SearchContext(attemptCtx, input)
 }
 
 func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done chan<- models.TorrentCompleteEvent) ([]dlstatus.EpisodeResult, error) {
@@ -271,6 +322,11 @@ func (q *QbittHandler) processEpisodeDownload(
 ) dlstatus.EpisodeResult {
 	// Create episode-level parent span
 	episodeCtx, episodeSpan := torrentTracer.Start(ctx, "searchEpisode")
+
+	// Overall per-episode search deadline so a sick indexer can't pin the request.
+	episodeCtx, cancel := context.WithTimeout(episodeCtx, 5*time.Minute)
+	defer cancel()
+
 	if len(strategies) > 0 {
 		episodeSpan.SetAttributes(
 			attribute.Int("episode_index", episodeIdx),
@@ -281,11 +337,47 @@ func (q *QbittHandler) processEpisodeDownload(
 		)
 	}
 
-	// Execute all search strategies for this episode
-	bestMatches, strategyContexts, allIndexersFailed := q.executeSearchStrategies(episodeCtx, strategies, req)
+	// Run strategies tier-by-tier (ascending RelaxLevel), stopping at the first tier
+	// that produces a confident best pick. Track failure semantics across all attempted
+	// tiers: only treat the indexer as unreachable when EVERY attempted strategy errored.
+	var (
+		match        *models.TorrentMatch
+		winningCtx   context.Context
+		attemptedAny bool
+		erroredAll   = true
+	)
 
-	// If every search strategy errored against Prowlarr, the indexer is unreachable.
-	if allIndexersFailed {
+	for _, tier := range groupStrategiesByRelaxLevel(strategies) {
+		bestMatches, strategyContexts, allIndexersFailed := q.executeSearchStrategies(episodeCtx, tier, req)
+		attemptedAny = true
+		if !allIndexersFailed {
+			erroredAll = false
+		}
+
+		// Select the best torrent from this tier's matches.
+		q.sortBySeedersDESC(bestMatches)
+		q.sortTorrentsByQuality(bestMatches)
+		tierMatch := q.pickBestTorrent(episodeCtx, bestMatches, req.Category, req.Anime)
+
+		// End all non-winning strategy spans for this tier.
+		for ss, strategyCtx := range strategyContexts {
+			if tierMatch == nil || ss != tierMatch.Strategy {
+				span := trace.SpanFromContext(strategyCtx)
+				span.SetStatus(codes.Ok, "strategy not selected")
+				span.End()
+			}
+		}
+
+		if tierMatch != nil {
+			match = tierMatch
+			winningCtx = strategyContexts[tierMatch.Strategy]
+			break
+		}
+	}
+
+	// If every strategy actually attempted (across all tried tiers) errored against
+	// Prowlarr, the indexer is unreachable.
+	if attemptedAny && erroredAll {
 		q.logger.WarnContext(episodeCtx, "All indexer searches failed", "show", req.Name)
 		ss := strategies[0]
 		q.recordDownloadFailure(episodeCtx, req, ss, "indexer unreachable")
@@ -293,20 +385,6 @@ func (q *QbittHandler) processEpisodeDownload(
 		episodeSpan.SetStatus(codes.Error, "all indexer searches failed")
 		episodeSpan.End()
 		return q.failedResult(ss, dlstatus.CodeIndexerUnreachable)
-	}
-
-	// Select the best torrent from all matches
-	q.sortBySeedersDESC(bestMatches)
-	q.sortTorrentsByQuality(bestMatches)
-	match := q.pickBestTorrent(episodeCtx, bestMatches, req.Category, req.Anime)
-
-	// End all non-winning strategy spans
-	for ss, strategyCtx := range strategyContexts {
-		if match == nil || ss != match.Strategy {
-			span := trace.SpanFromContext(strategyCtx)
-			span.SetStatus(codes.Ok, "strategy not selected")
-			span.End()
-		}
 	}
 
 	if match == nil {
@@ -321,8 +399,54 @@ func (q *QbittHandler) processEpisodeDownload(
 	}
 
 	// Download the torrent and start monitoring
-	winningCtx := strategyContexts[match.Strategy]
+	episodeSpan.End()
 	return q.initiateDownloadAndMonitor(winningCtx, match, done, wg)
+}
+
+// groupStrategiesByRelaxLevel partitions strategies into tiers ordered by ascending
+// RelaxLevel. Strategy order within a tier is preserved.
+func groupStrategiesByRelaxLevel(strategies []*models.SearchStrategy) [][]*models.SearchStrategy {
+	if len(strategies) == 0 {
+		return nil
+	}
+
+	// Collect distinct relax levels in ascending order.
+	levels := []int{}
+	seen := map[int]bool{}
+	for _, ss := range strategies {
+		if !seen[ss.RelaxLevel] {
+			seen[ss.RelaxLevel] = true
+			levels = append(levels, ss.RelaxLevel)
+		}
+	}
+	sort.Ints(levels)
+
+	tiers := make([][]*models.SearchStrategy, 0, len(levels))
+	for _, lvl := range levels {
+		tier := []*models.SearchStrategy{}
+		for _, ss := range strategies {
+			if ss.RelaxLevel == lvl {
+				tier = append(tier, ss)
+			}
+		}
+		tiers = append(tiers, tier)
+	}
+	return tiers
+}
+
+// recordStrategyFailure inserts a download-history failure row from a search strategy alone
+// (used by the monitor, which has no *tvdb.Media). Nil-safe for movies (EpisodeMeta == nil).
+func (q *QbittHandler) recordStrategyFailure(ctx context.Context, ss *models.SearchStrategy, reason string) {
+	if ss == nil {
+		return
+	}
+	absoluteNumber := 0
+	if ss.EpisodeMeta != nil {
+		absoluteNumber = ss.EpisodeMeta.AbsoluteNumber
+	}
+	if err := q.repo.InsertDownloadHistory(ctx, ss.MediaName, ss.Season, ss.Episode, absoluteNumber, "", "failure", reason); err != nil {
+		q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
+	}
 }
 
 // recordDownloadFailure inserts a download-history failure row, preserving the prior behavior of
@@ -561,6 +685,34 @@ func (q *QbittHandler) updateNotificationStatus(ctx context.Context, tvdbId, rea
 	}
 }
 
+const (
+	defaultMonitorTimeout = 6 * time.Hour
+	// monitorFastPollWindow is how long we poll frequently before backing off.
+	monitorFastPollWindow = 10 * time.Minute
+	monitorFastInterval   = 10 * time.Second
+	monitorSlowInterval   = 60 * time.Second
+)
+
+// nextPollInterval returns the poll cadence given elapsed time since monitoring began:
+// 10s for the first 10 minutes, then 60s thereafter.
+func nextPollInterval(elapsed time.Duration) time.Duration {
+	if elapsed < monitorFastPollWindow {
+		return monitorFastInterval
+	}
+	return monitorSlowInterval
+}
+
+// monitorTimeout reads the overall monitor deadline from MONITOR_TIMEOUT (a Go
+// duration like "6h"), falling back to 6h when unset or unparseable.
+func monitorTimeout() time.Duration {
+	if v := os.Getenv("MONITOR_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultMonitorTimeout
+}
+
 // monitorTorrentCompletion watches a torrent until it completes and sends the completion event
 func (q *QbittHandler) monitorTorrentCompletion(
 	ctx context.Context,
@@ -578,9 +730,32 @@ func (q *QbittHandler) monitorTorrentCompletion(
 	defer wg.Done()
 	defer winningSpan.End()
 
+	start := time.Now()
+	timeout := monitorTimeout()
+	q.logger.InfoContext(monitorCtx, "Starting torrent monitor",
+		telemetry.WithTraceContext(monitorCtx,
+			"torrent_title", match.Torrent.Title,
+			"torrent_hash", infoHash,
+			"timeout", timeout.String())...)
+
 	ranRecheck := false
 	for {
-		time.Sleep(10 * time.Second)
+		elapsed := time.Since(start)
+
+		// Overall deadline: a torrent that never completes shouldn't be watched forever.
+		if elapsed >= timeout {
+			q.logger.WarnContext(monitorCtx, "Torrent monitor timed out, giving up",
+				telemetry.WithTraceContext(monitorCtx,
+					"torrent_title", match.Torrent.Title,
+					"torrent_hash", infoHash,
+					"timeout", timeout.String())...)
+			q.updateNotificationStatus(monitorCtx, match.Strategy.TvdbId, dlstatus.CodeMonitorLost.HumanReason(), notifications.StatusFailed)
+			q.recordStrategyFailure(monitorCtx, match.Strategy, "monitor timeout")
+			winningSpan.SetStatus(codes.Error, "monitor timeout")
+			return
+		}
+
+		time.Sleep(nextPollInterval(elapsed))
 		q.logger.InfoContext(monitorCtx, "Monitoring torrent status",
 			telemetry.WithTraceContext(monitorCtx,
 				"torrent_title", match.Torrent.Title,
@@ -593,11 +768,13 @@ func (q *QbittHandler) monitorTorrentCompletion(
 
 		torrents, err := q.queryQbittorrentWithRetries(monitorCtx, filter, 6, 10*time.Second)
 		if err != nil {
-			q.logger.WarnContext(monitorCtx, "Failed to monitor torrent after retries, stopping watch",
+			q.logger.WarnContext(monitorCtx, "Failed to monitor torrent after retries, marking failed",
 				telemetry.WithTraceContext(monitorCtx,
 					"torrent_title", match.Torrent.Title,
 					"torrent_hash", infoHash,
 					"error", err.Error())...)
+			q.updateNotificationStatus(monitorCtx, match.Strategy.TvdbId, dlstatus.CodeMonitorLost.HumanReason(), notifications.StatusFailed)
+			q.recordStrategyFailure(monitorCtx, match.Strategy, "monitor lost: qbittorrent query exhausted")
 			winningSpan.SetStatus(codes.Error, "max retries reached")
 			return
 		}
@@ -651,44 +828,114 @@ func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episo
 	}
 	showNames := uniqueNames
 
+	paddedSeason := standardizeNumber(episode.SeasonNumber)
+	paddedEpisode := standardizeNumber(episode.Number)
+
+	// newShowStrategy builds a seasonal show strategy with the given query and relax level.
+	newShowStrategy := func(query, name string, relax int) *models.SearchStrategy {
+		return &models.SearchStrategy{
+			Query:       query,
+			MediaName:   name,
+			Season:      episode.SeasonNumber,
+			Episode:     episode.Number,
+			EpisodeMeta: episode,
+			TvdbId:      req.Id,
+			RelaxLevel:  relax,
+		}
+	}
+
+	// newAbsoluteStrategy builds an anime absolute-numbered strategy with the
+	// authoritative Exclude:["season","episode"] behavior preserved.
+	newAbsoluteStrategy := func(query, name string, relax int) *models.SearchStrategy {
+		return &models.SearchStrategy{
+			Query:       query,
+			MediaName:   name,
+			Season:      episode.SeasonNumber,
+			Episode:     episode.AbsoluteNumber,
+			EpisodeMeta: episode,
+			Exclude:     []string{"season", "episode"},
+			TvdbId:      req.Id,
+			RelaxLevel:  relax,
+		}
+	}
+
+	// ----- Tier 0: strict (existing behavior) -----
 	if req.Anime {
 		for _, showName := range showNames {
-			// Only create absolute number strategy if TVDB provided one (absoluteNumber > 0)
-			// When absoluteNumber == 0, it means TVDB doesn't have absolute numbering for this show
+			// Only create absolute number strategy if TVDB provided one (absoluteNumber > 0).
 			if episode.AbsoluteNumber > 0 {
-				ss = append(ss, &models.SearchStrategy{
-					Query:       fmt.Sprint(showName, " ", standardizeNumber(episode.AbsoluteNumber)),
-					MediaName:   showName,
-					Season:      episode.SeasonNumber,
-					Episode:     episode.AbsoluteNumber,
-					EpisodeMeta: episode,
-					Exclude:     []string{"season", "episode"},
-					TvdbId:      req.Id,
-				})
+				ss = append(ss, newAbsoluteStrategy(
+					fmt.Sprint(showName, " ", standardizeNumber(episode.AbsoluteNumber)), showName, 0))
 			}
 		}
 	}
 
-	queryFormats := []string{
-		"%s S%sE%s",
-		"%s Season %s Episode %s",
+	for _, format := range []string{"%s S%sE%s", "%s Season %s Episode %s"} {
+		for _, showName := range showNames {
+			ss = append(ss, newShowStrategy(
+				fmt.Sprintf(format, showName, paddedSeason, paddedEpisode), showName, 0))
+		}
 	}
 
-	for _, format := range queryFormats {
-		for _, showName := range showNames {
+	// ----- Tier 1: relaxed -----
+	for _, showName := range showNames {
+		// "{name} {S}x{EE}" e.g. "Show 1x05"
+		ss = append(ss, newShowStrategy(
+			fmt.Sprintf("%s %dx%s", showName, episode.SeasonNumber, paddedEpisode), showName, 1))
 
-			ss = append(ss, &models.SearchStrategy{
-				Query:       fmt.Sprintf(format, showName, standardizeNumber(episode.SeasonNumber), standardizeNumber(episode.Number)),
-				MediaName:   showName,
-				Season:      episode.SeasonNumber,
-				Episode:     episode.Number,
-				EpisodeMeta: episode,
-				TvdbId:      req.Id,
-			})
+		// Anime absolute UNPADDED "{name} {absolute}"
+		if req.Anime && episode.AbsoluteNumber > 0 {
+			ss = append(ss, newAbsoluteStrategy(
+				fmt.Sprintf("%s %d", showName, episode.AbsoluteNumber), showName, 1))
+		}
+
+		// Punctuation-stripped name variant applied to the S##E## format.
+		if stripped := stripNamePunctuation(showName); stripped != "" && stripped != showName {
+			ss = append(ss, newShowStrategy(
+				fmt.Sprintf("%s S%sE%s", stripped, paddedSeason, paddedEpisode), stripped, 1))
+		}
+	}
+
+	// ----- Tier 2: broad -----
+	for _, showName := range showNames {
+		// Loose episode token "{name} E{EE}"
+		ss = append(ss, newShowStrategy(
+			fmt.Sprintf("%s E%s", showName, paddedEpisode), showName, 2))
+
+		// For anime, name-only — rely on validators/parser to match S/E or absolute.
+		if req.Anime {
+			if episode.AbsoluteNumber > 0 {
+				ss = append(ss, newAbsoluteStrategy(showName, showName, 2))
+			} else {
+				ss = append(ss, newShowStrategy(showName, showName, 2))
+			}
 		}
 	}
 
 	return ss
+}
+
+// stripNamePunctuation removes punctuation that commonly differs between TVDB
+// titles and release titles: colons, apostrophes (straight and curly), commas
+// and hyphens, plus any trailing bracketed or parenthesized year (e.g. "(2019)"
+// or "[2019]"). Whitespace is collapsed to single spaces.
+func stripNamePunctuation(name string) string {
+	s := name
+
+	// Strip a trailing bracketed/parenthesized year, e.g. "Show (2019)" / "Show [2019]".
+	s = trailingYearRe.ReplaceAllString(s, "")
+
+	// Remove punctuation characters.
+	s = strings.Map(func(r rune) rune {
+		switch r {
+		case ':', '\'', '’', ',', '-':
+			return -1
+		}
+		return r
+	}, s)
+
+	// Collapse whitespace.
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // createMovieSearchStrategy generates search strategies for movie downloads
@@ -697,32 +944,47 @@ func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episo
 func (q *QbittHandler) createMovieSearchStrategy(req *tvdb.Media) []*models.SearchStrategy {
 	var ss []*models.SearchStrategy
 
-	// Create query: "{MovieName} {Year}"
-	query := req.Name
-	if req.Year != "" {
-		query = fmt.Sprintf("%s %s", req.Name, req.Year)
+	newMovie := func(query string, relax int) *models.SearchStrategy {
+		return &models.SearchStrategy{
+			Query:       query,
+			MediaName:   req.Name,
+			Season:      0,   // Movies have no season
+			Episode:     0,   // Movies have no episode (used to detect movie vs show)
+			EpisodeMeta: nil, // Movies have no episode metadata
+			TvdbId:      req.Id,
+			ReleaseYear: req.Year,
+			IsMovie:     true, // Flag this as a movie search strategy
+			RelaxLevel:  relax,
+		}
 	}
 
-	ss = append(ss, &models.SearchStrategy{
-		Query:       query,
-		MediaName:   req.Name,
-		Season:      0,   // Movies have no season
-		Episode:     0,   // Movies have no episode (used to detect movie vs show)
-		EpisodeMeta: nil, // Movies have no episode metadata
-		TvdbId:      req.Id,
-		ReleaseYear: req.Year,
-		IsMovie:     true, // Flag this as a movie search strategy
-	})
+	// Tier 0: "{name} {year}" (or just name when year unknown).
+	tier0 := req.Name
+	if req.Year != "" {
+		tier0 = fmt.Sprintf("%s %s", req.Name, req.Year)
+	}
+	ss = append(ss, newMovie(tier0, 0))
+
+	// Tier 1: name-only.
+	ss = append(ss, newMovie(req.Name, 1))
+
+	// Tier 2: punctuation-stripped name-only (only if it differs).
+	if stripped := stripNamePunctuation(req.Name); stripped != "" && stripped != req.Name {
+		ss = append(ss, newMovie(stripped, 2))
+	}
 
 	return ss
 }
 
 func (q *QbittHandler) didTorrentComplete(torrent *qbittorrent.Torrent) bool {
-	fmt.Printf("Torrent State: %s\n", torrent.State)
-	if torrent.Completed == torrent.Size && torrent.State == "stalledUP" {
+	q.logger.Debug("torrent state", "state", torrent.State, "progress", torrent.Progress)
+	// Complete if fully downloaded (progress == 1.0) OR the original stalled-upload
+	// condition. Using progress catches terminal states other than "stalledUP"
+	// (e.g. uploading / pausedUP) that would otherwise be missed.
+	if torrent.Progress == 1 {
 		return true
 	}
-	return false
+	return torrent.Completed == torrent.Size && torrent.State == "stalledUP"
 }
 
 func (q *QbittHandler) calcCategories(show bool) []int64 {
@@ -1344,6 +1606,31 @@ func formatTorrentMatches(matches []*models.TorrentMatch) string {
 	return result
 }
 
+// baseConfidenceCutoff is the minimum validation confidence required for a match
+// at relax levels 0 and 1. Relax level >= 2 (broad queries) requires this plus a bump.
+const (
+	baseConfidenceCutoff = 0.6
+	relaxConfidenceBump  = 0.1
+	broadRelaxLevel      = 2
+)
+
+// relaxLevelOf returns the strategy's relax level, defaulting to 0 for a nil strategy.
+func relaxLevelOf(ss *models.SearchStrategy) int {
+	if ss == nil {
+		return 0
+	}
+	return ss.RelaxLevel
+}
+
+// relaxConfidenceCutoff returns the minimum confidence a match must clear given
+// its strategy's relax level. Broad (level >= 2) queries are gated higher.
+func relaxConfidenceCutoff(ss *models.SearchStrategy) float64 {
+	if relaxLevelOf(ss) >= broadRelaxLevel {
+		return baseConfidenceCutoff + relaxConfidenceBump
+	}
+	return baseConfidenceCutoff
+}
+
 func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.TorrentMatch, mediaType string, isAnime bool) *models.TorrentMatch {
 	if len(matches) == 0 {
 		return nil
@@ -1397,6 +1684,19 @@ func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.To
 				"torrent_title", match.Torrent.Title,
 				"reason", validationResult.Reason)
 			continue // Skip invalid matches
+		}
+
+		// Relaxation guardrail: broad (RelaxLevel >= 2) queries cast a wide net, so
+		// require a higher minimum confidence before accepting their matches. The
+		// validators above stay authoritative; this is an extra confidence gate.
+		minConfidence := relaxConfidenceCutoff(match.Strategy)
+		if validationResult.Confidence < minConfidence {
+			q.logger.WarnContext(ctx, "Torrent below relax-level confidence cutoff, skipping",
+				"torrent_title", match.Torrent.Title,
+				"confidence", validationResult.Confidence,
+				"min_confidence", minConfidence,
+				"relax_level", relaxLevelOf(match.Strategy))
+			continue
 		}
 
 		// Calculate final score with quality as highest priority
