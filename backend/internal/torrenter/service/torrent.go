@@ -425,10 +425,9 @@ func (q *QbittHandler) executeSearchStrategies(
 
 		if len(possibleTorrents) == 0 {
 			q.logger.InfoContext(strategyCtx, "no matching torrents found", "query", ss.Query)
-			err := q.repo.InsertDownloadHistory(strategyCtx, req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, "", "failure", "no matching torrents found")
-			if err != nil {
-				q.logger.ErrorContext(strategyCtx, "Failed to insert download history", "error", err)
-			}
+			// Use recordDownloadFailure for its nil-safe AbsoluteNumber handling
+			// (movie strategies have EpisodeMeta == nil).
+			q.recordDownloadFailure(strategyCtx, req, ss, "no matching torrents found")
 			strategySpan.SetAttributes(attribute.Bool("success", false))
 			strategySpan.SetStatus(codes.Ok, "no matching torrents found")
 			strategySpan.End()
