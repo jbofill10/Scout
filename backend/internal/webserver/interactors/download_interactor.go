@@ -76,7 +76,8 @@ func (i *DownloadInteractor) WatchForDueMedia() {
 				traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
 
 				// Media is already complete and ready for Download()
-				err := i.torrenterClient.Download(ctx, media)
+				// Phase 2 will consume the per-episode results; for now we only act on the error.
+				_, err := i.torrenterClient.Download(ctx, media)
 				if err != nil {
 					i.logger.ErrorContext(ctx, "Failed to download media", "error", err)
 					// Log failure for each episode in the media
@@ -251,7 +252,7 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 		}
 		downloadPayload.Metadata.Episodes = mediaToDownload
 
-		err = i.torrenterClient.Download(ctx, downloadPayload)
+		_, err = i.torrenterClient.Download(ctx, downloadPayload)
 		if err != nil {
 			i.logger.ErrorContext(ctx, "Failed to download show", "error", err)
 			return err
@@ -284,7 +285,7 @@ func (i *DownloadInteractor) DownloadMovie(ctx context.Context, req tvdb.Media) 
 		i.logger.WarnContext(ctx, "Failed to parse movie release date, treating as released",
 			"error", err, "first_aired", req.Metadata.FirstAired)
 		// Download immediately
-		err = i.torrenterClient.Download(ctx, req)
+		_, err = i.torrenterClient.Download(ctx, req)
 		if err != nil {
 			i.logger.ErrorContext(ctx, "Failed to download movie", "error", err)
 			return err
@@ -342,7 +343,7 @@ func (i *DownloadInteractor) DownloadMovie(ctx context.Context, req tvdb.Media) 
 		}
 	}
 
-	err = i.torrenterClient.Download(ctx, req)
+	_, err = i.torrenterClient.Download(ctx, req)
 	if err != nil {
 		i.logger.ErrorContext(ctx, "Failed to download movie", "error", err)
 		return err

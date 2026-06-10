@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/notifications"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
@@ -91,7 +92,9 @@ func (q *QbittHandler) searchProwlarr(ctx context.Context, query, category strin
 	return resp, nil
 }
 
-func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done chan<- models.TorrentCompleteEvent) error {
+func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done chan<- models.TorrentCompleteEvent) ([]dlstatus.EpisodeResult, error) {
+	results := []dlstatus.EpisodeResult{}
+
 	// Handle movies: check if movie already exists in Plex
 	if req.Category == "movie" {
 		exists, err := q.repo.MovieExistsByTvdbId(ctx, req.Id)
@@ -104,21 +107,28 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 				telemetry.WithTraceContext(ctx, "movie", req.Name, "tvdb_id", req.Id)...)
 			// Update notification to completed with "already exists" reason
 			q.updateNotificationStatus(ctx, req.Id, "Already exists in Plex library", notifications.StatusCompleted)
-			return nil
+			results = append(results, dlstatus.EpisodeResult{
+				TvdbID:  req.Id,
+				Outcome: dlstatus.OutcomeExists,
+			})
+			close(done)
+			return results, nil
 		}
 	}
 
 	// Handle series: Filter out episodes that already exist in Plex
 	if req.Category == "series" {
-		episodesToDownload, err := q.filterExistingEpisodes(ctx, req)
+		episodesToDownload, existsResults, err := q.filterExistingEpisodes(ctx, req)
 		if err != nil {
-			return err
+			return results, err
 		}
+		results = append(results, existsResults...)
 
 		if len(episodesToDownload) == 0 {
 			q.logger.InfoContext(ctx, "All episodes already exist in Plex, nothing to download",
 				telemetry.WithTraceContext(ctx, "show", req.Name)...)
-			return nil
+			close(done)
+			return results, nil
 		}
 
 		q.logger.InfoContext(ctx, "Episodes to download after filtering",
@@ -141,9 +151,8 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 		defer searchSpan.End()
 
 		for episodeIdx, strategies := range searchStrategies {
-			if err := q.processEpisodeDownload(ctx, episodeIdx, strategies, req, done, &wg); err != nil {
-				return err
-			}
+			result := q.processEpisodeDownload(ctx, episodeIdx, strategies, req, done, &wg)
+			results = append(results, result)
 		}
 
 		// Close the channel after all monitoring goroutines complete
@@ -153,7 +162,7 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 			q.logger.InfoContext(ctx, "All torrents processed, channel closed")
 		}()
 
-		return nil
+		return results, nil
 	}
 
 	// Handle movies: create movie search strategy and process
@@ -170,9 +179,8 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 		defer searchSpan.End()
 
 		// Process movie download using existing episode download logic
-		if err := q.processEpisodeDownload(ctx, 0, movieStrategy, req, done, &wg); err != nil {
-			return err
-		}
+		result := q.processEpisodeDownload(ctx, 0, movieStrategy, req, done, &wg)
+		results = append(results, result)
 
 		// Close the channel after monitoring goroutine completes
 		go func() {
@@ -181,15 +189,19 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 			q.logger.InfoContext(ctx, "Movie torrent processed, channel closed")
 		}()
 
-		return nil
+		return results, nil
 	}
 
-	return nil
+	// Unknown category — nothing to process; close the channel so the
+	// completion handler goroutine can exit.
+	close(done)
+	return results, nil
 }
 
-// filterExistingEpisodes checks which episodes already exist in Plex and returns only those that need downloading
-// For episodes that already exist, updates their notifications to "completed" status
-func (q *QbittHandler) filterExistingEpisodes(ctx context.Context, req *tvdb.Media) ([]tvdb.Episode, error) {
+// filterExistingEpisodes checks which episodes already exist in Plex and returns only those that need downloading.
+// For episodes that already exist, it updates their notifications to "completed" status and returns an
+// EpisodeResult with Outcome "exists" so callers can report them in the structured download response.
+func (q *QbittHandler) filterExistingEpisodes(ctx context.Context, req *tvdb.Media) ([]tvdb.Episode, []dlstatus.EpisodeResult, error) {
 	ctx, span := torrentTracer.Start(ctx, "filterExistingEpisodes")
 	defer span.End()
 
@@ -200,6 +212,7 @@ func (q *QbittHandler) filterExistingEpisodes(ctx context.Context, req *tvdb.Med
 	)
 
 	episodesToDownload := []tvdb.Episode{}
+	existsResults := []dlstatus.EpisodeResult{}
 	for _, episode := range req.Metadata.Episodes {
 		exists, err := q.repo.EpisodeExistsByTvdbId(ctx, req.Id, episode.SeasonNumber, episode.Number)
 		if err != nil {
@@ -212,6 +225,12 @@ func (q *QbittHandler) filterExistingEpisodes(ctx context.Context, req *tvdb.Med
 				telemetry.WithTraceContext(ctx, "name", req.Name, "season", episode.SeasonNumber, "episode", episode.Number)...)
 			// Update notification to completed with "already exists" reason
 			q.updateNotificationStatus(ctx, strconv.Itoa(episode.Id), "Already exists in Plex library", notifications.StatusCompleted)
+			existsResults = append(existsResults, dlstatus.EpisodeResult{
+				TvdbID:  strconv.Itoa(episode.Id),
+				Season:  episode.SeasonNumber,
+				Episode: episode.Number,
+				Outcome: dlstatus.OutcomeExists,
+			})
 			continue
 		}
 
@@ -225,7 +244,7 @@ func (q *QbittHandler) filterExistingEpisodes(ctx context.Context, req *tvdb.Med
 	)
 	span.SetStatus(codes.Ok, "Episode filtering complete")
 
-	return episodesToDownload, nil
+	return episodesToDownload, existsResults, nil
 }
 
 // buildSearchStrategies creates search strategies for all episodes that need downloading
@@ -239,7 +258,9 @@ func (q *QbittHandler) buildSearchStrategies(ctx context.Context, req *tvdb.Medi
 	return searchStrategies
 }
 
-// processEpisodeDownload handles the complete download workflow for a single episode
+// processEpisodeDownload handles the complete download workflow for a single episode (or movie)
+// and returns a per-episode EpisodeResult describing the outcome. It never returns an error: every
+// failure mode is mapped to a structured result so the webserver's retry engine can act on it.
 func (q *QbittHandler) processEpisodeDownload(
 	ctx context.Context,
 	episodeIdx int,
@@ -247,7 +268,7 @@ func (q *QbittHandler) processEpisodeDownload(
 	req *tvdb.Media,
 	done chan<- models.TorrentCompleteEvent,
 	wg *sync.WaitGroup,
-) error {
+) dlstatus.EpisodeResult {
 	// Create episode-level parent span
 	episodeCtx, episodeSpan := torrentTracer.Start(ctx, "searchEpisode")
 	if len(strategies) > 0 {
@@ -261,11 +282,17 @@ func (q *QbittHandler) processEpisodeDownload(
 	}
 
 	// Execute all search strategies for this episode
-	bestMatches, strategyContexts, err := q.executeSearchStrategies(episodeCtx, strategies, req)
-	if err != nil {
-		episodeSpan.SetStatus(codes.Error, "search failed")
+	bestMatches, strategyContexts, allIndexersFailed := q.executeSearchStrategies(episodeCtx, strategies, req)
+
+	// If every search strategy errored against Prowlarr, the indexer is unreachable.
+	if allIndexersFailed {
+		q.logger.WarnContext(episodeCtx, "All indexer searches failed", "show", req.Name)
+		ss := strategies[0]
+		q.recordDownloadFailure(episodeCtx, req, ss, "indexer unreachable")
+		q.applyFailureNotification(episodeCtx, ss.TvdbId, dlstatus.CodeIndexerUnreachable)
+		episodeSpan.SetStatus(codes.Error, "all indexer searches failed")
 		episodeSpan.End()
-		return err
+		return q.failedResult(ss, dlstatus.CodeIndexerUnreachable)
 	}
 
 	// Select the best torrent from all matches
@@ -285,15 +312,12 @@ func (q *QbittHandler) processEpisodeDownload(
 	if match == nil {
 		q.logger.WarnContext(episodeCtx, "No suitable torrent found", "show", req.Name)
 		ss := strategies[0]
-		err := q.repo.InsertDownloadHistory(episodeCtx, req.Name, ss.Season, ss.Episode, ss.EpisodeMeta.AbsoluteNumber, "", "failure", "no suitable torrent found")
-		if err != nil {
-			q.logger.ErrorContext(episodeCtx, "Failed to insert download history", "error", err)
-		}
-		// Update notification to failed
-		q.updateNotificationStatus(episodeCtx, ss.TvdbId, "No torrents found matching criteria", notifications.StatusFailed)
+		q.recordDownloadFailure(episodeCtx, req, ss, "no suitable torrent found")
+		// Transient: a torrent may appear later, so keep searching (retry owned by Phase 2).
+		q.applyFailureNotification(episodeCtx, ss.TvdbId, dlstatus.CodeNoTorrentFound)
 		episodeSpan.SetStatus(codes.Ok, "no suitable torrent found")
 		episodeSpan.End()
-		return nil
+		return q.failedResult(ss, dlstatus.CodeNoTorrentFound)
 	}
 
 	// Download the torrent and start monitoring
@@ -301,14 +325,57 @@ func (q *QbittHandler) processEpisodeDownload(
 	return q.initiateDownloadAndMonitor(winningCtx, match, done, wg)
 }
 
-// executeSearchStrategies runs all search strategies and collects matching torrents
+// recordDownloadFailure inserts a download-history failure row, preserving the prior behavior of
+// always recording failures for observability.
+func (q *QbittHandler) recordDownloadFailure(ctx context.Context, req *tvdb.Media, ss *models.SearchStrategy, reason string) {
+	absoluteNumber := 0
+	if ss.EpisodeMeta != nil {
+		absoluteNumber = ss.EpisodeMeta.AbsoluteNumber
+	}
+	if err := q.repo.InsertDownloadHistory(ctx, req.Name, ss.Season, ss.Episode, absoluteNumber, "", "failure", reason); err != nil {
+		q.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
+	}
+}
+
+// failedResult builds a failed EpisodeResult for a search strategy and failure code.
+func (q *QbittHandler) failedResult(ss *models.SearchStrategy, code dlstatus.FailureCode) dlstatus.EpisodeResult {
+	return dlstatus.EpisodeResult{
+		TvdbID:  ss.TvdbId,
+		Season:  ss.Season,
+		Episode: ss.Episode,
+		Outcome: dlstatus.OutcomeFailed,
+		Code:    code,
+		Reason:  code.HumanReason(),
+	}
+}
+
+// applyFailureNotification updates the episode notification for a failure. Permanent failures move the
+// notification to "failed"; transient failures keep it in "searching" with the human-readable reason,
+// because the webserver's retry engine (Phase 2) owns the final failure decision.
+func (q *QbittHandler) applyFailureNotification(ctx context.Context, tvdbID string, code dlstatus.FailureCode) {
+	if code.Category() == dlstatus.CategoryPermanent {
+		q.updateNotificationStatus(ctx, tvdbID, code.HumanReason(), notifications.StatusFailed)
+		return
+	}
+	q.updateNotificationStatus(ctx, tvdbID, code.HumanReason(), notifications.StatusSearching)
+}
+
+// executeSearchStrategies runs all search strategies and collects matching torrents.
+//
+// Unlike the previous implementation, a Prowlarr error on one strategy no longer aborts the whole
+// episode: the error is recorded and the remaining strategies still run. The returned
+// allIndexersFailed flag is true only when EVERY strategy errored (and at least one strategy was
+// attempted), signalling an unreachable indexer. If any strategy executed successfully — even with
+// zero results — the caller proceeds with whatever matches were collected.
 func (q *QbittHandler) executeSearchStrategies(
 	ctx context.Context,
 	strategies []*models.SearchStrategy,
 	req *tvdb.Media,
-) ([]*models.TorrentMatch, map[*models.SearchStrategy]context.Context, error) {
+) ([]*models.TorrentMatch, map[*models.SearchStrategy]context.Context, bool) {
 	bestMatches := []*models.TorrentMatch{}
 	strategyContexts := make(map[*models.SearchStrategy]context.Context)
+
+	erroredStrategies := 0
 
 	for strategyIdx, ss := range strategies {
 		strategyCtx, strategySpan := torrentTracer.Start(ctx, "searchStrategy")
@@ -324,10 +391,14 @@ func (q *QbittHandler) executeSearchStrategies(
 		q.logger.InfoContext(strategyCtx, "Search Query", telemetry.WithTraceContext(strategyCtx, "query", ss.Query)...)
 		pResp, err := q.searchProwlarr(strategyCtx, ss.Query, req.Category, req.Anime)
 		if err != nil {
+			// Record the failure and continue with the remaining strategies instead of aborting.
+			erroredStrategies++
+			q.logger.WarnContext(strategyCtx, "Prowlarr search failed, continuing with remaining strategies",
+				telemetry.WithTraceContext(strategyCtx, "query", ss.Query, "error", err.Error())...)
 			strategySpan.SetStatus(codes.Error, "failed to search Prowlarr")
 			strategySpan.RecordError(err)
 			strategySpan.End()
-			return nil, nil, fmt.Errorf("failed to search Prowlarr: %w", err)
+			continue
 		}
 
 		strategySpan.SetAttributes(attribute.Int("results_found", len(pResp)))
@@ -370,7 +441,9 @@ func (q *QbittHandler) executeSearchStrategies(
 		}
 	}
 
-	return bestMatches, strategyContexts, nil
+	// Indexer is considered unreachable only when every attempted strategy errored.
+	allIndexersFailed := len(strategies) > 0 && erroredStrategies == len(strategies)
+	return bestMatches, strategyContexts, allIndexersFailed
 }
 
 // filterTorrents validates torrents and returns those that pass validation along with rejection reasons
@@ -418,23 +491,29 @@ func (q *QbittHandler) initiateDownloadAndMonitor(
 	match *models.TorrentMatch,
 	done chan<- models.TorrentCompleteEvent,
 	wg *sync.WaitGroup,
-) error {
+) dlstatus.EpisodeResult {
+	ss := match.Strategy
 	infoHash, trackingUUID, err := q.downloadTorrent(ctx, match.Torrent)
 	if err != nil {
 		q.logger.ErrorContext(ctx, "Failed to download torrent", "error", err)
-		// Update notification to failed
-		q.updateNotificationStatus(ctx, match.Strategy.TvdbId, fmt.Sprintf("Torrent client error: %v", err), notifications.StatusFailed)
-		return err
+		// Transient torrent-client error: keep the notification searching for the retry engine.
+		q.applyFailureNotification(ctx, ss.TvdbId, dlstatus.CodeTorrentClientError)
+		return q.failedResult(ss, dlstatus.CodeTorrentClientError)
 	}
 
 	// Update notification: download has started successfully
-	q.updateNotificationStatus(ctx, match.Strategy.TvdbId, "", notifications.StatusDownloading)
+	q.updateNotificationStatus(ctx, ss.TvdbId, "", notifications.StatusDownloading)
 
 	// Start monitoring goroutine
 	wg.Add(1)
 	go q.monitorTorrentCompletion(ctx, match, infoHash, trackingUUID, done, wg)
 
-	return nil
+	return dlstatus.EpisodeResult{
+		TvdbID:  ss.TvdbId,
+		Season:  ss.Season,
+		Episode: ss.Episode,
+		Outcome: dlstatus.OutcomeDownloading,
+	}
 }
 
 // updateNotificationStatus updates a notification with the given status and reason

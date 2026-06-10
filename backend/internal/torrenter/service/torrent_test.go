@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"log/slog"
 	"testing"
@@ -692,4 +693,34 @@ func (s *QbittHandlerTestSuite) TestSortBySeedersDESC_ZeroSeeders() {
 	s.Equal(100, torrents[0].Torrent.Seeders)
 	s.Equal(50, torrents[1].Torrent.Seeders)
 	s.Equal(0, torrents[2].Torrent.Seeders, "Zero seeder torrent should be last")
+}
+
+// TestFailedResult verifies failedResult maps a search strategy + code into a
+// failed EpisodeResult with the human-readable reason populated.
+func (s *QbittHandlerTestSuite) TestFailedResult() {
+	ss := &models.SearchStrategy{TvdbId: "98765", Season: 2, Episode: 5}
+
+	result := s.handler.failedResult(ss, dlstatus.CodeNoTorrentFound)
+
+	s.Equal("98765", result.TvdbID)
+	s.Equal(2, result.Season)
+	s.Equal(5, result.Episode)
+	s.Equal(dlstatus.OutcomeFailed, result.Outcome)
+	s.Equal(dlstatus.CodeNoTorrentFound, result.Code)
+	s.Equal(dlstatus.CodeNoTorrentFound.HumanReason(), result.Reason)
+}
+
+// TestExecuteSearchStrategies_NoStrategies verifies that with no strategies the
+// indexer is NOT considered unreachable (nothing was attempted) and no matches
+// are returned. This path makes no external Prowlarr calls.
+func (s *QbittHandlerTestSuite) TestExecuteSearchStrategies_NoStrategies() {
+	matches, ctxs, allFailed := s.handler.executeSearchStrategies(
+		context.Background(),
+		[]*models.SearchStrategy{},
+		&tvdb.Media{Name: "Test", Category: "series"},
+	)
+
+	s.Empty(matches)
+	s.Empty(ctxs)
+	s.False(allFailed, "no attempted strategies should not be reported as all-failed")
 }
