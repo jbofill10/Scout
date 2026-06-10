@@ -104,13 +104,13 @@ func (i *DownloadInteractor) updateNotificationCompleted(ctx context.Context, ev
 
 	ss := event.Req
 
-	// Get notification by tvdb_id (episode ID for series, movie ID for movies)
-	notification, err := i.repo.GetNotification(ctx, ss.TvdbId)
+	// Get notification by episode tvdb id (episode ID for series, movie ID for movies)
+	notification, err := i.repo.GetNotification(ctx, ss.EpisodeTvdbID)
 
 	if err != nil {
 		i.logger.ErrorContext(ctx, "Failed to get notification for completion update",
 			"error", err,
-			"tvdb_id", ss.TvdbId,
+			"tvdb_id", ss.EpisodeTvdbID,
 			"season", ss.Season,
 			"episode", ss.Episode,
 			"is_movie", ss.IsMovie)
@@ -119,7 +119,7 @@ func (i *DownloadInteractor) updateNotificationCompleted(ctx context.Context, ev
 
 	if notification == nil {
 		i.logger.WarnContext(ctx, "No notification found for completion (webserver should have created it)",
-			"tvdb_id", ss.TvdbId,
+			"tvdb_id", ss.EpisodeTvdbID,
 			"season", ss.Season,
 			"episode", ss.Episode,
 			"is_movie", ss.IsMovie)
@@ -152,13 +152,13 @@ func (i *DownloadInteractor) updateNotificationFailed(ctx context.Context, event
 
 	ss := event.Req
 
-	// Get notification by tvdb_id (episode ID for series, movie ID for movies)
-	notification, err := i.repo.GetNotification(ctx, ss.TvdbId)
+	// Get notification by episode tvdb id (episode ID for series, movie ID for movies)
+	notification, err := i.repo.GetNotification(ctx, ss.EpisodeTvdbID)
 
 	if err != nil {
 		i.logger.ErrorContext(ctx, "Failed to get notification for failure update",
 			"error", err,
-			"tvdb_id", ss.TvdbId,
+			"tvdb_id", ss.EpisodeTvdbID,
 			"season", ss.Season,
 			"episode", ss.Episode,
 			"is_movie", ss.IsMovie)
@@ -167,7 +167,7 @@ func (i *DownloadInteractor) updateNotificationFailed(ctx context.Context, event
 
 	if notification == nil {
 		i.logger.WarnContext(ctx, "No notification found for failure (webserver should have created it)",
-			"tvdb_id", ss.TvdbId,
+			"tvdb_id", ss.EpisodeTvdbID,
 			"season", ss.Season,
 			"episode", ss.Episode,
 			"is_movie", ss.IsMovie)

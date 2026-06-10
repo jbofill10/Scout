@@ -386,7 +386,7 @@ func (q *QbittHandler) processEpisodeDownload(
 		q.logger.WarnContext(episodeCtx, "All indexer searches failed", "show", req.Name)
 		ss := strategies[0]
 		q.recordDownloadFailure(episodeCtx, req, ss, "indexer unreachable")
-		q.applyFailureNotification(episodeCtx, ss.TvdbId, dlstatus.CodeIndexerUnreachable)
+		q.applyFailureNotification(episodeCtx, ss.EpisodeTvdbID, dlstatus.CodeIndexerUnreachable)
 		episodeSpan.SetStatus(codes.Error, "all indexer searches failed")
 		episodeSpan.End()
 		return q.failedResult(ss, dlstatus.CodeIndexerUnreachable)
@@ -397,7 +397,7 @@ func (q *QbittHandler) processEpisodeDownload(
 		ss := strategies[0]
 		q.recordDownloadFailure(episodeCtx, req, ss, "no suitable torrent found")
 		// Transient: a torrent may appear later, so keep searching (retry owned by Phase 2).
-		q.applyFailureNotification(episodeCtx, ss.TvdbId, dlstatus.CodeNoTorrentFound)
+		q.applyFailureNotification(episodeCtx, ss.EpisodeTvdbID, dlstatus.CodeNoTorrentFound)
 		episodeSpan.SetStatus(codes.Ok, "no suitable torrent found")
 		episodeSpan.End()
 		return q.failedResult(ss, dlstatus.CodeNoTorrentFound)
@@ -469,7 +469,7 @@ func (q *QbittHandler) recordDownloadFailure(ctx context.Context, req *tvdb.Medi
 // failedResult builds a failed EpisodeResult for a search strategy and failure code.
 func (q *QbittHandler) failedResult(ss *models.SearchStrategy, code dlstatus.FailureCode) dlstatus.EpisodeResult {
 	return dlstatus.EpisodeResult{
-		TvdbID:  ss.TvdbId,
+		TvdbID:  ss.EpisodeTvdbID,
 		Season:  ss.Season,
 		Episode: ss.Episode,
 		Outcome: dlstatus.OutcomeFailed,
@@ -625,19 +625,19 @@ func (q *QbittHandler) initiateDownloadAndMonitor(
 	if err != nil {
 		q.logger.ErrorContext(ctx, "Failed to download torrent", "error", err)
 		// Transient torrent-client error: keep the notification searching for the retry engine.
-		q.applyFailureNotification(ctx, ss.TvdbId, dlstatus.CodeTorrentClientError)
+		q.applyFailureNotification(ctx, ss.EpisodeTvdbID, dlstatus.CodeTorrentClientError)
 		return q.failedResult(ss, dlstatus.CodeTorrentClientError)
 	}
 
 	// Update notification: download has started successfully
-	q.updateNotificationStatus(ctx, ss.TvdbId, "", notifications.StatusDownloading)
+	q.updateNotificationStatus(ctx, ss.EpisodeTvdbID, "", notifications.StatusDownloading)
 
 	// Start monitoring goroutine
 	wg.Add(1)
 	go q.monitorTorrentCompletion(ctx, match, infoHash, trackingUUID, done, wg)
 
 	return dlstatus.EpisodeResult{
-		TvdbID:  ss.TvdbId,
+		TvdbID:  ss.EpisodeTvdbID,
 		Season:  ss.Season,
 		Episode: ss.Episode,
 		Outcome: dlstatus.OutcomeDownloading,
@@ -768,7 +768,7 @@ func (q *QbittHandler) monitorTorrentCompletion(
 					"torrent_title", match.Torrent.Title,
 					"torrent_hash", infoHash,
 					"timeout", timeout.String())...)
-			q.updateNotificationStatus(monitorCtx, match.Strategy.TvdbId, dlstatus.CodeMonitorLost.HumanReason(), notifications.StatusFailed)
+			q.updateNotificationStatus(monitorCtx, match.Strategy.EpisodeTvdbID, dlstatus.CodeMonitorLost.HumanReason(), notifications.StatusFailed)
 			q.recordStrategyFailure(monitorCtx, match.Strategy, "monitor timeout")
 			monitorSpan.SetStatus(codes.Error, "monitor timeout")
 			return
@@ -792,7 +792,7 @@ func (q *QbittHandler) monitorTorrentCompletion(
 					"torrent_title", match.Torrent.Title,
 					"torrent_hash", infoHash,
 					"error", err.Error())...)
-			q.updateNotificationStatus(monitorCtx, match.Strategy.TvdbId, dlstatus.CodeMonitorLost.HumanReason(), notifications.StatusFailed)
+			q.updateNotificationStatus(monitorCtx, match.Strategy.EpisodeTvdbID, dlstatus.CodeMonitorLost.HumanReason(), notifications.StatusFailed)
 			q.recordStrategyFailure(monitorCtx, match.Strategy, "monitor lost: qbittorrent query exhausted")
 			monitorSpan.SetStatus(codes.Error, "max retries reached")
 			return
@@ -853,13 +853,14 @@ func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episo
 	// newShowStrategy builds a seasonal show strategy with the given query and relax level.
 	newShowStrategy := func(query, name string, relax int) *models.SearchStrategy {
 		return &models.SearchStrategy{
-			Query:       query,
-			MediaName:   name,
-			Season:      episode.SeasonNumber,
-			Episode:     episode.Number,
-			EpisodeMeta: episode,
-			TvdbId:      req.Id,
-			RelaxLevel:  relax,
+			Query:         query,
+			MediaName:     name,
+			Season:        episode.SeasonNumber,
+			Episode:       episode.Number,
+			EpisodeMeta:   episode,
+			TvdbId:        req.Id,
+			EpisodeTvdbID: strconv.Itoa(episode.Id),
+			RelaxLevel:    relax,
 		}
 	}
 
@@ -867,14 +868,15 @@ func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episo
 	// authoritative Exclude:["season","episode"] behavior preserved.
 	newAbsoluteStrategy := func(query, name string, relax int) *models.SearchStrategy {
 		return &models.SearchStrategy{
-			Query:       query,
-			MediaName:   name,
-			Season:      episode.SeasonNumber,
-			Episode:     episode.AbsoluteNumber,
-			EpisodeMeta: episode,
-			Exclude:     []string{"season", "episode"},
-			TvdbId:      req.Id,
-			RelaxLevel:  relax,
+			Query:         query,
+			MediaName:     name,
+			Season:        episode.SeasonNumber,
+			Episode:       episode.AbsoluteNumber,
+			EpisodeMeta:   episode,
+			Exclude:       []string{"season", "episode"},
+			TvdbId:        req.Id,
+			EpisodeTvdbID: strconv.Itoa(episode.Id),
+			RelaxLevel:    relax,
 		}
 	}
 
@@ -965,15 +967,16 @@ func (q *QbittHandler) createMovieSearchStrategy(req *tvdb.Media) []*models.Sear
 
 	newMovie := func(query string, relax int) *models.SearchStrategy {
 		return &models.SearchStrategy{
-			Query:       query,
-			MediaName:   req.Name,
-			Season:      0,   // Movies have no season
-			Episode:     0,   // Movies have no episode (used to detect movie vs show)
-			EpisodeMeta: nil, // Movies have no episode metadata
-			TvdbId:      req.Id,
-			ReleaseYear: req.Year,
-			IsMovie:     true, // Flag this as a movie search strategy
-			RelaxLevel:  relax,
+			Query:         query,
+			MediaName:     req.Name,
+			Season:        0,   // Movies have no season
+			Episode:       0,   // Movies have no episode (used to detect movie vs show)
+			EpisodeMeta:   nil, // Movies have no episode metadata
+			TvdbId:        req.Id,
+			EpisodeTvdbID: req.Id, // Movies key notifications/EpisodeResult by media id
+			ReleaseYear:   req.Year,
+			IsMovie:       true, // Flag this as a movie search strategy
+			RelaxLevel:    relax,
 		}
 	}
 

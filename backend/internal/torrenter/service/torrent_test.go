@@ -7,6 +7,7 @@ import (
 	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"log/slog"
+	"strconv"
 	"testing"
 
 	qbittorrent "github.com/autobrr/go-qbittorrent"
@@ -708,16 +709,71 @@ func (s *QbittHandlerTestSuite) TestSortBySeedersDESC_ZeroSeeders() {
 // TestFailedResult verifies failedResult maps a search strategy + code into a
 // failed EpisodeResult with the human-readable reason populated.
 func (s *QbittHandlerTestSuite) TestFailedResult() {
-	ss := &models.SearchStrategy{TvdbId: "98765", Season: 2, Episode: 5}
+	// failedResult must key the EpisodeResult by the episode identity
+	// (EpisodeTvdbID), NOT the show/media id (TvdbId). Use distinct values so a
+	// regression that reads TvdbId fails loudly.
+	ss := &models.SearchStrategy{TvdbId: "98765", EpisodeTvdbID: "11111", Season: 2, Episode: 5}
 
 	result := s.handler.failedResult(ss, dlstatus.CodeNoTorrentFound)
 
-	s.Equal("98765", result.TvdbID)
+	s.Equal("11111", result.TvdbID)
 	s.Equal(2, result.Season)
 	s.Equal(5, result.Episode)
 	s.Equal(dlstatus.OutcomeFailed, result.Outcome)
 	s.Equal(dlstatus.CodeNoTorrentFound, result.Code)
 	s.Equal(dlstatus.CodeNoTorrentFound.HumanReason(), result.Reason)
+}
+
+// TestCreateSearchStrategy_EpisodeIdentity is a regression guard for the
+// cross-phase episode-id identity fix. For a SERIES, every strategy must carry
+// EpisodeTvdbID == the episode id while TvdbId stays the show id — they must
+// DIFFER when show id != episode id. failedResult on a series strategy must
+// surface the episode id. The webserver keys notifications/retries by episode
+// id, so reverting EpisodeTvdbID to the show id would silently break shows.
+func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_EpisodeIdentity() {
+	const showID = "555000"   // Shows table key (req.Id)
+	const episodeID = 777111  // distinct episode id
+	media := &tvdb.Media{
+		Id:   showID,
+		Name: "Identity Show",
+	}
+	episode := &tvdb.Episode{
+		Id:           episodeID,
+		SeasonNumber: 3,
+		Number:       7,
+	}
+
+	strategies := s.handler.createSearchStrategy(media, episode)
+	s.NotEmpty(strategies)
+
+	for _, ss := range strategies {
+		s.Equal(showID, ss.TvdbId, "TvdbId must remain the show id for library lookups")
+		s.Equal(strconv.Itoa(episodeID), ss.EpisodeTvdbID, "EpisodeTvdbID must be the episode id")
+		s.NotEqual(ss.TvdbId, ss.EpisodeTvdbID, "show id and episode id must differ")
+	}
+
+	// failedResult on a series strategy surfaces the episode id, not the show id.
+	result := s.handler.failedResult(strategies[0], dlstatus.CodeNoTorrentFound)
+	s.Equal(strconv.Itoa(episodeID), result.TvdbID)
+}
+
+// TestCreateMovieSearchStrategy_EpisodeIdentity verifies that for a MOVIE the
+// EpisodeTvdbID equals the media id (same as TvdbId).
+func (s *QbittHandlerTestSuite) TestCreateMovieSearchStrategy_EpisodeIdentity() {
+	const movieID = "424242"
+	media := &tvdb.Media{
+		Id:   movieID,
+		Name: "Identity Movie",
+		Year: "2021",
+	}
+
+	strategies := s.handler.createMovieSearchStrategy(media)
+	s.NotEmpty(strategies)
+
+	for _, ss := range strategies {
+		s.Equal(movieID, ss.TvdbId)
+		s.Equal(movieID, ss.EpisodeTvdbID, "movie EpisodeTvdbID must equal media id")
+	}
 }
 
 // TestExecuteSearchStrategies_NoStrategies verifies that with no strategies the
