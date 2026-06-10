@@ -54,5 +54,5 @@ type FileSystem interface {
 
 // PlexService handles Plex library operations
 type PlexService interface {
-	SyncPlexLibrary(ctx context.Context)
+	SyncPlexLibrary(ctx context.Context) error
 }

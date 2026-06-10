@@ -107,19 +107,6 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	go func() {
-		sig := <-sigChan
-		logger.Info("Received shutdown signal", "signal", sig)
-
-		// Stop scheduler
-		sched.Stop()
-
-		// Give time for cleanup
-		time.Sleep(1 * time.Second)
-
-		os.Exit(0)
-	}()
-
 	// Start notification cleanup job
 	go func() {
 		ticker := time.NewTicker(24 * time.Hour)
@@ -189,9 +176,28 @@ func main() {
 	r.DELETE("/notifications/:id", notificationHandler.DismissNotification)
 
 	// Start server
+	srv := &http.Server{Addr: cfg.BindAddress, Handler: r}
 	logger.Info("Starting webserver", "address", cfg.BindAddress)
-	if err := r.Run(cfg.BindAddress); err != nil {
-		logger.Error("Server failed", "error", err)
-		os.Exit(1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("Server failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Block until signal
+	sig := <-sigChan
+	logger.Info("Received shutdown signal", "signal", sig)
+
+	// Stop scheduler
+	sched.Stop()
+
+	// Gracefully drain in-flight requests
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Error("Server shutdown error", "error", err)
+	} else {
+		logger.Info("Server shut down cleanly")
 	}
 }

@@ -135,9 +135,17 @@ func main() {
 	r.GET("/media/:hash", mediaHandler.MediaExists)
 	r.POST("/status/batch", statusHandler.BatchStatus)
 
-	// Sync Plex library on startup (non-blocking)
+	// Sync Plex library on startup (non-blocking, retries once on failure)
 	logger.Info("Starting Plex library sync in background")
-	go plex.SyncPlexLibrary(context.Background())
+	go func() {
+		if err := plex.SyncPlexLibrary(context.Background()); err != nil {
+			logger.Error("Plex library sync failed, retrying in 1 minute", "error", err)
+			time.Sleep(1 * time.Minute)
+			if err := plex.SyncPlexLibrary(context.Background()); err != nil {
+				logger.Error("Plex library sync retry failed", "error", err)
+			}
+		}
+	}()
 
 	// Start cache cleanup goroutine
 	ctx := context.Background()
