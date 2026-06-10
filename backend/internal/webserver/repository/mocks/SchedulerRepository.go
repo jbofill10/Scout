@@ -4,8 +4,9 @@ package mocks
 
 import (
 	context "context"
-	media "github.com/jbofill10/scout/backend/pkg/media"
 	time "time"
+
+	repository "github.com/jbofill10/scout/backend/internal/webserver/repository"
 
 	mock "github.com/stretchr/testify/mock"
 )
@@ -16,23 +17,23 @@ type SchedulerRepository struct {
 }
 
 // GetDueMedia provides a mock function with given fields: ctx, windowEnd
-func (_m *SchedulerRepository) GetDueMedia(ctx context.Context, windowEnd time.Time) ([]media.Media, error) {
+func (_m *SchedulerRepository) GetDueMedia(ctx context.Context, windowEnd time.Time) ([]repository.DueItem, error) {
 	ret := _m.Called(ctx, windowEnd)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetDueMedia")
 	}
 
-	var r0 []media.Media
+	var r0 []repository.DueItem
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, time.Time) ([]media.Media, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, time.Time) ([]repository.DueItem, error)); ok {
 		return rf(ctx, windowEnd)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, time.Time) []media.Media); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, time.Time) []repository.DueItem); ok {
 		r0 = rf(ctx, windowEnd)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]media.Media)
+			r0 = ret.Get(0).([]repository.DueItem)
 		}
 	}
 
@@ -45,17 +46,17 @@ func (_m *SchedulerRepository) GetDueMedia(ctx context.Context, windowEnd time.T
 	return r0, r1
 }
 
-// InsertDownloadHistory provides a mock function with given fields: mediaTitle, season, episode, absoluteEpisode, status, reason
-func (_m *SchedulerRepository) InsertDownloadHistory(mediaTitle string, season int, episode int, absoluteEpisode int, status string, reason string) error {
-	ret := _m.Called(mediaTitle, season, episode, absoluteEpisode, status, reason)
+// MarkQueued provides a mock function with given fields: ctx, id
+func (_m *SchedulerRepository) MarkQueued(ctx context.Context, id int) error {
+	ret := _m.Called(ctx, id)
 
 	if len(ret) == 0 {
-		panic("no return value specified for InsertDownloadHistory")
+		panic("no return value specified for MarkQueued")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string, int, int, int, string, string) error); ok {
-		r0 = rf(mediaTitle, season, episode, absoluteEpisode, status, reason)
+	if rf, ok := ret.Get(0).(func(context.Context, int) error); ok {
+		r0 = rf(ctx, id)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -63,22 +64,32 @@ func (_m *SchedulerRepository) InsertDownloadHistory(mediaTitle string, season i
 	return r0
 }
 
-// Schedule provides a mock function with given fields: _a0, releaseTime
-func (_m *SchedulerRepository) Schedule(_a0 media.Media, releaseTime time.Time) error {
-	ret := _m.Called(_a0, releaseTime)
+// ResetStaleQueued provides a mock function with given fields: ctx, olderThan
+func (_m *SchedulerRepository) ResetStaleQueued(ctx context.Context, olderThan time.Duration) (int64, error) {
+	ret := _m.Called(ctx, olderThan)
 
 	if len(ret) == 0 {
-		panic("no return value specified for Schedule")
+		panic("no return value specified for ResetStaleQueued")
 	}
 
-	var r0 error
-	if rf, ok := ret.Get(0).(func(media.Media, time.Time) error); ok {
-		r0 = rf(_a0, releaseTime)
+	var r0 int64
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, time.Duration) (int64, error)); ok {
+		return rf(ctx, olderThan)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, time.Duration) int64); ok {
+		r0 = rf(ctx, olderThan)
 	} else {
-		r0 = ret.Error(0)
+		r0 = ret.Get(0).(int64)
 	}
 
-	return r0
+	if rf, ok := ret.Get(1).(func(context.Context, time.Duration) error); ok {
+		r1 = rf(ctx, olderThan)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
 }
 
 // NewSchedulerRepository creates a new instance of SchedulerRepository. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.

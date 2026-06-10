@@ -15,7 +15,6 @@ import (
 	"github.com/jbofill10/scout/backend/internal/webserver/interactors"
 	"github.com/jbofill10/scout/backend/internal/webserver/repository"
 	"github.com/jbofill10/scout/backend/internal/webserver/scheduler"
-	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
 	"github.com/gin-gonic/gin"
@@ -69,7 +68,7 @@ func main() {
 	}
 
 	// Initialize media queue for scheduled downloads
-	queue := make(chan tvdb.Media, 100)
+	queue := make(chan repository.DueItem, 100)
 
 	// Initialize scheduler
 	sched := scheduler.NewScheduler(schedulerRepo, logger)

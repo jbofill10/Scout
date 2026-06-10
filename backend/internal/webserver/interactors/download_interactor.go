@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/jbofill10/scout/backend/internal/webserver/clients"
 	"github.com/jbofill10/scout/backend/internal/webserver/repository"
+	"github.com/jbofill10/scout/backend/internal/webserver/retry"
 	"github.com/jbofill10/scout/backend/internal/webserver/scheduler"
+	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/notifications"
 	status "github.com/jbofill10/scout/backend/pkg/status"
@@ -26,7 +29,7 @@ type DownloadInteractor struct {
 	repo             repository.SchedulerRepository
 	notificationRepo repository.NotificationRepository
 	logger           *slog.Logger
-	mediaQueue       chan tvdb.Media
+	mediaQueue       chan repository.DueItem
 	tvdbClient       *clients.TVDBProxyClient
 	torrenterClient  *clients.TorrenterClient
 }
@@ -35,7 +38,7 @@ func NewDownloadInteractor(
 	repo repository.SchedulerRepository,
 	notificationRepo repository.NotificationRepository,
 	sched *scheduler.Scheduler,
-	mediaQueue chan tvdb.Media,
+	mediaQueue chan repository.DueItem,
 	logger *slog.Logger,
 	tvdbClient *clients.TVDBProxyClient,
 	torrenterClient *clients.TorrenterClient,
@@ -55,40 +58,135 @@ func NewDownloadInteractor(
 func (i *DownloadInteractor) WatchForDueMedia() {
 	i.scheduler.Start(i.mediaQueue)
 	go func() {
-		for media := range i.mediaQueue {
-			// Wrap in function to ensure defer runs after each iteration
-			func(media tvdb.Media) {
-				// Create a new trace for this scheduled download execution
-				// Note: This is a new trace, not tied to the original scheduling request
-				// However, the scheduled_trace_id in the database can be used to correlate back
-				ctx, span := tracer.Start(context.Background(), "scheduled_download",
-					trace.WithAttributes(
-						attribute.String("media.name", media.Name),
-						attribute.String("media.id", media.Id),
-						attribute.Int("episode.count", len(media.Metadata.Episodes)),
-					),
-				)
-				defer span.End()
-
-				i.logger.InfoContext(ctx, "Processing due media", "media", media.Name)
-
-				// Get trace/span IDs for this execution
-				traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
-
-				// Media is already complete and ready for Download()
-				// Phase 2 will consume the per-episode results; for now we only act on the error.
-				_, err := i.torrenterClient.Download(ctx, media)
-				if err != nil {
-					i.logger.ErrorContext(ctx, "Failed to download media", "error", err)
-					// Log failure for each episode in the media
-					for _, ep := range media.Metadata.Episodes {
-						_ = i.repo.InsertDownloadHistory(media.Name, ep.SeasonNumber, ep.Number, ep.AbsoluteNumber,
-							status.Failure, "[Scheduled Download Error]: "+err.Error(), traceID, spanID)
-					}
-				}
-			}(media)
+		for item := range i.mediaQueue {
+			i.processDueItem(item)
 		}
 	}()
+}
+
+// processDueItem dispatches a single scheduled download and transitions its row
+// to a terminal status (completed/failed) or reschedules it for retry.
+func (i *DownloadInteractor) processDueItem(item repository.DueItem) {
+	media := item.Media
+	// Create a new trace for this scheduled download execution.
+	// Note: this is a new trace, not tied to the original scheduling request;
+	// the scheduled_trace_id column can correlate back.
+	ctx, span := tracer.Start(context.Background(), "scheduled_download",
+		trace.WithAttributes(
+			attribute.String("media.name", media.Name),
+			attribute.String("media.id", media.Id),
+			attribute.Int("episode.count", len(media.Metadata.Episodes)),
+		),
+	)
+	defer span.End()
+
+	i.logger.InfoContext(ctx, "Processing due media", "media", media.Name, "attempts", item.Attempts)
+
+	traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
+
+	resp, err := i.torrenterClient.Download(ctx, media)
+	if err != nil {
+		i.logger.ErrorContext(ctx, "Download dispatch error", "error", err, "media", media.Name)
+	}
+
+	failed := failedResult(resp.Results)
+	if failed == nil {
+		// All results downloading/exists (and no err with empty results) → done.
+		if markErr := i.repo.MarkCompleted(ctx, item.ID); markErr != nil {
+			i.logger.ErrorContext(ctx, "Failed to mark download completed", "error", markErr, "id", item.ID)
+		}
+		i.logger.InfoContext(ctx, "Scheduled download completed", "media", media.Name)
+		return
+	}
+
+	code := failed.Code
+	reason := failed.Reason
+	if reason == "" {
+		reason = code.HumanReason()
+	}
+
+	if code.Category() == dlstatus.CategoryPermanent {
+		i.handlePermanentRowFailure(ctx, item, *failed, reason, traceID, spanID)
+		return
+	}
+
+	// Transient failure → apply backoff policy.
+	next, ok := retry.NextAttempt(time.Now(), item.Attempts)
+	if !ok {
+		// Exhausted retries → terminal failure.
+		exhaustReason := fmt.Sprintf("Gave up after %d attempts: %s", retry.MaxAttempts, reason)
+		i.handlePermanentRowFailureWithCode(ctx, item, *failed, string(dlstatus.CodeMaxRetries), exhaustReason, traceID, spanID)
+		return
+	}
+
+	// Retries remain → reschedule the row and keep the notification searching.
+	if recErr := i.repo.RecordFailure(ctx, item.ID, string(code), reason, next); recErr != nil {
+		i.logger.ErrorContext(ctx, "Failed to record transient failure", "error", recErr, "id", item.ID)
+	}
+	attemptReason := fmt.Sprintf("%s (attempt %d of %d, next try %s)",
+		code.HumanReason(), item.Attempts+1, retry.MaxAttempts, next.Format("15:04"))
+	i.updateNotificationStatus(ctx, failed.TvdbID, notifications.StatusSearching, attemptReason)
+	i.logger.InfoContext(ctx, "Scheduled download will retry",
+		"media", media.Name, "code", code, "next_attempt", next.Format(time.RFC3339))
+}
+
+// handlePermanentRowFailure marks the row failed using the failure's own code.
+func (i *DownloadInteractor) handlePermanentRowFailure(ctx context.Context, item repository.DueItem, failed dlstatus.EpisodeResult, reason, traceID, spanID string) {
+	i.handlePermanentRowFailureWithCode(ctx, item, failed, string(failed.Code), reason, traceID, spanID)
+}
+
+// handlePermanentRowFailureWithCode marks the row terminally failed, updates the
+// episode notification to failed, and records a history failure row.
+func (i *DownloadInteractor) handlePermanentRowFailureWithCode(ctx context.Context, item repository.DueItem, failed dlstatus.EpisodeResult, code, reason, traceID, spanID string) {
+	if markErr := i.repo.MarkPermanentlyFailed(ctx, item.ID, code, reason); markErr != nil {
+		i.logger.ErrorContext(ctx, "Failed to mark download permanently failed", "error", markErr, "id", item.ID)
+	}
+	i.updateNotificationStatus(ctx, failed.TvdbID, notifications.StatusFailed, reason)
+	if histErr := i.repo.InsertDownloadHistory(item.Media.Name, failed.Season, failed.Episode, 0,
+		status.Failure, "[Scheduled Download Failed]: "+reason, traceID, spanID); histErr != nil {
+		i.logger.ErrorContext(ctx, "Failed to insert download history", "error", histErr)
+	}
+	i.logger.ErrorContext(ctx, "Scheduled download permanently failed",
+		"media", item.Media.Name, "code", code, "reason", reason)
+}
+
+// failedResult picks the representative failed result from a download response.
+// Rows are per-episode (or per-movie) in practice, so 0-1 failures are expected;
+// if multiple, the first permanent failure wins, else the first transient one.
+func failedResult(results []dlstatus.EpisodeResult) *dlstatus.EpisodeResult {
+	var firstTransient *dlstatus.EpisodeResult
+	for idx := range results {
+		r := &results[idx]
+		if r.Outcome != dlstatus.OutcomeFailed {
+			continue
+		}
+		if r.Code.Category() == dlstatus.CategoryPermanent {
+			return r
+		}
+		if firstTransient == nil {
+			firstTransient = r
+		}
+	}
+	return firstTransient
+}
+
+// updateNotificationStatus updates an existing notification (by tvdb_id) to the
+// given status and reason. Missing notifications are logged, not fatal.
+func (i *DownloadInteractor) updateNotificationStatus(ctx context.Context, tvdbID string, st notifications.NotificationStatus, reason string) {
+	notification, err := i.notificationRepo.GetNotification(ctx, tvdbID)
+	if err != nil {
+		i.logger.ErrorContext(ctx, "Failed to load notification for update", "error", err, "tvdb_id", tvdbID)
+		return
+	}
+	if notification == nil {
+		i.logger.WarnContext(ctx, "No notification to update", "tvdb_id", tvdbID)
+		return
+	}
+	notification.Status = st
+	notification.Reason = reason
+	if err := i.notificationRepo.UpdateNotification(ctx, notification); err != nil {
+		i.logger.ErrorContext(ctx, "Failed to update notification", "error", err, "tvdb_id", tvdbID)
+	}
 }
 
 func (i *DownloadInteractor) extractAliases(aliases []tvdb.Alias) []string {
@@ -252,12 +350,20 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) e
 		}
 		downloadPayload.Metadata.Episodes = mediaToDownload
 
-		_, err = i.torrenterClient.Download(ctx, downloadPayload)
-		if err != nil {
-			i.logger.ErrorContext(ctx, "Failed to download show", "error", err)
-			return err
+		resp, dlErr := i.torrenterClient.Download(ctx, downloadPayload)
+		if dlErr != nil {
+			i.logger.ErrorContext(ctx, "Failed to download show", "error", dlErr)
 		}
 		i.logger.InfoContext(ctx, "Sent aired episodes to torrenter", "count", len(mediaToDownload))
+
+		// Handle per-episode failures: transient ones get a retry row, permanent
+		// ones surface a failed notification + history entry.
+		traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
+		allScheduled, scheduleErr := i.handleImmediateShowFailures(ctx, downloadPayload, extendedInfo, isAnime, resp, traceID, spanID)
+		if dlErr != nil && (!allScheduled || scheduleErr != nil) {
+			// Work was lost (couldn't schedule retries for some failures); surface the error.
+			return dlErr
+		}
 	} else {
 		i.logger.InfoContext(ctx, "No aired episodes to download immediately")
 	}
@@ -285,12 +391,16 @@ func (i *DownloadInteractor) DownloadMovie(ctx context.Context, req tvdb.Media) 
 		i.logger.WarnContext(ctx, "Failed to parse movie release date, treating as released",
 			"error", err, "first_aired", req.Metadata.FirstAired)
 		// Download immediately
-		_, err = i.torrenterClient.Download(ctx, req)
-		if err != nil {
-			i.logger.ErrorContext(ctx, "Failed to download movie", "error", err)
-			return err
+		traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
+		resp, dlErr := i.torrenterClient.Download(ctx, req)
+		if dlErr != nil {
+			i.logger.ErrorContext(ctx, "Failed to download movie", "error", dlErr)
 		}
 		i.logger.InfoContext(ctx, "Sent movie to torrenter", "movie", req.Name)
+		scheduled, scheduleErr := i.handleImmediateMovieFailure(ctx, req, resp, traceID, spanID)
+		if dlErr != nil && (!scheduled || scheduleErr != nil) {
+			return dlErr
+		}
 		return nil
 	}
 
@@ -343,13 +453,138 @@ func (i *DownloadInteractor) DownloadMovie(ctx context.Context, req tvdb.Media) 
 		}
 	}
 
-	_, err = i.torrenterClient.Download(ctx, req)
-	if err != nil {
-		i.logger.ErrorContext(ctx, "Failed to download movie", "error", err)
-		return err
+	resp, dlErr := i.torrenterClient.Download(ctx, req)
+	if dlErr != nil {
+		i.logger.ErrorContext(ctx, "Failed to download movie", "error", dlErr)
 	}
 	i.logger.InfoContext(ctx, "Sent movie to torrenter", "movie", req.Name)
+	scheduled, scheduleErr := i.handleImmediateMovieFailure(ctx, req, resp, traceID, spanID)
+	if dlErr != nil && (!scheduled || scheduleErr != nil) {
+		return dlErr
+	}
 	return nil
+}
+
+// handleImmediateShowFailures inspects an immediate show download response and,
+// for each failed episode, schedules a retry (transient) or surfaces a failed
+// notification + history row (permanent). It returns whether every failure was
+// handled such that no work was lost (transient failures scheduled; permanent
+// failures are terminal and count as handled), and the first scheduling error.
+func (i *DownloadInteractor) handleImmediateShowFailures(
+	ctx context.Context,
+	payload tvdb.Media,
+	extendedInfo tvdb.TVDBSeriesExtendedResponse,
+	isAnime bool,
+	resp dlstatus.DownloadResponse,
+	traceID, spanID string,
+) (bool, error) {
+	// Index episodes by their tvdb id (string) for per-result lookup.
+	episodeByID := make(map[string]tvdb.Episode, len(payload.Metadata.Episodes))
+	for _, ep := range payload.Metadata.Episodes {
+		episodeByID[strconv.Itoa(ep.Id)] = ep
+	}
+
+	allHandled := true
+	var firstScheduleErr error
+
+	for _, r := range resp.Results {
+		if r.Outcome != dlstatus.OutcomeFailed {
+			continue
+		}
+		reason := r.Reason
+		if reason == "" {
+			reason = r.Code.HumanReason()
+		}
+
+		if r.Code.Category() == dlstatus.CategoryPermanent {
+			i.updateNotificationStatus(ctx, r.TvdbID, notifications.StatusFailed, reason)
+			if err := i.repo.InsertDownloadHistory(payload.Name, r.Season, r.Episode, 0,
+				status.Failure, "[Download Failed]: "+reason, traceID, spanID); err != nil {
+				i.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
+			}
+			continue
+		}
+
+		// Transient → schedule a retry row for this single episode.
+		ep, ok := episodeByID[r.TvdbID]
+		if !ok {
+			i.logger.WarnContext(ctx, "Failed result has no matching episode", "tvdb_id", r.TvdbID)
+			allHandled = false
+			continue
+		}
+		retryMedia := i.buildScheduledMedia(payload, extendedInfo, isAnime, ep)
+		if err := i.repo.ScheduleRetry(ctx, retryMedia, time.Now().Add(1*time.Hour),
+			string(r.Code), reason, traceID, spanID); err != nil {
+			i.logger.ErrorContext(ctx, "Failed to schedule retry for episode", "error", err, "tvdb_id", r.TvdbID)
+			allHandled = false
+			if firstScheduleErr == nil {
+				firstScheduleErr = err
+			}
+			continue
+		}
+		i.updateNotificationStatus(ctx, r.TvdbID, notifications.StatusSearching, r.Code.HumanReason()+" — retry scheduled")
+	}
+
+	return allHandled, firstScheduleErr
+}
+
+// buildScheduledMedia constructs a single-episode media payload identical to the
+// one DownloadShow uses for future scheduling, so ComputeContentHash matches the
+// row a future poll would create (enabling retry dedup).
+func (i *DownloadInteractor) buildScheduledMedia(req tvdb.Media, extendedInfo tvdb.TVDBSeriesExtendedResponse, isAnime bool, episode tvdb.Episode) tvdb.Media {
+	scheduledMedia := tvdb.Media{
+		Id:           req.Id,
+		Name:         req.Name,
+		Category:     req.Category,
+		Anime:        isAnime,
+		Score:        req.Score,
+		Slug:         req.Slug,
+		ImageUrl:     req.ImageUrl,
+		OriginalName: req.OriginalName,
+		Status:       req.Status,
+		Overview:     req.Overview,
+		Year:         req.Year,
+		Aliases:      i.extractAliases(extendedInfo.Data.Aliases),
+	}
+	scheduledMedia.Metadata.Episodes = []tvdb.Episode{episode}
+	return scheduledMedia
+}
+
+// handleImmediateMovieFailure inspects an immediate movie download response and
+// schedules a retry (transient) or surfaces a failed notification + history row
+// (permanent). The whole req is the media for retry scheduling. Returns whether
+// any failure was handled without losing work, and the first scheduling error.
+func (i *DownloadInteractor) handleImmediateMovieFailure(
+	ctx context.Context,
+	req tvdb.Media,
+	resp dlstatus.DownloadResponse,
+	traceID, spanID string,
+) (bool, error) {
+	failed := failedResult(resp.Results)
+	if failed == nil {
+		return true, nil
+	}
+	reason := failed.Reason
+	if reason == "" {
+		reason = failed.Code.HumanReason()
+	}
+
+	if failed.Code.Category() == dlstatus.CategoryPermanent {
+		i.updateNotificationStatus(ctx, failed.TvdbID, notifications.StatusFailed, reason)
+		if err := i.repo.InsertDownloadHistory(req.Name, 0, 0, 0,
+			status.Failure, "[Download Failed]: "+reason, traceID, spanID); err != nil {
+			i.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
+		}
+		return true, nil
+	}
+
+	if err := i.repo.ScheduleRetry(ctx, req, time.Now().Add(1*time.Hour),
+		string(failed.Code), reason, traceID, spanID); err != nil {
+		i.logger.ErrorContext(ctx, "Failed to schedule movie retry", "error", err, "movie", req.Name)
+		return false, err
+	}
+	i.updateNotificationStatus(ctx, failed.TvdbID, notifications.StatusSearching, failed.Code.HumanReason()+" — retry scheduled")
+	return true, nil
 }
 
 func (i *DownloadInteractor) getExtendedInformation(
