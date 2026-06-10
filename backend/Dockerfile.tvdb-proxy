@@ -26,7 +26,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w" -o tvdb-proxy ./cmd/tvdb-
 FROM alpine:3.19
 
 # Runtime deps
-RUN apk --no-cache add ca-certificates tzdata
+RUN apk --no-cache add ca-certificates tzdata wget
 
 WORKDIR /root/
 
