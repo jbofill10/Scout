@@ -2,9 +2,6 @@ package scheduler
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -13,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/jbofill10/scout/backend/internal/webserver/repository"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 )
 
@@ -26,8 +24,9 @@ type Scheduler struct {
 	repo         SchedulerRepository
 	logger       *slog.Logger
 	scheduledMap map[string]bool // content_hash -> scheduled
-	mu           sync.RWMutex    // protects scheduledMap
-	stopChan     chan struct{}   // signals shutdown
+	mu           sync.Mutex      // protects scheduledMap
+	stopChan     chan struct{}    // signals shutdown
+	stopOnce     sync.Once       // ensures Stop() is idempotent
 	tracer       trace.Tracer
 }
 
@@ -41,29 +40,12 @@ func NewScheduler(repo SchedulerRepository, logger *slog.Logger) *Scheduler {
 	}
 }
 
-// computeContentHash computes SHA256 hash for media deduplication
-// Uses same logic as repository.Schedule() for consistency
-func (s *Scheduler) computeContentHash(media tvdb.Media) string {
-	var scheduleHash string
-	if media.Category == "movie" || len(media.Metadata.Episodes) == 0 {
-		// For movies or media without episodes, use media ID + FirstAired
-		scheduleHash = fmt.Sprintf("%s-%s", media.Id, media.Metadata.FirstAired)
-	} else {
-		// For TV shows, use episode identifiers
-		scheduleHash = fmt.Sprintf("%d-%d-%d",
-			media.Metadata.Episodes[0].SeasonNumber,
-			media.Metadata.Episodes[0].Number,
-			media.Metadata.Episodes[0].AbsoluteNumber,
-		)
-	}
-	h := sha256.Sum256([]byte(scheduleHash))
-	return hex.EncodeToString(h[:])
-}
-
-// Stop gracefully shuts down the scheduler by closing stopChan
+// Stop gracefully shuts down the scheduler by closing stopChan. Safe to call multiple times.
 func (s *Scheduler) Stop() {
-	close(s.stopChan)
-	s.logger.Info("Scheduler stopped")
+	s.stopOnce.Do(func() {
+		close(s.stopChan)
+		s.logger.Info("Scheduler stopped")
+	})
 }
 
 // Start begins polling for scheduled media and sends them to the queue when due
@@ -115,22 +97,6 @@ func (s *Scheduler) pollAndSchedule(queue chan<- tvdb.Media) {
 	s.logger.InfoContext(ctx, "Found scheduled media", "count", len(mediaList))
 
 	for _, media := range mediaList {
-		contentHash := s.computeContentHash(media)
-
-		// Check if already scheduled
-		s.mu.RLock()
-		alreadyScheduled := s.scheduledMap[contentHash]
-		s.mu.RUnlock()
-
-		if alreadyScheduled {
-			continue // Skip already-scheduled items
-		}
-
-		// Mark as scheduled in memory
-		s.mu.Lock()
-		s.scheduledMap[contentHash] = true
-		s.mu.Unlock()
-
 		// Extract release time from first episode (for shows) or FirstAired (for movies)
 		var releaseTime time.Time
 		var parseErr error
@@ -151,10 +117,28 @@ func (s *Scheduler) pollAndSchedule(queue chan<- tvdb.Media) {
 			continue
 		}
 
+		contentHash := repository.ComputeContentHash(media, releaseTime)
+
+		// Check and mark as scheduled atomically to prevent duplicate timers.
+		s.mu.Lock()
+		alreadyScheduled := s.scheduledMap[contentHash]
+		if !alreadyScheduled {
+			s.scheduledMap[contentHash] = true
+		}
+		s.mu.Unlock()
+
+		if alreadyScheduled {
+			continue // Skip already-scheduled items
+		}
+
 		if releaseTime.Before(now) || releaseTime.Equal(now) {
 			// Already due, send immediately
 			s.logger.InfoContext(ctx, "Queueing media immediately (already due)", "media", media.Name)
-			queue <- media
+			select {
+			case queue <- media:
+			case <-s.stopChan:
+				return
+			}
 		} else {
 			// Schedule for the future
 			duration := time.Until(releaseTime)
@@ -176,7 +160,11 @@ func (s *Scheduler) scheduleTimer(media tvdb.Media, duration time.Duration, queu
 	select {
 	case <-timer.C:
 		s.logger.Info("Timer fired, queueing media", "media", media.Name)
-		queue <- media
+		select {
+		case queue <- media:
+		case <-s.stopChan:
+			s.logger.Info("Timer fired but shutdown in progress, dropping media", "media", media.Name)
+		}
 
 		// Remove from scheduled map (cleanup)
 		s.mu.Lock()

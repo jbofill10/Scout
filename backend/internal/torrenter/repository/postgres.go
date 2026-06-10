@@ -51,6 +51,11 @@ type Repo struct {
 	logger *slog.Logger
 }
 
+// Ping checks database connectivity with the given context.
+func (r *Repo) Ping(ctx context.Context) error {
+	return r.db.PingContext(ctx)
+}
+
 func NewRepo(logger *slog.Logger, connStr string) (*Repo, error) {
 	// Register wrapped driver with otelsql for automatic SQL tracing
 	driverName, err := otelsql.Register("postgres",

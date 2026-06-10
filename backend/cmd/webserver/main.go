@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -156,6 +157,18 @@ func main() {
 	r := gin.Default()
 	r.Use(otelgin.Middleware("webserver"))
 	r.Use(handlers.CorsMiddleware())
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+	r.GET("/ready", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+		if err := schedulerRepo.Ping(ctx); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
 	r.GET("/search", searchHandler.HandleSearch)
 	r.GET("/search/enriched", enrichedSearchHandler.HandleEnrichedSearch)
 	r.POST("/shows", downloadHandler.DownloadShow)

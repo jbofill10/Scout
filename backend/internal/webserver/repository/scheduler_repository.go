@@ -51,6 +51,33 @@ type SchedulerRepo struct {
 // already exists in the ScheduledDownloads table (content_hash collision).
 var ErrDuplicateScheduled = fmt.Errorf("media already scheduled")
 
+// ComputeContentHash returns a deterministic SHA-256 content hash for media
+// deduplication. The hash incorporates the media ID to prevent collisions
+// between different shows that share the same season/episode numbers.
+func ComputeContentHash(media tvdb.Media, releaseTime time.Time) string {
+	var scheduleHash string
+	if media.Category == "movie" || len(media.Metadata.Episodes) == 0 {
+		// For movies or media without episodes, use media ID + release date
+		scheduleHash = fmt.Sprintf("%s-%s", media.Id, releaseTime.Format("2006-01-02"))
+	} else {
+		// For TV shows, use media ID + episode identifiers
+		ep := media.Metadata.Episodes[0]
+		scheduleHash = fmt.Sprintf("%s-%d-%d-%d",
+			media.Id,
+			ep.SeasonNumber,
+			ep.Number,
+			ep.AbsoluteNumber,
+		)
+	}
+	h := sha256.Sum256([]byte(scheduleHash))
+	return hex.EncodeToString(h[:])
+}
+
+// Ping checks the database connectivity with the given context.
+func (r *SchedulerRepo) Ping(ctx context.Context) error {
+	return r.db.PingContext(ctx)
+}
+
 func NewSchedulerRepo(logger *slog.Logger, connStr string) (*SchedulerRepo, error) {
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
@@ -69,23 +96,8 @@ func (r *SchedulerRepo) Schedule(ctx context.Context, media tvdb.Media, releaseT
 		return fmt.Errorf("failed to marshal media: %w", err)
 	}
 
-	// Compute a deterministic content hash of the marshalled media JSON so
-	// we can detect duplicate scheduled content efficiently.
-	var scheduleHash string
-	if media.Category == "movie" || len(media.Metadata.Episodes) == 0 {
-		// For movies or media without episodes, use media ID + release time
-		scheduleHash = fmt.Sprintf("%s-%s", media.Id, releaseTime.Format("2006-01-02"))
-	} else {
-		// For TV shows, use episode identifiers
-		scheduleHash = fmt.Sprintf(
-			"%d-%d-%d",
-			media.Metadata.Episodes[0].SeasonNumber,
-			media.Metadata.Episodes[0].Number,
-			media.Metadata.Episodes[0].AbsoluteNumber,
-		)
-	}
-	h := sha256.Sum256([]byte(scheduleHash))
-	contentHash := hex.EncodeToString(h[:])
+	// Compute a deterministic content hash for deduplication.
+	contentHash := ComputeContentHash(media, releaseTime)
 
 	stmt := `INSERT INTO ScheduledDownloads (media, release_time, schedule_status, content_hash, scheduled_trace_id, scheduled_span_id)
 			 VALUES ($1, $2, $3, $4, $5, $6)

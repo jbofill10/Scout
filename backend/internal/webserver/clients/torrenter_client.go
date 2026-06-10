@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
+
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -22,6 +24,7 @@ func NewTorrenterClient(host string) *TorrenterClient {
 		Host: host,
 		Client: &http.Client{
 			Transport: otelhttp.NewTransport(http.DefaultTransport),
+			Timeout:   5 * time.Minute,
 		},
 	}
 }
@@ -54,6 +57,9 @@ func (c *TorrenterClient) Download(ctx context.Context, req tvdb.Media) error {
 }
 
 func (c *TorrenterClient) MediaExists(ctx context.Context, hash string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	url := fmt.Sprintf("http://%s/media/%s", c.Host, hash)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -82,6 +88,9 @@ func (c *TorrenterClient) MediaExists(ctx context.Context, hash string) (bool, e
 // response with `exists` and optional `in_progress` maps keyed by a unique
 // identifier (we use the Media.Hash field if present).
 func (c *TorrenterClient) MediaExistsBatch(ctx context.Context, items []tvdb.Media) (map[string]bool, map[string]bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	url := fmt.Sprintf("http://%s/media/exists", c.Host)
 	buf := new(bytes.Buffer)
 	if err := json.NewEncoder(buf).Encode(items); err != nil {
@@ -128,6 +137,9 @@ func (c *TorrenterClient) MediaExistsBatch(ctx context.Context, items []tvdb.Med
 // It POSTs an array of StatusRequest to the torrenter's /status/batch endpoint
 // and returns a StatusBatchResponse with show and movie status information.
 func (c *TorrenterClient) GetStatusBatch(ctx context.Context, requests []tvdb.StatusRequest) (tvdb.StatusBatchResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	url := fmt.Sprintf("http://%s/status/batch", c.Host)
 	slog.InfoContext(ctx, "calling torrenter status batch", "request_count", len(requests))
 

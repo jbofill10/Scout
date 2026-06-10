@@ -256,3 +256,50 @@ func (s *SchedulerRepoTestSuite) TestInsertDownloadHistory_DatabaseError() {
 	s.Error(err)
 	s.NoError(s.mock.ExpectationsWereMet())
 }
+
+// TestComputeContentHash verifies that different shows with the same episode
+// numbers produce different hashes, and that the same show produces the same hash.
+func (s *SchedulerRepoTestSuite) TestComputeContentHash_ShowsDontCollide() {
+	releaseTime := time.Date(2024, 1, 5, 0, 0, 0, 0, time.UTC)
+
+	show1 := tvdb.Media{
+		Id:       "111",
+		Category: "series",
+		Metadata: tvdb.TVDBSeriesMetadata{
+			Episodes: []tvdb.Episode{
+				{SeasonNumber: 1, Number: 5, AbsoluteNumber: 5},
+			},
+		},
+	}
+	show2 := tvdb.Media{
+		Id:       "222",
+		Category: "series",
+		Metadata: tvdb.TVDBSeriesMetadata{
+			Episodes: []tvdb.Episode{
+				{SeasonNumber: 1, Number: 5, AbsoluteNumber: 5},
+			},
+		},
+	}
+
+	hash1 := ComputeContentHash(show1, releaseTime)
+	hash2 := ComputeContentHash(show2, releaseTime)
+
+	s.NotEqual(hash1, hash2, "Different shows with same episode numbers must not collide")
+	// Same show same episode → same hash
+	s.Equal(hash1, ComputeContentHash(show1, releaseTime))
+}
+
+func (s *SchedulerRepoTestSuite) TestComputeContentHash_MovieUsesDate() {
+	movie := tvdb.Media{
+		Id:       "999",
+		Category: "movie",
+	}
+	t1 := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC)
+
+	hash1 := ComputeContentHash(movie, t1)
+	hash2 := ComputeContentHash(movie, t2)
+
+	s.NotEqual(hash1, hash2, "Same movie with different release dates must produce different hashes")
+	s.Equal(hash1, ComputeContentHash(movie, t1))
+}

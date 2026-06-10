@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -44,6 +45,7 @@ func NewPlexHandler(repo Repository, logger *slog.Logger, cfg *models.PlexCfg, m
 		mediaProcessor: mediaProcessor,
 		httpClient: &http.Client{
 			Transport: http.DefaultTransport,
+			Timeout:   60 * time.Second,
 		},
 	}
 }

@@ -195,6 +195,14 @@ collecting:
 	scheduler.Stop()
 }
 
+func (s *SchedulerTestSuite) TestStop_Idempotent() {
+	// Calling Stop() multiple times must not panic.
+	s.scheduler.Stop()
+	s.NotPanics(func() {
+		s.scheduler.Stop()
+	}, "Stop() must be safe to call multiple times")
+}
+
 func (s *SchedulerTestSuite) TestStart_MixedDueAndFutureMedia() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mockRepo := repoMocks.NewSchedulerRepository(s.T())
