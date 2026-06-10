@@ -18,6 +18,14 @@ var backoff = []time.Duration{
 // first). Once this many attempts have been made, no further retries occur.
 const MaxAttempts = 5
 
+// FirstAttempt returns the time of the first retry given an initial failure
+// (zero prior attempts). It is the single source of truth for the initial retry
+// delay used when scheduling a retry row for an immediate-download failure.
+func FirstAttempt(now time.Time) time.Time {
+	next, _ := NextAttempt(now, 0)
+	return next
+}
+
 // NextAttempt returns the time of the next retry given how many attempts have
 // already been made (attemptsMade is the count BEFORE the failure being
 // handled; 0 on the first failure). The bool is false when retries are

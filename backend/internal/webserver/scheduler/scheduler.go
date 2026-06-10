@@ -26,7 +26,7 @@ type Scheduler struct {
 	logger       *slog.Logger
 	scheduledMap map[string]bool // content_hash -> scheduled
 	mu           sync.Mutex      // protects scheduledMap
-	stopChan     chan struct{}    // signals shutdown
+	stopChan     chan struct{}   // signals shutdown
 	stopOnce     sync.Once       // ensures Stop() is idempotent
 	tracer       trace.Tracer
 }
@@ -106,10 +106,11 @@ func (s *Scheduler) pollAndSchedule(queue chan<- repository.DueItem) {
 	s.logger.InfoContext(ctx, "Found scheduled media", "count", len(dueItems))
 
 	for _, item := range dueItems {
-		// The effective due time was selected by SQL as DueAt
-		// (COALESCE(next_attempt_at, release_time)). Use it for timer math and
-		// hashing so retries (which carry a next_attempt_at) dedup consistently
-		// with their canonical scheduled row.
+		// DueAt (COALESCE(next_attempt_at, release_time), selected by SQL) drives
+		// the timer math below. Hashing uses ReleaseTime — the row's natural
+		// release time — so a retry (whose DueAt is its next_attempt_at) still
+		// dedups against the canonical scheduled row, which was hashed on
+		// release_time.
 		hashTime := item.ReleaseTime
 		if len(item.Media.Metadata.Episodes) == 0 && item.Media.Category != "movie" {
 			s.logger.WarnContext(ctx, "Media has no episodes or FirstAired date", "media", item.Media.Name)

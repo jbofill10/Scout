@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/jbofill10/scout/backend/internal/webserver/repository"
-	repoMocks "github.com/jbofill10/scout/backend/internal/webserver/repository/mocks"
+	schedMocks "github.com/jbofill10/scout/backend/internal/webserver/scheduler/mocks"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 
 	"github.com/stretchr/testify/assert"
@@ -18,7 +18,7 @@ import (
 type SchedulerTestSuite struct {
 	suite.Suite
 	scheduler *Scheduler
-	mockRepo  *repoMocks.SchedulerRepository
+	mockRepo  *schedMocks.SchedulerRepository
 	logger    *slog.Logger
 	queue     chan repository.DueItem
 }
@@ -29,7 +29,7 @@ func TestSchedulerSuite(t *testing.T) {
 
 func (s *SchedulerTestSuite) SetupTest() {
 	s.logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
-	s.mockRepo = repoMocks.NewSchedulerRepository(s.T())
+	s.mockRepo = schedMocks.NewSchedulerRepository(s.T())
 	s.scheduler = NewScheduler(s.mockRepo, s.logger)
 	s.queue = make(chan repository.DueItem, 10)
 }
@@ -51,7 +51,7 @@ func dueItem(name, aired string) repository.DueItem {
 
 func (s *SchedulerTestSuite) TestNewScheduler() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	mockRepo := repoMocks.NewSchedulerRepository(s.T())
+	mockRepo := schedMocks.NewSchedulerRepository(s.T())
 
 	scheduler := NewScheduler(mockRepo, logger)
 
@@ -103,7 +103,7 @@ func (s *SchedulerTestSuite) TestStart_VariousScenarios() {
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
 			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-			mockRepo := repoMocks.NewSchedulerRepository(s.T())
+			mockRepo := schedMocks.NewSchedulerRepository(s.T())
 			scheduler := NewScheduler(mockRepo, logger)
 
 			queue := make(chan repository.DueItem, 10)
@@ -142,7 +142,7 @@ func (s *SchedulerTestSuite) TestStop_Idempotent() {
 
 func (s *SchedulerTestSuite) TestStart_MixedDueAndFutureMedia() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	mockRepo := repoMocks.NewSchedulerRepository(s.T())
+	mockRepo := schedMocks.NewSchedulerRepository(s.T())
 	scheduler := NewScheduler(mockRepo, logger)
 
 	mediaList := []repository.DueItem{

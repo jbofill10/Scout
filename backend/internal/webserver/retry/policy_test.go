@@ -5,6 +5,18 @@ import (
 	"time"
 )
 
+func TestFirstAttempt(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// FirstAttempt must equal the first backoff step (and NextAttempt at 0).
+	if got, want := FirstAttempt(now), now.Add(backoff[0]); !got.Equal(want) {
+		t.Fatalf("FirstAttempt = %v, want %v", got, want)
+	}
+	next, ok := NextAttempt(now, 0)
+	if !ok || !FirstAttempt(now).Equal(next) {
+		t.Fatalf("FirstAttempt must match NextAttempt(now, 0): %v vs %v (ok=%v)", FirstAttempt(now), next, ok)
+	}
+}
+
 func TestNextAttempt(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 

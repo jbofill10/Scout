@@ -24,6 +24,13 @@ import (
 
 var tracer = otel.Tracer("webserver")
 
+// DownloadDispatcher dispatches a media download request to the torrenter and
+// returns the structured per-episode outcomes. *clients.TorrenterClient
+// satisfies this; tests substitute a fake.
+type DownloadDispatcher interface {
+	Download(ctx context.Context, req tvdb.Media) (dlstatus.DownloadResponse, error)
+}
+
 type DownloadInteractor struct {
 	scheduler        *scheduler.Scheduler
 	repo             repository.SchedulerRepository
@@ -31,7 +38,7 @@ type DownloadInteractor struct {
 	logger           *slog.Logger
 	mediaQueue       chan repository.DueItem
 	tvdbClient       *clients.TVDBProxyClient
-	torrenterClient  *clients.TorrenterClient
+	torrenterClient  DownloadDispatcher
 }
 
 func NewDownloadInteractor(
@@ -41,7 +48,7 @@ func NewDownloadInteractor(
 	mediaQueue chan repository.DueItem,
 	logger *slog.Logger,
 	tvdbClient *clients.TVDBProxyClient,
-	torrenterClient *clients.TorrenterClient,
+	torrenterClient DownloadDispatcher,
 ) *DownloadInteractor {
 	return &DownloadInteractor{
 		repo:             repo,
@@ -91,7 +98,10 @@ func (i *DownloadInteractor) processDueItem(item repository.DueItem) {
 
 	failed := failedResult(resp.Results)
 	if failed == nil {
-		// All results downloading/exists (and no err with empty results) → done.
+		// No failed results → every episode is downloading/exists, so the row is
+		// done. (A transport error still populates resp.Results via
+		// unreachableResponse, so a nil-failed result here genuinely means
+		// success; the empty-results case is only a defensive fallback.)
 		if markErr := i.repo.MarkCompleted(ctx, item.ID); markErr != nil {
 			i.logger.ErrorContext(ctx, "Failed to mark download completed", "error", markErr, "id", item.ID)
 		}
@@ -135,19 +145,26 @@ func (i *DownloadInteractor) handlePermanentRowFailure(ctx context.Context, item
 	i.handlePermanentRowFailureWithCode(ctx, item, failed, string(failed.Code), reason, traceID, spanID)
 }
 
-// handlePermanentRowFailureWithCode marks the row terminally failed, updates the
-// episode notification to failed, and records a history failure row.
+// handlePermanentRowFailureWithCode marks the row terminally failed, then
+// surfaces the failure to the user (failed notification + history row).
 func (i *DownloadInteractor) handlePermanentRowFailureWithCode(ctx context.Context, item repository.DueItem, failed dlstatus.EpisodeResult, code, reason, traceID, spanID string) {
 	if markErr := i.repo.MarkPermanentlyFailed(ctx, item.ID, code, reason); markErr != nil {
 		i.logger.ErrorContext(ctx, "Failed to mark download permanently failed", "error", markErr, "id", item.ID)
 	}
-	i.updateNotificationStatus(ctx, failed.TvdbID, notifications.StatusFailed, reason)
-	if histErr := i.repo.InsertDownloadHistory(item.Media.Name, failed.Season, failed.Episode, 0,
-		status.Failure, "[Scheduled Download Failed]: "+reason, traceID, spanID); histErr != nil {
-		i.logger.ErrorContext(ctx, "Failed to insert download history", "error", histErr)
-	}
+	i.surfacePermanentFailure(ctx, item.Media.Name, failed, reason, traceID, spanID)
 	i.logger.ErrorContext(ctx, "Scheduled download permanently failed",
 		"media", item.Media.Name, "code", code, "reason", reason)
+}
+
+// surfacePermanentFailure updates the episode/movie notification to failed and
+// records a history failure row. Shared by the scheduled-dispatch and both
+// immediate-download paths so the "notify + history" pattern lives in one place.
+func (i *DownloadInteractor) surfacePermanentFailure(ctx context.Context, mediaTitle string, failed dlstatus.EpisodeResult, reason, traceID, spanID string) {
+	i.updateNotificationStatus(ctx, failed.TvdbID, notifications.StatusFailed, reason)
+	if histErr := i.repo.InsertDownloadHistory(mediaTitle, failed.Season, failed.Episode, 0,
+		status.Failure, "[Download Failed]: "+reason, traceID, spanID); histErr != nil {
+		i.logger.ErrorContext(ctx, "Failed to insert download history", "error", histErr)
+	}
 }
 
 // failedResult picks the representative failed result from a download response.
@@ -497,11 +514,7 @@ func (i *DownloadInteractor) handleImmediateShowFailures(
 		}
 
 		if r.Code.Category() == dlstatus.CategoryPermanent {
-			i.updateNotificationStatus(ctx, r.TvdbID, notifications.StatusFailed, reason)
-			if err := i.repo.InsertDownloadHistory(payload.Name, r.Season, r.Episode, 0,
-				status.Failure, "[Download Failed]: "+reason, traceID, spanID); err != nil {
-				i.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
-			}
+			i.surfacePermanentFailure(ctx, payload.Name, r, reason, traceID, spanID)
 			continue
 		}
 
@@ -513,7 +526,7 @@ func (i *DownloadInteractor) handleImmediateShowFailures(
 			continue
 		}
 		retryMedia := i.buildScheduledMedia(payload, extendedInfo, isAnime, ep)
-		if err := i.repo.ScheduleRetry(ctx, retryMedia, time.Now().Add(1*time.Hour),
+		if err := i.repo.ScheduleRetry(ctx, retryMedia, retry.FirstAttempt(time.Now()),
 			string(r.Code), reason, traceID, spanID); err != nil {
 			i.logger.ErrorContext(ctx, "Failed to schedule retry for episode", "error", err, "tvdb_id", r.TvdbID)
 			allHandled = false
@@ -570,15 +583,11 @@ func (i *DownloadInteractor) handleImmediateMovieFailure(
 	}
 
 	if failed.Code.Category() == dlstatus.CategoryPermanent {
-		i.updateNotificationStatus(ctx, failed.TvdbID, notifications.StatusFailed, reason)
-		if err := i.repo.InsertDownloadHistory(req.Name, 0, 0, 0,
-			status.Failure, "[Download Failed]: "+reason, traceID, spanID); err != nil {
-			i.logger.ErrorContext(ctx, "Failed to insert download history", "error", err)
-		}
+		i.surfacePermanentFailure(ctx, req.Name, *failed, reason, traceID, spanID)
 		return true, nil
 	}
 
-	if err := i.repo.ScheduleRetry(ctx, req, time.Now().Add(1*time.Hour),
+	if err := i.repo.ScheduleRetry(ctx, req, retry.FirstAttempt(time.Now()),
 		string(failed.Code), reason, traceID, spanID); err != nil {
 		i.logger.ErrorContext(ctx, "Failed to schedule movie retry", "error", err, "movie", req.Name)
 		return false, err
