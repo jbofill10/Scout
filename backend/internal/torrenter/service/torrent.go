@@ -85,6 +85,11 @@ var prowlarrSearchBackoffs = []time.Duration{2 * time.Second, 8 * time.Second}
 
 const prowlarrSearchTimeout = 45 * time.Second
 
+// episodeSearchDeadline bounds the WHOLE per-episode tier ladder (all relax tiers and
+// every strategy/Prowlarr search within them, i.e. roughly prowlarrSearchTimeout ×
+// attempts × strategies × tiers), so a sick indexer can't pin a single episode's request.
+const episodeSearchDeadline = 5 * time.Minute
+
 func (q *QbittHandler) searchProwlarr(ctx context.Context, query, category string, isAnime bool) ([]*prowlarr.Search, error) {
 	q.logger.InfoContext(ctx, "Searching Prowlarr", "query", query, "category", category)
 
@@ -324,7 +329,7 @@ func (q *QbittHandler) processEpisodeDownload(
 	episodeCtx, episodeSpan := torrentTracer.Start(ctx, "searchEpisode")
 
 	// Overall per-episode search deadline so a sick indexer can't pin the request.
-	episodeCtx, cancel := context.WithTimeout(episodeCtx, 5*time.Minute)
+	episodeCtx, cancel := context.WithTimeout(episodeCtx, episodeSearchDeadline)
 	defer cancel()
 
 	if len(strategies) > 0 {
@@ -722,13 +727,27 @@ func (q *QbittHandler) monitorTorrentCompletion(
 	done chan<- models.TorrentCompleteEvent,
 	wg *sync.WaitGroup,
 ) {
-	// Extract span from context
-	winningSpan := trace.SpanFromContext(ctx)
-	// Create a background context independent of the HTTP request lifecycle
-	monitorCtx := trace.ContextWithSpanContext(context.Background(), trace.SpanContextFromContext(ctx))
-
 	defer wg.Done()
-	defer winningSpan.End()
+
+	// The winning strategy span represents the (now-complete) search. End it here so the
+	// search trace doesn't stay open for the lifetime of this long-lived goroutine.
+	searchSpan := trace.SpanFromContext(ctx)
+	searchSpanCtx := trace.SpanContextFromContext(ctx)
+	searchSpan.End()
+
+	// Start a self-contained monitor span as a new root, linked back to the search span,
+	// rather than parenting it under the already-ended search/episode spans. The monitor
+	// can run for up to MONITOR_TIMEOUT (default 6h), so its spans must not dangle off an
+	// ended parent. Use a background context so it's independent of the HTTP request.
+	monitorCtx, monitorSpan := torrentTracer.Start(context.Background(), "monitorTorrent",
+		trace.WithNewRoot(),
+		trace.WithLinks(trace.Link{SpanContext: searchSpanCtx}),
+		trace.WithAttributes(
+			attribute.String("torrent_title", match.Torrent.Title),
+			attribute.String("torrent_hash", infoHash),
+		),
+	)
+	defer monitorSpan.End()
 
 	start := time.Now()
 	timeout := monitorTimeout()
@@ -751,7 +770,7 @@ func (q *QbittHandler) monitorTorrentCompletion(
 					"timeout", timeout.String())...)
 			q.updateNotificationStatus(monitorCtx, match.Strategy.TvdbId, dlstatus.CodeMonitorLost.HumanReason(), notifications.StatusFailed)
 			q.recordStrategyFailure(monitorCtx, match.Strategy, "monitor timeout")
-			winningSpan.SetStatus(codes.Error, "monitor timeout")
+			monitorSpan.SetStatus(codes.Error, "monitor timeout")
 			return
 		}
 
@@ -775,7 +794,7 @@ func (q *QbittHandler) monitorTorrentCompletion(
 					"error", err.Error())...)
 			q.updateNotificationStatus(monitorCtx, match.Strategy.TvdbId, dlstatus.CodeMonitorLost.HumanReason(), notifications.StatusFailed)
 			q.recordStrategyFailure(monitorCtx, match.Strategy, "monitor lost: qbittorrent query exhausted")
-			winningSpan.SetStatus(codes.Error, "max retries reached")
+			monitorSpan.SetStatus(codes.Error, "max retries reached")
 			return
 		}
 
@@ -795,7 +814,7 @@ func (q *QbittHandler) monitorTorrentCompletion(
 			}
 
 			q.logger.InfoContext(monitorCtx, "Torrent completed", "title", match.Torrent.Title)
-			winningSpan.SetStatus(codes.Ok, "torrent downloaded successfully")
+			monitorSpan.SetStatus(codes.Ok, "torrent downloaded successfully")
 			done <- models.TorrentCompleteEvent{
 				SavePath:    torrent.SavePath,
 				Req:         match.Strategy,
