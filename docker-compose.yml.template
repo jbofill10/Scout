@@ -34,6 +34,12 @@ services:
       OTEL_SERVICE_NAME: tvdb-proxy
     ports:
       - "22000:22000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:22000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
     networks:
       - scout-network
@@ -69,6 +75,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:22001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
     networks:
       - scout-network
@@ -96,9 +108,15 @@ services:
       postgres:
         condition: service_healthy
       tvdb-proxy:
-        condition: service_started
+        condition: service_healthy
       torrenter:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:22920/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
     networks:
       - scout-network
@@ -123,8 +141,10 @@ services:
     ports:
       - "30030:80"
     depends_on:
-      - webserver
-      - ui
+      webserver:
+        condition: service_healthy
+      ui:
+        condition: service_started
     restart: unless-stopped
     networks:
       - scout-network

@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"log/slog"
+	"strconv"
 	"testing"
 
 	qbittorrent "github.com/autobrr/go-qbittorrent"
@@ -361,8 +363,19 @@ func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithSpaces() {
 	}
 
 	s.True(hasSpaced)
-	// Should have 2 strategies for non-anime (2 query formats)
-	s.Equal(2, len(strategies))
+	// Tier 0 (strict): 2 query formats for non-anime.
+	s.Equal(2, countRelaxLevel(strategies, 0))
+}
+
+// countRelaxLevel counts strategies at a given relaxation tier.
+func countRelaxLevel(strategies []*models.SearchStrategy, level int) int {
+	n := 0
+	for _, ss := range strategies {
+		if ss.RelaxLevel == level {
+			n++
+		}
+	}
+	return n
 }
 
 func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithAliases() {
@@ -379,9 +392,8 @@ func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithAliases() {
 
 	strategies := s.handler.createSearchStrategy(media, episode)
 
-	// Should create strategies for original name + all aliases
-	// 3 names × 2 query formats = 6 strategies
-	s.Equal(6, len(strategies))
+	// Tier 0 (strict): 3 names × 2 query formats = 6 strategies
+	s.Equal(6, countRelaxLevel(strategies, 0))
 
 	// Verify all three names are present in strategies
 	mediaNames := make(map[string]bool)
@@ -409,8 +421,8 @@ func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithDuplicateAliases() 
 	strategies := s.handler.createSearchStrategy(media, episode)
 
 	// Should deduplicate: "Test Show" appears once, "TestShow" appears once
-	// 2 unique names × 2 query formats = 4 strategies
-	s.Equal(4, len(strategies))
+	// Tier 0 (strict): 2 unique names × 2 query formats = 4 strategies
+	s.Equal(4, countRelaxLevel(strategies, 0))
 
 	// Verify only unique names are used
 	mediaNames := make(map[string]bool)
@@ -438,8 +450,8 @@ func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithEmptyAliases() {
 	strategies := s.handler.createSearchStrategy(media, episode)
 
 	// Should filter empty strings: "Test Show" + "Valid Alias"
-	// 2 names × 2 query formats = 4 strategies
-	s.Equal(4, len(strategies))
+	// Tier 0 (strict): 2 names × 2 query formats = 4 strategies
+	s.Equal(4, countRelaxLevel(strategies, 0))
 
 	// Verify only non-empty names are used
 	for _, strategy := range strategies {
@@ -692,4 +704,89 @@ func (s *QbittHandlerTestSuite) TestSortBySeedersDESC_ZeroSeeders() {
 	s.Equal(100, torrents[0].Torrent.Seeders)
 	s.Equal(50, torrents[1].Torrent.Seeders)
 	s.Equal(0, torrents[2].Torrent.Seeders, "Zero seeder torrent should be last")
+}
+
+// TestFailedResult verifies failedResult maps a search strategy + code into a
+// failed EpisodeResult with the human-readable reason populated.
+func (s *QbittHandlerTestSuite) TestFailedResult() {
+	// failedResult must key the EpisodeResult by the episode identity
+	// (EpisodeTvdbID), NOT the show/media id (TvdbId). Use distinct values so a
+	// regression that reads TvdbId fails loudly.
+	ss := &models.SearchStrategy{TvdbId: "98765", EpisodeTvdbID: "11111", Season: 2, Episode: 5}
+
+	result := s.handler.failedResult(ss, dlstatus.CodeNoTorrentFound)
+
+	s.Equal("11111", result.TvdbID)
+	s.Equal(2, result.Season)
+	s.Equal(5, result.Episode)
+	s.Equal(dlstatus.OutcomeFailed, result.Outcome)
+	s.Equal(dlstatus.CodeNoTorrentFound, result.Code)
+	s.Equal(dlstatus.CodeNoTorrentFound.HumanReason(), result.Reason)
+}
+
+// TestCreateSearchStrategy_EpisodeIdentity is a regression guard for the
+// cross-phase episode-id identity fix. For a SERIES, every strategy must carry
+// EpisodeTvdbID == the episode id while TvdbId stays the show id — they must
+// DIFFER when show id != episode id. failedResult on a series strategy must
+// surface the episode id. The webserver keys notifications/retries by episode
+// id, so reverting EpisodeTvdbID to the show id would silently break shows.
+func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_EpisodeIdentity() {
+	const showID = "555000"   // Shows table key (req.Id)
+	const episodeID = 777111  // distinct episode id
+	media := &tvdb.Media{
+		Id:   showID,
+		Name: "Identity Show",
+	}
+	episode := &tvdb.Episode{
+		Id:           episodeID,
+		SeasonNumber: 3,
+		Number:       7,
+	}
+
+	strategies := s.handler.createSearchStrategy(media, episode)
+	s.NotEmpty(strategies)
+
+	for _, ss := range strategies {
+		s.Equal(showID, ss.TvdbId, "TvdbId must remain the show id for library lookups")
+		s.Equal(strconv.Itoa(episodeID), ss.EpisodeTvdbID, "EpisodeTvdbID must be the episode id")
+		s.NotEqual(ss.TvdbId, ss.EpisodeTvdbID, "show id and episode id must differ")
+	}
+
+	// failedResult on a series strategy surfaces the episode id, not the show id.
+	result := s.handler.failedResult(strategies[0], dlstatus.CodeNoTorrentFound)
+	s.Equal(strconv.Itoa(episodeID), result.TvdbID)
+}
+
+// TestCreateMovieSearchStrategy_EpisodeIdentity verifies that for a MOVIE the
+// EpisodeTvdbID equals the media id (same as TvdbId).
+func (s *QbittHandlerTestSuite) TestCreateMovieSearchStrategy_EpisodeIdentity() {
+	const movieID = "424242"
+	media := &tvdb.Media{
+		Id:   movieID,
+		Name: "Identity Movie",
+		Year: "2021",
+	}
+
+	strategies := s.handler.createMovieSearchStrategy(media)
+	s.NotEmpty(strategies)
+
+	for _, ss := range strategies {
+		s.Equal(movieID, ss.TvdbId)
+		s.Equal(movieID, ss.EpisodeTvdbID, "movie EpisodeTvdbID must equal media id")
+	}
+}
+
+// TestExecuteSearchStrategies_NoStrategies verifies that with no strategies the
+// indexer is NOT considered unreachable (nothing was attempted) and no matches
+// are returned. This path makes no external Prowlarr calls.
+func (s *QbittHandlerTestSuite) TestExecuteSearchStrategies_NoStrategies() {
+	matches, ctxs, allFailed := s.handler.executeSearchStrategies(
+		context.Background(),
+		[]*models.SearchStrategy{},
+		&tvdb.Media{Name: "Test", Category: "series"},
+	)
+
+	s.Empty(matches)
+	s.Empty(ctxs)
+	s.False(allFailed, "no attempted strategies should not be reported as all-failed")
 }

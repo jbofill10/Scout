@@ -4,13 +4,14 @@ import (
 	"context"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	"github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/notifications"
 )
 
 // TorrentService handles torrent search and download operations
 type TorrentService interface {
-	HandleDownload(ctx context.Context, req *media.Media, done chan<- models.TorrentCompleteEvent) error
+	HandleDownload(ctx context.Context, req *media.Media, done chan<- models.TorrentCompleteEvent) ([]dlstatus.EpisodeResult, error)
 	RemoveUUIDTag(ctx context.Context, hash string, uuid string) error
 }
 
@@ -53,5 +54,5 @@ type FileSystem interface {
 
 // PlexService handles Plex library operations
 type PlexService interface {
-	SyncPlexLibrary(ctx context.Context)
+	SyncPlexLibrary(ctx context.Context) error
 }

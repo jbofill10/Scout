@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 
 	"github.com/stretchr/testify/suite"
@@ -43,6 +44,11 @@ func (s *TorrenterClientTestSuite) TestDownload_Success() {
 
 		requestReceived = true
 		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(dlstatus.DownloadResponse{
+			Results: []dlstatus.EpisodeResult{
+				{TvdbID: "98765", Season: 1, Episode: 1, Outcome: dlstatus.OutcomeDownloading},
+			},
+		})
 	}))
 	defer server.Close()
 
@@ -57,10 +63,13 @@ func (s *TorrenterClientTestSuite) TestDownload_Success() {
 		},
 	}
 
-	err := client.Download(context.Background(), req)
+	resp, err := client.Download(context.Background(), req)
 
 	s.NoError(err)
 	s.True(requestReceived)
+	s.Len(resp.Results, 1)
+	s.Equal(dlstatus.OutcomeDownloading, resp.Results[0].Outcome)
+	s.Equal("98765", resp.Results[0].TvdbID)
 }
 
 func (s *TorrenterClientTestSuite) TestDownload_Non200Status() {
@@ -71,12 +80,29 @@ func (s *TorrenterClientTestSuite) TestDownload_Non200Status() {
 
 	client := NewTorrenterClient(server.URL[7:])
 
-	req := tvdb.Media{Name: "Test Show"}
+	req := tvdb.Media{
+		Name: "Test Show",
+		Metadata: tvdb.TVDBSeriesMetadata{
+			Episodes: []tvdb.Episode{
+				{Id: 11, SeasonNumber: 1, Number: 1},
+				{Id: 12, SeasonNumber: 1, Number: 2},
+			},
+		},
+	}
 
-	err := client.Download(context.Background(), req)
+	resp, err := client.Download(context.Background(), req)
 
 	s.Error(err)
 	s.Contains(err.Error(), "torrenter returned status 500")
+	// Synthesized response: every episode failed as torrenter-unreachable (transient).
+	s.Len(resp.Results, 2)
+	for _, r := range resp.Results {
+		s.Equal(dlstatus.OutcomeFailed, r.Outcome)
+		s.Equal(dlstatus.CodeTorrenterUnreachable, r.Code)
+		s.Equal(dlstatus.CategoryTransient, r.Code.Category())
+	}
+	s.Equal("11", resp.Results[0].TvdbID)
+	s.Equal("12", resp.Results[1].TvdbID)
 }
 
 func (s *TorrenterClientTestSuite) TestDownload_NetworkError() {
@@ -84,15 +110,57 @@ func (s *TorrenterClientTestSuite) TestDownload_NetworkError() {
 
 	req := tvdb.Media{Name: "Test Show"}
 
-	err := client.Download(context.Background(), req)
+	resp, err := client.Download(context.Background(), req)
 
 	s.Error(err)
+	// No episodes in request -> single failed result keyed by media id.
+	s.Len(resp.Results, 1)
+	s.Equal(dlstatus.OutcomeFailed, resp.Results[0].Outcome)
+	s.Equal(dlstatus.CodeTorrenterUnreachable, resp.Results[0].Code)
+}
+
+func (s *TorrenterClientTestSuite) TestDownload_MovieUnreachable() {
+	client := NewTorrenterClient("invalid-host:9999")
+
+	req := tvdb.Media{Id: "555", Name: "Test Movie", Category: "movie"}
+
+	resp, err := client.Download(context.Background(), req)
+
+	s.Error(err)
+	s.Len(resp.Results, 1)
+	s.Equal("555", resp.Results[0].TvdbID)
+	s.Equal(dlstatus.OutcomeFailed, resp.Results[0].Outcome)
+	s.Equal(dlstatus.CodeTorrenterUnreachable, resp.Results[0].Code)
+}
+
+func (s *TorrenterClientTestSuite) TestDownload_InvalidResponseBody() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer server.Close()
+
+	client := NewTorrenterClient(server.URL[7:])
+
+	req := tvdb.Media{
+		Name: "Test Show",
+		Metadata: tvdb.TVDBSeriesMetadata{
+			Episodes: []tvdb.Episode{{Id: 7, SeasonNumber: 1, Number: 1}},
+		},
+	}
+
+	resp, err := client.Download(context.Background(), req)
+
+	s.Error(err)
+	s.Len(resp.Results, 1)
+	s.Equal(dlstatus.CodeTorrenterUnreachable, resp.Results[0].Code)
 }
 
 func (s *TorrenterClientTestSuite) TestDownload_InvalidJSONEncoding() {
 	// This test verifies JSON encoding works correctly
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(dlstatus.DownloadResponse{})
 	}))
 	defer server.Close()
 
@@ -109,7 +177,7 @@ func (s *TorrenterClientTestSuite) TestDownload_InvalidJSONEncoding() {
 		},
 	}
 
-	err := client.Download(context.Background(), req)
+	_, err := client.Download(context.Background(), req)
 	s.NoError(err)
 }
 

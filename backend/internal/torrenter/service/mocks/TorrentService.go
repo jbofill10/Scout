@@ -4,6 +4,9 @@ package mocks
 
 import (
 	context "context"
+
+	dlstatus "github.com/jbofill10/scout/backend/pkg/dlstatus"
+
 	media "github.com/jbofill10/scout/backend/pkg/media"
 
 	mock "github.com/stretchr/testify/mock"
@@ -17,21 +20,33 @@ type TorrentService struct {
 }
 
 // HandleDownload provides a mock function with given fields: ctx, req, done
-func (_m *TorrentService) HandleDownload(ctx context.Context, req *media.Media, done chan<- models.TorrentCompleteEvent) error {
+func (_m *TorrentService) HandleDownload(ctx context.Context, req *media.Media, done chan<- models.TorrentCompleteEvent) ([]dlstatus.EpisodeResult, error) {
 	ret := _m.Called(ctx, req, done)
 
 	if len(ret) == 0 {
 		panic("no return value specified for HandleDownload")
 	}
 
-	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, *media.Media, chan<- models.TorrentCompleteEvent) error); ok {
+	var r0 []dlstatus.EpisodeResult
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, *media.Media, chan<- models.TorrentCompleteEvent) ([]dlstatus.EpisodeResult, error)); ok {
+		return rf(ctx, req, done)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, *media.Media, chan<- models.TorrentCompleteEvent) []dlstatus.EpisodeResult); ok {
 		r0 = rf(ctx, req, done)
 	} else {
-		r0 = ret.Error(0)
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]dlstatus.EpisodeResult)
+		}
 	}
 
-	return r0
+	if rf, ok := ret.Get(1).(func(context.Context, *media.Media, chan<- models.TorrentCompleteEvent) error); ok {
+		r1 = rf(ctx, req, done)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
 }
 
 // RemoveUUIDTag provides a mock function with given fields: ctx, hash, uuid

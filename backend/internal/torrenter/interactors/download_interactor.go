@@ -6,6 +6,7 @@ import (
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 	"github.com/jbofill10/scout/backend/internal/torrenter/service"
+	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/notifications"
 
@@ -33,8 +34,9 @@ func NewDownloadInteractor(
 	}
 }
 
-// InitiateDownload orchestrates the torrent download process
-func (i *DownloadInteractor) InitiateDownload(ctx context.Context, req *tvdb.Media) error {
+// InitiateDownload orchestrates the torrent download process and returns the
+// per-episode outcomes so the handler can surface a structured response.
+func (i *DownloadInteractor) InitiateDownload(ctx context.Context, req *tvdb.Media) ([]dlstatus.EpisodeResult, error) {
 	// Use a buffered channel sized for potential multiple episodes
 	// TV shows can have multiple episodes, each spawning a monitoring goroutine
 	dlComplete := make(chan models.TorrentCompleteEvent, 10)
@@ -43,18 +45,17 @@ func (i *DownloadInteractor) InitiateDownload(ctx context.Context, req *tvdb.Med
 	// so it's ready to receive events
 	go i.handleDownloadCompletion(ctx, dlComplete)
 
-	err := i.qbitt.HandleDownload(ctx, req, dlComplete)
+	// HandleDownload owns closing dlComplete: either directly on its early-return
+	// paths, or via the background goroutine that waits on the monitoring workers.
+	results, err := i.qbitt.HandleDownload(ctx, req, dlComplete)
 	if err != nil {
-		// Close the channel to signal the goroutine to exit
+		// On error HandleDownload has not taken ownership of the channel;
+		// close it so the completion goroutine exits.
 		close(dlComplete)
-		return err
+		return results, err
 	}
 
-	// Note: We don't close the channel here because HandleDownload spawns
-	// background goroutines that will send to it later. The channel should
-	// be closed by HandleDownload or have a timeout mechanism.
-
-	return nil
+	return results, nil
 }
 
 // handleDownloadCompletion processes the completed torrents
@@ -103,13 +104,13 @@ func (i *DownloadInteractor) updateNotificationCompleted(ctx context.Context, ev
 
 	ss := event.Req
 
-	// Get notification by tvdb_id (episode ID for series, movie ID for movies)
-	notification, err := i.repo.GetNotification(ctx, ss.TvdbId)
+	// Get notification by episode tvdb id (episode ID for series, movie ID for movies)
+	notification, err := i.repo.GetNotification(ctx, ss.EpisodeTvdbID)
 
 	if err != nil {
 		i.logger.ErrorContext(ctx, "Failed to get notification for completion update",
 			"error", err,
-			"tvdb_id", ss.TvdbId,
+			"tvdb_id", ss.EpisodeTvdbID,
 			"season", ss.Season,
 			"episode", ss.Episode,
 			"is_movie", ss.IsMovie)
@@ -118,7 +119,7 @@ func (i *DownloadInteractor) updateNotificationCompleted(ctx context.Context, ev
 
 	if notification == nil {
 		i.logger.WarnContext(ctx, "No notification found for completion (webserver should have created it)",
-			"tvdb_id", ss.TvdbId,
+			"tvdb_id", ss.EpisodeTvdbID,
 			"season", ss.Season,
 			"episode", ss.Episode,
 			"is_movie", ss.IsMovie)
@@ -151,13 +152,13 @@ func (i *DownloadInteractor) updateNotificationFailed(ctx context.Context, event
 
 	ss := event.Req
 
-	// Get notification by tvdb_id (episode ID for series, movie ID for movies)
-	notification, err := i.repo.GetNotification(ctx, ss.TvdbId)
+	// Get notification by episode tvdb id (episode ID for series, movie ID for movies)
+	notification, err := i.repo.GetNotification(ctx, ss.EpisodeTvdbID)
 
 	if err != nil {
 		i.logger.ErrorContext(ctx, "Failed to get notification for failure update",
 			"error", err,
-			"tvdb_id", ss.TvdbId,
+			"tvdb_id", ss.EpisodeTvdbID,
 			"season", ss.Season,
 			"episode", ss.Episode,
 			"is_movie", ss.IsMovie)
@@ -166,7 +167,7 @@ func (i *DownloadInteractor) updateNotificationFailed(ctx context.Context, event
 
 	if notification == nil {
 		i.logger.WarnContext(ctx, "No notification found for failure (webserver should have created it)",
-			"tvdb_id", ss.TvdbId,
+			"tvdb_id", ss.EpisodeTvdbID,
 			"season", ss.Season,
 			"episode", ss.Episode,
 			"is_movie", ss.IsMovie)

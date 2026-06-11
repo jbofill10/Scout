@@ -91,6 +91,17 @@ func main() {
 	router := gin.Default()
 	router.Use(otelgin.Middleware("tvdb-proxy"))
 
+	router.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+	router.GET("/ready", func(c *gin.Context) {
+		if tvDbConfig.Token != "" {
+			c.JSON(http.StatusOK, gin.H{"status": "ok"})
+		} else {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable"})
+		}
+	})
+
 	router.GET("/series", getSeries)
 	router.GET("/series/:id/extended", getExtendedInformation)
 	router.POST("/series/batch/extended", getBatchExtendedInformation)
@@ -260,8 +271,9 @@ func loadConfig() error {
 		tvDbConfig.Pin = pin
 	}
 
-	ctx := context.TODO()
-	token, err := getApiKey(ctx)
+	tokenCtx, tokenCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer tokenCancel()
+	token, err := getApiKey(tokenCtx)
 	if err != nil {
 		logger.Error("Unable to get API Key, exiting")
 		os.Exit(1)
@@ -314,6 +326,7 @@ func getApiKey(ctx context.Context) (string, error) {
 
 	client := &http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Timeout:   30 * time.Second,
 	}
 
 	resp, err := client.Do(req)
@@ -365,6 +378,7 @@ func tvDbGet(ctx context.Context, uri string) ([]byte, error) {
 
 	client := &http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Timeout:   30 * time.Second,
 	}
 
 	resp, err := client.Do(req)
@@ -452,6 +466,7 @@ func fetchTranslations(ctx context.Context, mediaId string, language string, med
 
 	client := &http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Timeout:   30 * time.Second,
 	}
 
 	resp, err := client.Do(req)
@@ -512,6 +527,7 @@ func fetchExtendedInformation(ctx context.Context, mediaId string, mediaType str
 
 	client := &http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Timeout:   30 * time.Second,
 	}
 
 	resp, err := client.Do(req)

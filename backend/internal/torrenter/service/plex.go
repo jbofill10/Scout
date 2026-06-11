@@ -7,9 +7,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -44,6 +44,7 @@ func NewPlexHandler(repo Repository, logger *slog.Logger, cfg *models.PlexCfg, m
 		mediaProcessor: mediaProcessor,
 		httpClient: &http.Client{
 			Transport: http.DefaultTransport,
+			Timeout:   60 * time.Second,
 		},
 	}
 }
@@ -58,7 +59,7 @@ func extractTvdbId(guids []models.PlexGuid) string {
 	return ""
 }
 
-func (p *PlexHandler) getLibraries(ctx context.Context) models.PlexLibrariesResponse {
+func (p *PlexHandler) getLibraries(ctx context.Context) (models.PlexLibrariesResponse, error) {
 	ctx, span := tracer.Start(ctx, "getLibraries")
 	defer span.End()
 
@@ -68,7 +69,7 @@ func (p *PlexHandler) getLibraries(ctx context.Context) models.PlexLibrariesResp
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to create request")
 		p.logger.ErrorContext(ctx, "Failed to create request for Plex libraries", "error", err)
-		os.Exit(1)
+		return models.PlexLibrariesResponse{}, fmt.Errorf("create request for plex libraries: %w", err)
 	}
 
 	// Create manual span for HTTP request with descriptive name
@@ -85,7 +86,7 @@ func (p *PlexHandler) getLibraries(ctx context.Context) models.PlexLibrariesResp
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to fetch libraries")
 		p.logger.ErrorContext(ctx, "Failed to fetch Plex libraries", "error", err)
-		os.Exit(1)
+		return models.PlexLibrariesResponse{}, fmt.Errorf("fetch plex libraries: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -96,7 +97,7 @@ func (p *PlexHandler) getLibraries(ctx context.Context) models.PlexLibrariesResp
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to read response")
 		p.logger.ErrorContext(ctx, "Failed to read Plex libraries response", "error", err)
-		os.Exit(1)
+		return models.PlexLibrariesResponse{}, fmt.Errorf("read plex libraries response: %w", err)
 	}
 
 	httpSpan.SetStatus(codes.Ok, "HTTP request successful")
@@ -107,17 +108,17 @@ func (p *PlexHandler) getLibraries(ctx context.Context) models.PlexLibrariesResp
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to unmarshal response")
 		p.logger.ErrorContext(ctx, "Failed to unmarshal Plex libraries response", "error", err)
-		os.Exit(1)
+		return models.PlexLibrariesResponse{}, fmt.Errorf("unmarshal plex libraries response: %w", err)
 	}
 
 	span.SetAttributes(attribute.Int("library.count", len(libraryRes.Directories)))
 	span.SetStatus(codes.Ok, "Libraries fetched successfully")
 	p.logger.DebugContext(ctx, "Fetched Plex libraries", "count", len(libraryRes.Directories))
 
-	return libraryRes
+	return libraryRes, nil
 }
 
-func (p *PlexHandler) SyncPlexLibrary(ctx context.Context) {
+func (p *PlexHandler) SyncPlexLibrary(ctx context.Context) error {
 	ctx, span := tracer.Start(ctx, "SyncPlexLibrary",
 		trace.WithAttributes(
 			attribute.String("plex.host", p.cfg.Host),
@@ -127,7 +128,12 @@ func (p *PlexHandler) SyncPlexLibrary(ctx context.Context) {
 
 	p.logger.InfoContext(ctx, "Starting Plex library sync")
 
-	libraries := p.getLibraries(ctx)
+	libraries, err := p.getLibraries(ctx)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to get libraries")
+		return fmt.Errorf("sync plex library: %w", err)
+	}
 	p.repo.UpsertLibraries(ctx, libraries)
 
 	movies := p.getMovies(ctx)
@@ -146,6 +152,7 @@ func (p *PlexHandler) SyncPlexLibrary(ctx context.Context) {
 
 	span.SetStatus(codes.Ok, "Plex library sync completed successfully")
 	p.logger.InfoContext(ctx, "Plex Library Sync Complete")
+	return nil
 }
 
 func (p *PlexHandler) getMovies(ctx context.Context) models.PlexMovieLibraryData {

@@ -68,8 +68,9 @@ func (s *PlexHandlerTestSuite) TestGetLibraries_Success() {
 
 	s.handler.cfg.Host = server.URL
 
-	libs := s.handler.getLibraries(context.Background())
+	libs, err := s.handler.getLibraries(context.Background())
 
+	s.NoError(err)
 	s.Len(libs.Directories, 1)
 	s.Equal("show", libs.Directories[0].Type)
 }
