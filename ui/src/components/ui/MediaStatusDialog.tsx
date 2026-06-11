@@ -15,6 +15,7 @@ import TableRow from "@mui/material/TableRow";
 import Paper from "@mui/material/Paper";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
+import CircularProgress from "@mui/material/CircularProgress";
 import CloseIcon from "@mui/icons-material/Close";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import CancelIcon from "@mui/icons-material/Cancel";
@@ -30,6 +31,7 @@ export interface MediaStatusDialogProps {
   enrichedMedia?: EnrichedMedia | null;
   onDownload?: () => void;
   showDownloadButton?: boolean;
+  isDownloading?: boolean;
 }
 
 interface EnrichedEpisodeInfo {
@@ -65,6 +67,7 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
   enrichedMedia,
   onDownload,
   showDownloadButton = false,
+  isDownloading = false,
 }) => {
   const theme = useTheme();
   const [selectedSeasonIndex, setSelectedSeasonIndex] = useState(0);
@@ -370,8 +373,14 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
           Close
         </Button>
         {showDownloadButton && onDownload && (
-          <Button onClick={onDownload} variant="contained" color="primary">
-            Download
+          <Button
+            onClick={onDownload}
+            variant="contained"
+            color="primary"
+            disabled={isDownloading}
+            startIcon={isDownloading ? <CircularProgress size={18} color="inherit" /> : undefined}
+          >
+            {isDownloading ? "Requesting..." : "Download"}
           </Button>
         )}
       </DialogActions>
