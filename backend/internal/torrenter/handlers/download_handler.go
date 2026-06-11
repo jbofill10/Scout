@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jbofill10/scout/backend/internal/torrenter/interactors"
+	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 )
@@ -33,12 +34,14 @@ func (h *DownloadHandler) DownloadTorrent(c *gin.Context) {
 		return
 	}
 
-	if err := h.interactor.InitiateDownload(ctx, &req); err != nil {
+	results, err := h.interactor.InitiateDownload(ctx, &req)
+	if err != nil {
+		// Total infrastructure failure: processing could not even start.
 		h.logger.ErrorContext(ctx, "Failed to initiate download", telemetry.WithTraceContext(ctx, "error", err, "media", req.Name)...)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	h.logger.InfoContext(ctx, "Torrent download initiated", telemetry.WithTraceContext(ctx, "media", req.Name)...)
-	c.JSON(http.StatusOK, gin.H{"message": "Torrent download initiated successfully"})
+	h.logger.InfoContext(ctx, "Torrent download processed", telemetry.WithTraceContext(ctx, "media", req.Name, "result_count", len(results))...)
+	c.JSON(http.StatusOK, dlstatus.DownloadResponse{Results: results})
 }

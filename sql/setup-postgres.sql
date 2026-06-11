@@ -16,11 +16,17 @@ CREATE TABLE IF NOT EXISTS ScheduledDownloads (
     scheduled_trace_id TEXT,
     scheduled_span_id TEXT,
     trace_id TEXT,
-    span_id TEXT
+    span_id TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMP,
+    queued_at TIMESTAMP,
+    last_failure_code TEXT,
+    last_failure_reason TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_downloads_release ON ScheduledDownloads(release_time);
 CREATE INDEX IF NOT EXISTS idx_scheduled_downloads_status ON ScheduledDownloads(schedule_status);
+CREATE INDEX IF NOT EXISTS idx_scheduled_downloads_next_attempt ON ScheduledDownloads(schedule_status, next_attempt_at);
 
 -- Index to ensure we can quickly detect duplicate scheduled content by its content hash
 CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_downloads_hash ON ScheduledDownloads(content_hash);

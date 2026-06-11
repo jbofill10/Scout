@@ -45,7 +45,18 @@ type SearchStrategy struct {
 	Exclude     []string
 	ReleaseYear string
 	TvdbId      string
-	IsMovie     bool // True if this is a movie search strategy
+	// EpisodeTvdbID is the TVDB identity used for per-episode notifications and
+	// EpisodeResult — episode id for series, media id for movies. Distinct from
+	// TvdbId, which is the show/media id used for library base-directory lookups.
+	EpisodeTvdbID string
+	IsMovie       bool // True if this is a movie search strategy
+	// RelaxLevel is the query-relaxation tier this strategy belongs to.
+	// 0 = strict (exact S##E## / padded absolute), 1 = relaxed (alternate
+	// episode formats, unpadded absolute, punctuation-stripped names),
+	// 2 = broad (loose tokens / name-only). Higher tiers are only tried when
+	// lower ones yield no confident match, and matches from tier >= 2 are
+	// gated behind a higher minimum confidence in pickBestTorrent.
+	RelaxLevel int
 }
 
 type TorrentMatch struct {

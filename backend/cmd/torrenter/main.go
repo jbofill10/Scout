@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"runtime/debug"
+	"time"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/config"
 	"github.com/jbofill10/scout/backend/internal/torrenter/handlers"
@@ -118,13 +119,33 @@ func main() {
 	r := gin.Default()
 	r.Use(otelgin.Middleware("torrenter"))
 	r.Use(RecoveryMiddleware(logger)) // Custom recovery middleware with trace logging
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+	r.GET("/ready", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+		if err := repo.Ping(ctx); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
 	r.POST("/download", downloadHandler.DownloadTorrent)
 	r.GET("/media/:hash", mediaHandler.MediaExists)
 	r.POST("/status/batch", statusHandler.BatchStatus)
 
-	// Sync Plex library on startup (non-blocking)
+	// Sync Plex library on startup (non-blocking, retries once on failure)
 	logger.Info("Starting Plex library sync in background")
-	go plex.SyncPlexLibrary(context.Background())
+	go func() {
+		if err := plex.SyncPlexLibrary(context.Background()); err != nil {
+			logger.Error("Plex library sync failed, retrying in 1 minute", "error", err)
+			time.Sleep(1 * time.Minute)
+			if err := plex.SyncPlexLibrary(context.Background()); err != nil {
+				logger.Error("Plex library sync retry failed", "error", err)
+			}
+		}
+	}()
 
 	// Start cache cleanup goroutine
 	ctx := context.Background()

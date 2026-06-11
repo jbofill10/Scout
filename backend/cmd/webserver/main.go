@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,7 +15,6 @@ import (
 	"github.com/jbofill10/scout/backend/internal/webserver/interactors"
 	"github.com/jbofill10/scout/backend/internal/webserver/repository"
 	"github.com/jbofill10/scout/backend/internal/webserver/scheduler"
-	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
 	"github.com/gin-gonic/gin"
@@ -68,7 +68,7 @@ func main() {
 	}
 
 	// Initialize media queue for scheduled downloads
-	queue := make(chan tvdb.Media, 100)
+	queue := make(chan repository.DueItem, 100)
 
 	// Initialize scheduler
 	sched := scheduler.NewScheduler(schedulerRepo, logger)
@@ -107,19 +107,6 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	go func() {
-		sig := <-sigChan
-		logger.Info("Received shutdown signal", "signal", sig)
-
-		// Stop scheduler
-		sched.Stop()
-
-		// Give time for cleanup
-		time.Sleep(1 * time.Second)
-
-		os.Exit(0)
-	}()
-
 	// Start notification cleanup job
 	go func() {
 		ticker := time.NewTicker(24 * time.Hour)
@@ -156,6 +143,18 @@ func main() {
 	r := gin.Default()
 	r.Use(otelgin.Middleware("webserver"))
 	r.Use(handlers.CorsMiddleware())
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+	r.GET("/ready", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+		if err := schedulerRepo.Ping(ctx); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
 	r.GET("/search", searchHandler.HandleSearch)
 	r.GET("/search/enriched", enrichedSearchHandler.HandleEnrichedSearch)
 	r.POST("/shows", downloadHandler.DownloadShow)
@@ -177,9 +176,28 @@ func main() {
 	r.DELETE("/notifications/:id", notificationHandler.DismissNotification)
 
 	// Start server
+	srv := &http.Server{Addr: cfg.BindAddress, Handler: r}
 	logger.Info("Starting webserver", "address", cfg.BindAddress)
-	if err := r.Run(cfg.BindAddress); err != nil {
-		logger.Error("Server failed", "error", err)
-		os.Exit(1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("Server failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Block until signal
+	sig := <-sigChan
+	logger.Info("Received shutdown signal", "signal", sig)
+
+	// Stop scheduler
+	sched.Stop()
+
+	// Gracefully drain in-flight requests
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Error("Server shutdown error", "error", err)
+	} else {
+		logger.Info("Server shut down cleanly")
 	}
 }
