@@ -492,9 +492,15 @@ func fetchTranslations(ctx context.Context, mediaId string, language string, med
 		return []tvdb.Alias{}
 	}
 
-	// If we got a valid translation name, return it as an alias
 	logger.InfoContext(ctx, "Fetched translation", "media_id", mediaId, "language", language, "name", translationInfo.Data.Name, "body", translationInfo)
 	var aliases []tvdb.Alias
+	// Include the translated name itself as an alias (e.g. "Jujutsu Kaisen" from the English translation)
+	if translationInfo.Data.Name != "" {
+		aliases = append(aliases, tvdb.Alias{
+			Language: language,
+			Name:     translationInfo.Data.Name,
+		})
+	}
 	for _, alias := range translationInfo.Data.Aliases {
 		aliases = append(aliases, tvdb.Alias{
 			Language: language,

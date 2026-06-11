@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import MediaStatusDialog from "./ui/MediaStatusDialog";
 import Box from "@mui/material/Box";
+import Snackbar from "@mui/material/Snackbar";
+import Alert from "@mui/material/Alert";
 import { logError } from "../lib/logger";
 import { buildStatusBadgeFromEnriched } from "../utils/statusHelpers";
 import MediaCard from "./ui/MediaCard";
@@ -40,6 +42,12 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({
     tvdbId: string;
   } | null>(null);
   const [selectedEnrichedMedia, setSelectedEnrichedMedia] = useState<EnrichedMedia | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [snackbar, setSnackbar] = useState<{
+    open: boolean;
+    message: string;
+    severity: "success" | "error";
+  }>({ open: false, message: "", severity: "success" });
 
   const handleCardClick = (enrichedMedia: EnrichedMedia) => {
     // Use MediaStatusDialog for both TV shows and movies
@@ -73,6 +81,8 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({
     // Use selected enriched media for download
     if (!selectedEnrichedMedia) return;
 
+    setIsDownloading(true);
+
     // Route to correct endpoint based on media type
     const endpoint = mediaType === "movie" ? "/api/movies" : "/api/shows";
 
@@ -90,8 +100,13 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({
         return response.json();
       })
       .then(() => {
-        // Download initiated successfully - close dialog
+        const name = selectedEnrichedMedia.media.mediaName;
         handleCloseStatusDialog();
+        setSnackbar({
+          open: true,
+          message: `Download requested for "${name}"`,
+          severity: "success",
+        });
       })
       .catch((error) => {
         console.error("Error initiating download:", error);
@@ -105,6 +120,14 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({
             resultId: selectedEnrichedMedia.media.id,
           },
         );
+        setSnackbar({
+          open: true,
+          message: "Failed to request download. Please try again.",
+          severity: "error",
+        });
+      })
+      .finally(() => {
+        setIsDownloading(false);
       });
   };
 
@@ -149,8 +172,24 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({
           enrichedMedia={selectedEnrichedMedia}
           onDownload={handleDownload}
           showDownloadButton={true}
+          isDownloading={isDownloading}
         />
       )}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+          severity={snackbar.severity}
+          variant="filled"
+          sx={{ width: "100%" }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </>
   );
 };

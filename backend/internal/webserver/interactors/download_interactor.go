@@ -397,9 +397,10 @@ func (i *DownloadInteractor) DownloadMovie(ctx context.Context, req tvdb.Media) 
 		return err
 	}
 
-	// Set anime status based on TVDB genres
+	// Set anime status and aliases from extended info
 	isAnime := isMediaAnime(extendedInfo)
 	req.Anime = isAnime
+	req.Aliases = i.extractAliases(extendedInfo.Data.Aliases)
 
 	// Parse release date from FirstAired field
 	releaseDate, err := time.Parse("2006-01-02", req.Metadata.FirstAired)

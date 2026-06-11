@@ -125,6 +125,7 @@ CREATE TABLE IF NOT EXISTS ShowDownloadHistory (
     season INTEGER,
     episode INTEGER,
     absoluteEpisode INTEGER,
+    torrentHash TEXT,
     downloadDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     reason TEXT,
     status TEXT NOT NULL,
