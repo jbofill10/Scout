@@ -6,6 +6,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import Navbar from './components/ui/Navbar';
 import SearchDropdown from './components/ui/SearchDropdown';
 import ErrorBoundary from './components/ErrorBoundary';
+import ToastProvider from './components/ui/ToastProvider';
 import Home from './pages/Home';
 import Shows from './pages/Shows';
 import Movies from './pages/Movies';
@@ -33,15 +34,18 @@ function App() {
           <CssBaseline />
           <GenreProvider>
             <Router>
-              <Navbar onSearchClick={handleOpenSearch} />
-              <SearchDropdown isOpen={searchDropdownOpen} onClose={handleCloseSearch} />
-              <Routes>
-                <Route path="/" element={<ErrorBoundary><Home /></ErrorBoundary>} />
-                <Route path="/shows" element={<ErrorBoundary><Shows /></ErrorBoundary>} />
-                <Route path="/movies" element={<ErrorBoundary><Movies /></ErrorBoundary>} />
-                <Route path="/search" element={<ErrorBoundary><Search /></ErrorBoundary>} />
-                <Route path="/library" element={<ErrorBoundary><Library /></ErrorBoundary>} />
-              </Routes>
+              {/* Inside the Router so a toast can link to the Activity page */}
+              <ToastProvider>
+                <Navbar onSearchClick={handleOpenSearch} />
+                <SearchDropdown isOpen={searchDropdownOpen} onClose={handleCloseSearch} />
+                <Routes>
+                  <Route path="/" element={<ErrorBoundary><Home /></ErrorBoundary>} />
+                  <Route path="/shows" element={<ErrorBoundary><Shows /></ErrorBoundary>} />
+                  <Route path="/movies" element={<ErrorBoundary><Movies /></ErrorBoundary>} />
+                  <Route path="/search" element={<ErrorBoundary><Search /></ErrorBoundary>} />
+                  <Route path="/library" element={<ErrorBoundary><Library /></ErrorBoundary>} />
+                </Routes>
+              </ToastProvider>
             </Router>
           </GenreProvider>
         </ThemeProvider>
