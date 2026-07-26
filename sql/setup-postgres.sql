@@ -114,7 +114,25 @@ CREATE INDEX IF NOT EXISTS idx_episodes_tvdb_id ON Episodes(tvdb_id);
 
 COMMENT ON COLUMN Episodes.tvdb_id IS 'TVDB episode ID for matching';
 
-CREATE INDEX IF NOT EXISTS idx_episodes_tvdb_id ON Episodes(tvdb_id);
+-- TvdbEpisodes table stores TVDB episode metadata for shows in the library
+-- This enables detection of "missing episodes" (aired but not downloaded)
+-- Data is synced automatically during the download flow
+CREATE TABLE IF NOT EXISTS TvdbEpisodes (
+    tvdb_id TEXT PRIMARY KEY,
+    series_tvdb_id TEXT NOT NULL,
+    season_number INTEGER NOT NULL,
+    episode_number INTEGER NOT NULL,
+    absolute_number INTEGER,
+    name TEXT,
+    aired DATE,
+    UNIQUE(series_tvdb_id, season_number, episode_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tvdb_episodes_series ON TvdbEpisodes(series_tvdb_id);
+CREATE INDEX IF NOT EXISTS idx_tvdb_episodes_aired ON TvdbEpisodes(aired);
+
+COMMENT ON TABLE TvdbEpisodes IS 'TVDB episode metadata for library shows - enables missing episode detection';
+COMMENT ON COLUMN TvdbEpisodes.series_tvdb_id IS 'Links to Shows.tvdb_id';
 
 CREATE TABLE IF NOT EXISTS EpisodeMedia (
     id SERIAL PRIMARY KEY,
