@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jbofill10/scout/backend/internal/webserver/cache"
 	"github.com/jbofill10/scout/backend/internal/webserver/clients"
 	"github.com/jbofill10/scout/backend/internal/webserver/config"
 	"github.com/jbofill10/scout/backend/internal/webserver/handlers"
@@ -100,6 +101,19 @@ func main() {
 		torrenterClient,
 	)
 
+	// Serve popular content from a background-refreshed cache so the home page
+	// does not wait on TVDB for every load.
+	popularCache := cache.NewPopularCache()
+	popularRefresher := cache.NewPopularRefresher(
+		popularCache,
+		tvdbClient,
+		torrenterClient,
+		popularEnrichedInteractor,
+		logger,
+	)
+	logger.Info("Starting popular content cache refresher")
+	popularRefresher.Start()
+
 	// Start watching for due media
 	downloadInteractor.WatchForDueMedia()
 
@@ -132,8 +146,8 @@ func main() {
 	searchHandler := handlers.NewSearchHandler(searchInteractor, logger)
 	enrichedSearchHandler := handlers.NewEnrichedSearchHandler(enrichedSearchInteractor, logger)
 	downloadHandler := handlers.NewDownloadHandler(downloadInteractor, logger)
-	popularHandler := handlers.NewPopularHandler(tvdbClient, logger)
-	popularEnrichedHandler := handlers.NewPopularEnrichedHandler(popularEnrichedInteractor, logger)
+	popularHandler := handlers.NewPopularHandler(tvdbClient, popularCache, logger)
+	popularEnrichedHandler := handlers.NewPopularEnrichedHandler(popularEnrichedInteractor, popularCache, logger)
 	scheduleHandler := handlers.NewScheduleHandler(schedulerRepo, logger)
 	notificationHandler := handlers.NewNotificationHandler(notificationRepo, logger)
 	statusHandler := handlers.NewStatusHandler(torrenterClient, logger)
@@ -209,6 +223,9 @@ func main() {
 
 	// Stop scheduler
 	sched.Stop()
+
+	// Stop the popular content cache refresher
+	popularRefresher.Stop()
 
 	// Gracefully drain in-flight requests
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
