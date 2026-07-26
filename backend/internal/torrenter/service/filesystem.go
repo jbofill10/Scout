@@ -2,8 +2,12 @@ package service
 
 import (
 	"fmt"
+	iofs "io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
+
+	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 )
 
 type FsSvc struct {
@@ -40,18 +44,37 @@ func (fs *FsSvc) MkDir(path string) error {
 	return err
 }
 
-func (fs *FsSvc) ReadDir(path string) ([]string, error) {
-	entries, err := os.ReadDir(path)
+// WalkFiles returns every file underneath root, with paths relative to root.
+// It recurses because qBittorrent nests multi-file torrents inside their own
+// root folder, so the media file is rarely at the top level of the save path.
+func (fs *FsSvc) WalkFiles(root string) ([]models.FileEntry, error) {
+	var files []models.FileEntry
+
+	err := filepath.WalkDir(root, func(path string, entry iofs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+
+		relPath, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+
+		var size int64
+		if info, infoErr := entry.Info(); infoErr == nil {
+			size = info.Size()
+		}
+
+		files = append(files, models.FileEntry{Path: relPath, Size: size})
+		return nil
+	})
 	if err != nil {
-		fs.Logger.Error("Failed to read directory", "path", path, "error", err)
+		fs.Logger.Error("Failed to walk directory", "path", root, "error", err)
 		return nil, err
 	}
 
-	var filenames []string
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			filenames = append(filenames, entry.Name())
-		}
-	}
-	return filenames, nil
+	return files, nil
 }

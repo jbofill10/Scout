@@ -114,7 +114,7 @@ func (ts *testSuite) TestConstructPlexFilename() {
 }
 
 func (ts *testSuite) TestGetFile_Valid() {
-	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.mkv"}, nil)
+	ts.fs.On("WalkFiles", "/downloads").Return([]models.FileEntry{{Path: "file.mkv", Size: 100}}, nil)
 	fileName, err := ts.svc.getFile("/downloads")
 	ts.NoError(err)
 	ts.Equal("file.mkv", fileName)
@@ -122,7 +122,7 @@ func (ts *testSuite) TestGetFile_Valid() {
 }
 
 func (ts *testSuite) TestGetFile_NoVideoFiles() {
-	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.txt", "readme.md"}, nil)
+	ts.fs.On("WalkFiles", "/downloads").Return([]models.FileEntry{{Path: "file.txt", Size: 10}, {Path: "readme.md", Size: 5}}, nil)
 	fileName, err := ts.svc.getFile("/downloads")
 	ts.Error(err)
 	ts.Equal("", fileName)
@@ -130,15 +130,48 @@ func (ts *testSuite) TestGetFile_NoVideoFiles() {
 }
 
 func (ts *testSuite) TestGetFile_MultipleVideoFiles() {
-	ts.fs.On("ReadDir", "/downloads").Return([]string{"file1.mkv", "file2.mp4"}, nil)
+	ts.fs.On("WalkFiles", "/downloads").Return([]models.FileEntry{{Path: "file1.mkv", Size: 100}, {Path: "file2.mp4", Size: 900}}, nil)
 	fileName, err := ts.svc.getFile("/downloads")
 	ts.NoError(err)
-	ts.Equal("file1.mkv", fileName) // Should return first video file
+	ts.Equal("file2.mp4", fileName) // Should return the largest video file
 	ts.fs.AssertExpectations(ts.T())
 }
 
-func (ts *testSuite) TestGetFile_ReadDirError() {
-	ts.fs.On("ReadDir", "/downloads").Return([]string{}, errors.New("permission denied"))
+// qBittorrent nests multi-file torrents inside their own root folder, so the
+// media file is one level below the save path.
+func (ts *testSuite) TestGetFile_NestedInTorrentFolder() {
+	ts.fs.On("WalkFiles", "/downloads").Return([]models.FileEntry{
+		{Path: "Movie.1999.1080p-GRP[TGx]/Movie.1999.1080p-GRP.mkv", Size: 8_000_000},
+		{Path: "Movie.1999.1080p-GRP[TGx]/RARBG.txt", Size: 30},
+	}, nil)
+	fileName, err := ts.svc.getFile("/downloads")
+	ts.NoError(err)
+	ts.Equal("Movie.1999.1080p-GRP[TGx]/Movie.1999.1080p-GRP.mkv", fileName)
+	ts.fs.AssertExpectations(ts.T())
+}
+
+// Releases ship a small sample alongside the feature; size decides the winner.
+func (ts *testSuite) TestGetFile_IgnoresSampleFile() {
+	ts.fs.On("WalkFiles", "/downloads").Return([]models.FileEntry{
+		{Path: "Release/Sample/sample.mkv", Size: 40_000},
+		{Path: "Release/feature.mkv", Size: 8_000_000},
+	}, nil)
+	fileName, err := ts.svc.getFile("/downloads")
+	ts.NoError(err)
+	ts.Equal("Release/feature.mkv", fileName)
+	ts.fs.AssertExpectations(ts.T())
+}
+
+func (ts *testSuite) TestGetFile_UppercaseExtension() {
+	ts.fs.On("WalkFiles", "/downloads").Return([]models.FileEntry{{Path: "Movie.MKV", Size: 100}}, nil)
+	fileName, err := ts.svc.getFile("/downloads")
+	ts.NoError(err)
+	ts.Equal("Movie.MKV", fileName)
+	ts.fs.AssertExpectations(ts.T())
+}
+
+func (ts *testSuite) TestGetFile_WalkFilesError() {
+	ts.fs.On("WalkFiles", "/downloads").Return([]models.FileEntry{}, errors.New("permission denied"))
 	fileName, err := ts.svc.getFile("/downloads")
 	ts.Error(err)
 	ts.Equal("", fileName)
@@ -176,7 +209,7 @@ func (ts *testSuite) TestProcessDownloadedTorrent_Success() {
 			},
 		},
 	}
-	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.mkv"}, nil)
+	ts.fs.On("WalkFiles", "/downloads").Return([]models.FileEntry{{Path: "file.mkv", Size: 100}}, nil)
 	// Mock GetShowBaseDirectory - return error to test fallback path (uses cache/construct)
 	ts.repo.On("GetShowBaseDirectory", mock.Anything, "12345").Return("", errors.New("not found"))
 	ts.repo.On("GetPreferredLibrary", mock.Anything, "show").Return(models.PlexLibrary{Path: "/shows"}, nil)
@@ -201,7 +234,7 @@ func (ts *testSuite) TestProcessDownloadedTorrent_NoVideoFileError() {
 		},
 	}
 	// Note: getFile is called first, so it fails before GetPreferredLibrary or GetMovieBaseDirectory are called
-	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.txt", "readme.md"}, nil)
+	ts.fs.On("WalkFiles", "/downloads").Return([]models.FileEntry{{Path: "file.txt", Size: 10}, {Path: "readme.md", Size: 5}}, nil)
 	err := ts.svc.ProcessDownloadedTorrent(context.Background(), event)
 	ts.Error(err)
 	ts.fs.AssertExpectations(ts.T())
@@ -219,13 +252,71 @@ func (ts *testSuite) TestProcessDownloadedTorrent_Movie_Success() {
 			IsMovie:     true,
 		},
 	}
-	ts.fs.On("ReadDir", "/downloads").Return([]string{"movie.mkv"}, nil)
+	ts.fs.On("WalkFiles", "/downloads").Return([]models.FileEntry{{Path: "movie.mkv", Size: 100}}, nil)
 	// Mock GetMovieBaseDirectory - return error to test fallback path (uses cache/construct)
 	ts.repo.On("GetMovieBaseDirectory", mock.Anything, "67890").Return("", errors.New("not found"))
 	ts.repo.On("GetPreferredLibrary", mock.Anything, "movie").Return(models.PlexLibrary{Path: "/movies"}, nil)
 	// Mock MkDir and HardLink for directory creation and hard linking
 	ts.fs.On("MkDir", "/movies/TestMovie (2023)").Return(nil)
 	ts.fs.On("HardLink", "/downloads/movie.mkv", "/movies/TestMovie (2023)/movie.mkv").Return(nil)
+	err := ts.svc.ProcessDownloadedTorrent(context.Background(), event)
+	ts.NoError(err)
+	ts.repo.AssertExpectations(ts.T())
+	ts.fs.AssertExpectations(ts.T())
+}
+
+// The link source has to include the torrent's root folder, while the
+// destination filename must not.
+func (ts *testSuite) TestProcessDownloadedTorrent_Movie_NestedFile() {
+	event := &models.TorrentCompleteEvent{
+		SavePath: "/downloads/TestMovie.2023",
+		Req: &models.SearchStrategy{
+			MediaName:   "TestMovie",
+			ReleaseYear: "2023",
+			TvdbId:      "67890",
+			IsMovie:     true,
+		},
+	}
+	ts.fs.On("WalkFiles", "/downloads/TestMovie.2023").Return([]models.FileEntry{
+		{Path: "TestMovie.2023.1080p-GRP[TGx]/TestMovie.2023.1080p-GRP.mkv", Size: 8_000_000},
+	}, nil)
+	ts.repo.On("GetMovieBaseDirectory", mock.Anything, "67890").Return("", errors.New("not found"))
+	ts.repo.On("GetPreferredLibrary", mock.Anything, "movie").Return(models.PlexLibrary{Path: "/movies"}, nil)
+	ts.fs.On("MkDir", "/movies/TestMovie (2023)").Return(nil)
+	ts.fs.On("HardLink",
+		"/downloads/TestMovie.2023/TestMovie.2023.1080p-GRP[TGx]/TestMovie.2023.1080p-GRP.mkv",
+		"/movies/TestMovie (2023)/TestMovie.2023.1080p-GRP.mkv").Return(nil)
+	err := ts.svc.ProcessDownloadedTorrent(context.Background(), event)
+	ts.NoError(err)
+	ts.repo.AssertExpectations(ts.T())
+	ts.fs.AssertExpectations(ts.T())
+}
+
+// Shows get renamed to the Plex format, so only the extension survives from the
+// nested original filename.
+func (ts *testSuite) TestProcessDownloadedTorrent_Show_NestedFile() {
+	event := &models.TorrentCompleteEvent{
+		SavePath: "/downloads/TestShow.S01E02",
+		Req: &models.SearchStrategy{
+			MediaName: "TestShow",
+			Season:    1,
+			Episode:   2,
+			TvdbId:    "12345",
+			EpisodeMeta: &tvdb.Episode{
+				SeasonNumber: 1,
+				Number:       2,
+			},
+		},
+	}
+	ts.fs.On("WalkFiles", "/downloads/TestShow.S01E02").Return([]models.FileEntry{
+		{Path: "TestShow.S01E02-GRP/TestShow.S01E02.1080p.mkv", Size: 2_000_000},
+	}, nil)
+	ts.repo.On("GetShowBaseDirectory", mock.Anything, "12345").Return("", errors.New("not found"))
+	ts.repo.On("GetPreferredLibrary", mock.Anything, "show").Return(models.PlexLibrary{Path: "/shows"}, nil)
+	ts.fs.On("MkDir", "/shows/TestShow/Season 01").Return(nil)
+	ts.fs.On("HardLink",
+		"/downloads/TestShow.S01E02/TestShow.S01E02-GRP/TestShow.S01E02.1080p.mkv",
+		"/shows/TestShow/Season 01/TestShow - S01E02.mkv").Return(nil)
 	err := ts.svc.ProcessDownloadedTorrent(context.Background(), event)
 	ts.NoError(err)
 	ts.repo.AssertExpectations(ts.T())
@@ -246,7 +337,7 @@ func (ts *testSuite) TestProcessDownloadedTorrent_MkDirError() {
 			},
 		},
 	}
-	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.mkv"}, nil)
+	ts.fs.On("WalkFiles", "/downloads").Return([]models.FileEntry{{Path: "file.mkv", Size: 100}}, nil)
 	ts.repo.On("GetShowBaseDirectory", mock.Anything, "12345").Return("", errors.New("not found"))
 	ts.repo.On("GetPreferredLibrary", mock.Anything, "show").Return(models.PlexLibrary{Path: "/shows"}, nil)
 	// Mock MkDir to return error
@@ -272,7 +363,7 @@ func (ts *testSuite) TestProcessDownloadedTorrent_HardLinkError() {
 			},
 		},
 	}
-	ts.fs.On("ReadDir", "/downloads").Return([]string{"file.mkv"}, nil)
+	ts.fs.On("WalkFiles", "/downloads").Return([]models.FileEntry{{Path: "file.mkv", Size: 100}}, nil)
 	ts.repo.On("GetShowBaseDirectory", mock.Anything, "12345").Return("", errors.New("not found"))
 	ts.repo.On("GetPreferredLibrary", mock.Anything, "show").Return(models.PlexLibrary{Path: "/shows"}, nil)
 	ts.fs.On("MkDir", "/shows/TestShow/Season 01").Return(nil)

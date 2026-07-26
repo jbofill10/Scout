@@ -36,6 +36,14 @@ type MediaExistsRequest struct {
 	ID string `json:"id"`
 }
 
+// FileEntry is a single file discovered underneath a download directory.
+// Path is relative to the directory that was walked, so it can contain the
+// torrent's own root folder (qBittorrent nests multi-file torrents inside one).
+type FileEntry struct {
+	Path string
+	Size int64
+}
+
 type SearchStrategy struct {
 	MediaName   string
 	EpisodeMeta *tvdb.Episode

@@ -155,6 +155,52 @@ func (s *FsSvcTestSuite) TestMkDir_WithFile() {
 	s.Error(err)
 }
 
+func (s *FsSvcTestSuite) TestWalkFiles_FlatDirectory() {
+	s.Require().NoError(os.WriteFile(filepath.Join(s.tmpDir, "movie.mkv"), []byte("video"), 0644))
+
+	files, err := s.fs.WalkFiles(s.tmpDir)
+
+	s.NoError(err)
+	s.Len(files, 1)
+	s.Equal("movie.mkv", files[0].Path)
+	s.EqualValues(len("video"), files[0].Size)
+}
+
+// The case that broke downloads: qBittorrent saves multi-file torrents inside
+// their own root folder, leaving the save path with no files at the top level.
+func (s *FsSvcTestSuite) TestWalkFiles_NestedDirectories() {
+	nested := filepath.Join(s.tmpDir, "Movie.1999-GRP[TGx]", "Subs")
+	s.Require().NoError(os.MkdirAll(nested, 0755))
+	s.Require().NoError(os.WriteFile(filepath.Join(s.tmpDir, "Movie.1999-GRP[TGx]", "movie.mkv"), []byte("video"), 0644))
+	s.Require().NoError(os.WriteFile(filepath.Join(nested, "eng.srt"), []byte("subs"), 0644))
+
+	files, err := s.fs.WalkFiles(s.tmpDir)
+
+	s.NoError(err)
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		paths = append(paths, file.Path)
+	}
+	s.ElementsMatch([]string{
+		filepath.Join("Movie.1999-GRP[TGx]", "movie.mkv"),
+		filepath.Join("Movie.1999-GRP[TGx]", "Subs", "eng.srt"),
+	}, paths)
+}
+
+func (s *FsSvcTestSuite) TestWalkFiles_EmptyDirectory() {
+	files, err := s.fs.WalkFiles(s.tmpDir)
+
+	s.NoError(err)
+	s.Empty(files)
+}
+
+func (s *FsSvcTestSuite) TestWalkFiles_MissingDirectory() {
+	files, err := s.fs.WalkFiles(filepath.Join(s.tmpDir, "nonexistent"))
+
+	s.Error(err)
+	s.Nil(files)
+}
+
 func (s *FsSvcTestSuite) TestNewFsSvc() {
 	fs := NewFsSvc(s.logger)
 
