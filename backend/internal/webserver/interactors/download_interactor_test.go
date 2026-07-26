@@ -41,6 +41,12 @@ type fakeSchedulerRepo struct {
 	permFailedCode   string
 	permFailedReason string
 	historyCount     int
+	pendingMeta      map[string]repository.ScheduleMeta
+	pendingMetaErr   error
+}
+
+func (f *fakeSchedulerRepo) GetPendingScheduleMeta(context.Context) (map[string]repository.ScheduleMeta, error) {
+	return f.pendingMeta, f.pendingMetaErr
 }
 
 func (f *fakeSchedulerRepo) MarkCompleted(_ context.Context, id int) error {

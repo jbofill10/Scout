@@ -140,6 +140,8 @@ func main() {
 	mediaExtendedHandler := handlers.NewMediaExtendedHandler(tvdbClient, logger)
 	libraryHandler := handlers.NewLibraryHandler(torrenterClient, logger)
 	tvdbHandler := handlers.NewTVDBHandler(tvdbClient, logger)
+	activityInteractor := interactors.NewActivityInteractor(notificationRepo, schedulerRepo, logger)
+	activityHandler := handlers.NewActivityHandler(activityInteractor, logger)
 
 	// Setup routes
 	r := gin.Default()
@@ -181,6 +183,8 @@ func main() {
 
 	// Plex proxy routes
 	r.GET("/plex/thumb", libraryHandler.ProxyPlexThumb)
+	// In-flight and recently finished downloads, with stage and retry details
+	r.GET("/activity", activityHandler.GetActivity)
 
 	// Notification routes
 	r.GET("/notifications", notificationHandler.GetNotifications)
