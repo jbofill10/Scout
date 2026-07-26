@@ -6,6 +6,7 @@ import Alert from '@mui/material/Alert';
 import { useTheme } from '@mui/material/styles';
 import { useGenres } from '../contexts/GenreContext';
 import GenreRow, { MediaRowSkeleton } from '../components/ui/GenreRow';
+import PageHeader from '../components/ui/PageHeader';
 
 /**
  * Shows Page Component
@@ -33,22 +34,16 @@ const Shows: React.FC = () => {
       sx={{
         minHeight: '100vh',
         backgroundColor: theme.palette.background.default,
-        pt: 10,
-        pb: 6,
+        pt: 13,
+        pb: 8,
       }}
     >
       <Container maxWidth="xl">
-        {/* Page Title */}
-        <Typography
-          variant="h3"
-          sx={{
-            mb: 4,
-            fontWeight: 700,
-            color: theme.palette.text.primary,
-          }}
-        >
-          TV Shows
-        </Typography>
+        <PageHeader
+          eyebrow="Browse"
+          title="TV Shows"
+          description="Popular series by genre. Pick a show to see which episodes you already have."
+        />
 
         {/* Loading State */}
         {isLoading && (
@@ -70,9 +65,7 @@ const Shows: React.FC = () => {
         {!isLoading && !error && filteredGenres.length > 0 && (
           <>
             {filteredGenres.map((genre) => (
-              <Box key={genre.slug} sx={{ mb: 4 }}>
-                <GenreRow genre={genre.name} mediaType="series" />
-              </Box>
+              <GenreRow key={genre.slug} genre={genre.name} mediaType="series" />
             ))}
           </>
         )}

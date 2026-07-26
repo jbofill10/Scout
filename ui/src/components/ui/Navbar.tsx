@@ -1,12 +1,13 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import AppBar from '@mui/material/AppBar';
 import Toolbar from '@mui/material/Toolbar';
 import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
 import Box from '@mui/material/Box';
 import SearchIcon from '@mui/icons-material/Search';
-import { useTheme } from '@mui/material/styles';
+import { alpha, useTheme } from '@mui/material/styles';
 import NotificationDropdown from './NotificationDropdown';
 import ScoutLogo from './ScoutLogo';
 
@@ -14,27 +15,48 @@ interface NavbarProps {
   onSearchClick: () => void;
 }
 
+const NAV_LINKS = [
+  { label: 'Home', path: '/' },
+  { label: 'Shows', path: '/shows' },
+  { label: 'Movies', path: '/movies' },
+];
+
 /**
  * Navbar Component
  *
- * Fixed navigation bar for Netflix-style UI.
+ * Fixed top navigation.
  * Features:
- * - Scout logo/branding on the left
- * - Navigation buttons (Home, Shows, Movies) in the center
- * - Search icon button on the right
- * - Highlights active route
- * - Theme background color (#0F172A)
- * - Fixed positioning at top of viewport
+ * - Scout logo on the left, navigation pills in the center, actions on the right
+ * - Transparent over the page at rest, frosted once scrolled so poster rows
+ *   pass cleanly underneath
+ * - Active route marked with a filled pill rather than an underline
  */
 const Navbar: React.FC<NavbarProps> = ({ onSearchClick }) => {
   const theme = useTheme();
   const location = useLocation();
+  const [isScrolled, setIsScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setIsScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
 
   const isActive = (path: string) => location.pathname === path;
 
   return (
-    <AppBar position="fixed" elevation={0}>
-      <Toolbar sx={{ justifyContent: 'space-between', px: 4 }}>
+    <AppBar
+      position="fixed"
+      elevation={0}
+      sx={{
+        backgroundColor: isScrolled ? 'rgba(11, 17, 32, 0.72)' : 'transparent',
+        borderBottom: `1px solid ${isScrolled ? theme.palette.divider : 'transparent'}`,
+        backdropFilter: isScrolled ? 'blur(16px) saturate(180%)' : 'none',
+        transition: 'background-color .25s ease, border-color .25s ease',
+      }}
+    >
+      <Toolbar sx={{ justifyContent: 'space-between', gap: 2, px: { xs: 2, md: 4 }, minHeight: 68 }}>
         {/* Left: Logo/Branding */}
         <Box
           component={Link}
@@ -44,101 +66,76 @@ const Navbar: React.FC<NavbarProps> = ({ onSearchClick }) => {
             display: 'flex',
             alignItems: 'center',
             textDecoration: 'none',
-            transition: 'opacity 0.2s ease-in-out',
-            '&:hover': {
-              opacity: 0.82,
-            },
+            transition: 'opacity .2s ease',
+            '&:hover': { opacity: 0.82 },
           }}
         >
           <ScoutLogo size={30} />
         </Box>
 
         {/* Center: Navigation Links */}
-        <Box sx={{ display: 'flex', gap: 1 }} role="navigation" aria-label="Main navigation">
-          <Button
-            component={Link}
-            to="/"
-            aria-label="Navigate to home page"
-            sx={{
-              color: isActive('/') ? theme.palette.primary.main : theme.palette.text.primary,
-              fontWeight: isActive('/') ? 600 : 500,
-              fontSize: '1rem',
-              px: 2,
-              borderBottom: isActive('/') ? `2px solid ${theme.palette.primary.main}` : '2px solid transparent',
-              borderRadius: 0,
-              transition: 'all 0.2s ease-in-out',
-              '&:hover': {
-                backgroundColor: 'transparent',
-                color: theme.palette.primary.light,
-                borderBottom: `2px solid ${theme.palette.primary.light}`,
-              },
-            }}
-          >
-            Home
-          </Button>
-          <Button
-            component={Link}
-            to="/shows"
-            aria-label="Navigate to TV shows page"
-            sx={{
-              color: isActive('/shows') ? theme.palette.primary.main : theme.palette.text.primary,
-              fontWeight: isActive('/shows') ? 600 : 500,
-              fontSize: '1rem',
-              px: 2,
-              borderBottom: isActive('/shows') ? `2px solid ${theme.palette.primary.main}` : '2px solid transparent',
-              borderRadius: 0,
-              transition: 'all 0.2s ease-in-out',
-              '&:hover': {
-                backgroundColor: 'transparent',
-                color: theme.palette.primary.light,
-                borderBottom: `2px solid ${theme.palette.primary.light}`,
-              },
-            }}
-          >
-            Shows
-          </Button>
-          <Button
-            component={Link}
-            to="/movies"
-            aria-label="Navigate to movies page"
-            sx={{
-              color: isActive('/movies') ? theme.palette.primary.main : theme.palette.text.primary,
-              fontWeight: isActive('/movies') ? 600 : 500,
-              fontSize: '1rem',
-              px: 2,
-              borderBottom: isActive('/movies') ? `2px solid ${theme.palette.primary.main}` : '2px solid transparent',
-              borderRadius: 0,
-              transition: 'all 0.2s ease-in-out',
-              '&:hover': {
-                backgroundColor: 'transparent',
-                color: theme.palette.primary.light,
-                borderBottom: `2px solid ${theme.palette.primary.light}`,
-              },
-            }}
-          >
-            Movies
-          </Button>
+        <Box
+          component="nav"
+          aria-label="Main navigation"
+          sx={{
+            display: 'flex',
+            gap: 0.5,
+            p: 0.5,
+            borderRadius: 999,
+            backgroundColor: alpha('#94A3B8', 0.07),
+            border: `1px solid ${theme.palette.divider}`,
+          }}
+        >
+          {NAV_LINKS.map(({ label, path }) => {
+            const active = isActive(path);
+            return (
+              <Button
+                key={path}
+                component={Link}
+                to={path}
+                aria-current={active ? 'page' : undefined}
+                sx={{
+                  px: 2.5,
+                  py: 0.75,
+                  borderRadius: 999,
+                  fontSize: '0.9375rem',
+                  fontWeight: active ? 650 : 500,
+                  color: active ? theme.palette.text.primary : theme.palette.text.secondary,
+                  backgroundColor: active ? alpha(theme.palette.primary.main, 0.22) : 'transparent',
+                  transition: 'color .2s ease, background-color .2s ease',
+                  '&:hover': {
+                    color: theme.palette.text.primary,
+                    backgroundColor: active
+                      ? alpha(theme.palette.primary.main, 0.28)
+                      : alpha('#94A3B8', 0.1),
+                  },
+                }}
+              >
+                {label}
+              </Button>
+            );
+          })}
         </Box>
 
         {/* Right: Notifications and Search */}
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          {/* Notification Bell */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
           <NotificationDropdown />
 
-          {/* Search Icon */}
-          <IconButton
-            onClick={onSearchClick}
-            sx={{
-              color: theme.palette.text.primary,
-              '&:hover': {
-                color: theme.palette.primary.light,
-                backgroundColor: 'rgba(79, 70, 229, 0.1)',
-              },
-            }}
-            aria-label="Open search"
-          >
-            <SearchIcon fontSize="large" />
-          </IconButton>
+          <Tooltip title="Search">
+            <IconButton
+              onClick={onSearchClick}
+              sx={{
+                color: theme.palette.text.secondary,
+                '&:hover': {
+                  color: theme.palette.text.primary,
+                  backgroundColor: alpha(theme.palette.primary.main, 0.14),
+                },
+              }}
+              aria-label="Open search"
+            >
+              <SearchIcon />
+            </IconButton>
+          </Tooltip>
         </Box>
       </Toolbar>
     </AppBar>
