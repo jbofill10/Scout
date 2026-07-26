@@ -27,6 +27,10 @@ export interface MediaStatusDialogProps {
   onDownload?: () => void;
   showDownloadButton?: boolean;
   isDownloading?: boolean;
+  /** Movies have no seasons, so they get a compact single-item layout. */
+  mediaType?: "series" | "movie";
+  /** Library state for movies, when the caller already knows it. */
+  inLibrary?: boolean;
 }
 
 interface EnrichedEpisodeInfo {
@@ -63,6 +67,8 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
   onDownload,
   showDownloadButton = false,
   isDownloading = false,
+  mediaType = "series",
+  inLibrary,
 }) => {
   const theme = useTheme();
   const [selectedSeasonIndex, setSelectedSeasonIndex] = useState<number | null>(null);
@@ -170,6 +176,104 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
     const downloaded = episodes.filter((episode) => episode.downloaded).length;
     return { downloaded, total: episodes.length };
   }, [enrichedSeasons]);
+
+  const isMovie = mediaType === "movie";
+  const downloadLabel = isMovie ? "Download" : "Download missing";
+
+  const actions = (
+    <DialogActions sx={{ px: 3, py: 2, borderTop: `1px solid ${theme.palette.divider}` }}>
+      <Button onClick={onClose} variant="text" color="inherit">
+        Close
+      </Button>
+      {showDownloadButton && onDownload && (
+        <Button
+          onClick={onDownload}
+          variant="contained"
+          color="primary"
+          disabled={isDownloading}
+          startIcon={
+            isDownloading ? <CircularProgress size={16} color="inherit" /> : <DownloadRoundedIcon />
+          }
+        >
+          {isDownloading ? "Requesting..." : downloadLabel}
+        </Button>
+      )}
+    </DialogActions>
+  );
+
+  // Movies have no season/episode breakdown — show the poster, title and
+  // library state rather than rendering nothing at all.
+  if (isMovie) {
+    const movieInLibrary = inLibrary ?? enrichedMedia?.status?.inLibrary ?? false;
+
+    return (
+      <Dialog
+        open={open}
+        onClose={onClose}
+        maxWidth="sm"
+        fullWidth
+        aria-labelledby="media-status-dialog-title"
+      >
+        <DialogTitle
+          id="media-status-dialog-title"
+          component="div"
+          sx={{ display: "flex", alignItems: "flex-start", gap: 2.5, p: 3 }}
+        >
+          <Box
+            component="img"
+            src={posterUrl}
+            alt={mediaName}
+            sx={{
+              width: 96,
+              height: 144,
+              flexShrink: 0,
+              objectFit: "cover",
+              borderRadius: 2,
+              border: `1px solid ${theme.palette.divider}`,
+            }}
+          />
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography variant="h4" component="h2" sx={{ color: theme.palette.text.primary }}>
+              {mediaName}
+            </Typography>
+            <Box
+              sx={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0.5,
+                mt: 1.5,
+                px: 1,
+                py: "4px",
+                borderRadius: 999,
+                fontSize: "0.6875rem",
+                fontWeight: 700,
+                color: movieInLibrary ? theme.palette.success.main : theme.palette.text.secondary,
+                backgroundColor: alpha(
+                  movieInLibrary ? theme.palette.success.main : theme.palette.common.white,
+                  movieInLibrary ? 0.14 : 0.06,
+                ),
+                border: `1px solid ${alpha(
+                  movieInLibrary ? theme.palette.success.main : theme.palette.common.white,
+                  movieInLibrary ? 0.35 : 0.14,
+                )}`,
+              }}
+            >
+              {movieInLibrary && <CheckRoundedIcon sx={{ fontSize: 14 }} />}
+              {movieInLibrary ? "In library" : "Not in library"}
+            </Box>
+          </Box>
+          <IconButton
+            aria-label="close"
+            onClick={onClose}
+            sx={{ color: theme.palette.text.secondary }}
+          >
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        {actions}
+      </Dialog>
+    );
+  }
 
   if (enrichedSeasons.length === 0) {
     return null;
@@ -371,29 +475,7 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
         </Box>
       </DialogContent>
 
-      {/* Dialog Actions */}
-      <DialogActions sx={{ px: 3, py: 2, borderTop: `1px solid ${theme.palette.divider}` }}>
-        <Button onClick={onClose} variant="text" color="inherit">
-          Close
-        </Button>
-        {showDownloadButton && onDownload && (
-          <Button
-            onClick={onDownload}
-            variant="contained"
-            color="primary"
-            disabled={isDownloading}
-            startIcon={
-              isDownloading ? (
-                <CircularProgress size={16} color="inherit" />
-              ) : (
-                <DownloadRoundedIcon />
-              )
-            }
-          >
-            {isDownloading ? "Requesting..." : "Download missing"}
-          </Button>
-        )}
-      </DialogActions>
+      {actions}
     </Dialog>
   );
 };

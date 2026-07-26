@@ -419,6 +419,7 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
           enrichedMedia={selectedEnrichedMedia}
           onDownload={handleDownload}
           showDownloadButton={true}
+          mediaType={mediaType === "movie" ? "movie" : "series"}
         />
       )}
     </>

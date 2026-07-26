@@ -285,6 +285,10 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
           enrichedMedia={selectedEnrichedMedia}
           onDownload={handleDownload}
           showDownloadButton={true}
+          mediaType={mediaType === "movie" ? "movie" : "series"}
+          inLibrary={
+            statusData?.movies?.find((m) => m.tvdbId === selectedShowInfo.tvdbId)?.inLibrary
+          }
         />
       )}
     </>
