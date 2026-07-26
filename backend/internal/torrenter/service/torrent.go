@@ -679,9 +679,28 @@ func (q *QbittHandler) initiateDownloadAndMonitor(
 	// Update notification: download has started successfully
 	q.updateNotificationStatus(ctx, ss.EpisodeTvdbID, "", notifications.StatusDownloading)
 
+	// Record the torrent as in-flight before monitoring starts, so a restart in
+	// the next instant can still pick it back up. A failure here is not fatal —
+	// the in-memory monitor below still works for as long as this process lives.
+	startedAt := time.Now()
+	active := &models.ActiveTorrent{
+		InfoHash:     infoHash,
+		TrackingUUID: trackingUUID,
+		TorrentTitle: match.Torrent.Title,
+		Strategy:     ss,
+		StartedAt:    startedAt,
+	}
+	if err := q.repo.InsertActiveTorrent(ctx, active); err != nil {
+		q.logger.ErrorContext(ctx, "Failed to persist in-flight torrent, monitor will not survive a restart",
+			telemetry.WithTraceContext(ctx,
+				"error", err.Error(),
+				"torrent_title", match.Torrent.Title,
+				"torrent_hash", infoHash)...)
+	}
+
 	// Start monitoring goroutine
 	wg.Add(1)
-	go q.monitorTorrentCompletion(ctx, match, infoHash, trackingUUID, done, wg)
+	go q.monitorTorrentCompletion(ctx, match, infoHash, trackingUUID, startedAt, done, wg)
 
 	return dlstatus.EpisodeResult{
 		TvdbID:  ss.EpisodeTvdbID,
@@ -689,6 +708,73 @@ func (q *QbittHandler) initiateDownloadAndMonitor(
 		Episode: ss.Episode,
 		Outcome: dlstatus.OutcomeDownloading,
 	}
+}
+
+// clearActiveTorrent drops the in-flight record for a torrent that will never be
+// processed. Best-effort: a stale row costs one wasted resume attempt on the next
+// boot, which is cheaper than failing the monitor over it.
+func (q *QbittHandler) clearActiveTorrent(ctx context.Context, infoHash string) {
+	if err := q.repo.DeleteActiveTorrent(ctx, infoHash); err != nil {
+		q.logger.ErrorContext(ctx, "Failed to clear in-flight torrent record",
+			telemetry.WithTraceContext(ctx, "error", err.Error(), "torrent_hash", infoHash)...)
+	}
+}
+
+// ResumeMonitors restarts completion monitors for every torrent still recorded as
+// in-flight, and owns closing done once they have all finished. Torrents that
+// completed while the process was down are picked up on the resumed monitor's
+// first poll. Returns the number of monitors resumed.
+func (q *QbittHandler) ResumeMonitors(ctx context.Context, done chan<- models.TorrentCompleteEvent) (int, error) {
+	active, err := q.repo.GetActiveTorrents(ctx)
+	if err != nil {
+		close(done)
+		return 0, fmt.Errorf("failed to load in-flight torrents: %w", err)
+	}
+
+	if len(active) == 0 {
+		q.logger.InfoContext(ctx, "No in-flight torrents to resume")
+		close(done)
+		return 0, nil
+	}
+
+	var wg sync.WaitGroup
+	resumed := 0
+	for _, at := range active {
+		if at.Strategy == nil {
+			q.logger.WarnContext(ctx, "Skipping in-flight torrent with no strategy", "torrent_hash", at.InfoHash)
+			q.clearActiveTorrent(ctx, at.InfoHash)
+			continue
+		}
+
+		q.logger.InfoContext(ctx, "Resuming torrent monitor",
+			"torrent_title", at.TorrentTitle,
+			"torrent_hash", at.InfoHash,
+			"started_at", at.StartedAt.Format(time.RFC3339))
+
+		// Only Title and InfoHash are read off the torrent by the monitor; the
+		// full Prowlarr result is not worth persisting to rebuild here.
+		match := &models.TorrentMatch{
+			Strategy: at.Strategy,
+			Torrent:  &prowlarr.Search{Title: at.TorrentTitle, InfoHash: at.InfoHash},
+		}
+
+		wg.Add(1)
+		resumed++
+		go q.monitorTorrentCompletion(context.Background(), match, at.InfoHash, at.TrackingUUID, at.StartedAt, done, &wg)
+	}
+
+	if resumed == 0 {
+		close(done)
+		return 0, nil
+	}
+
+	go func() {
+		wg.Wait()
+		close(done)
+		q.logger.InfoContext(ctx, "All resumed torrent monitors finished, channel closed")
+	}()
+
+	return resumed, nil
 }
 
 // updateNotificationStatus updates a notification with the given status and reason
@@ -744,6 +830,13 @@ const (
 	monitorFastPollWindow = 10 * time.Minute
 	monitorFastInterval   = 10 * time.Second
 	monitorSlowInterval   = 60 * time.Second
+	// maxMissedPolls is how many consecutive polls may come back empty before we
+	// conclude the torrent was removed from qBittorrent and stop watching. At the
+	// 10s fast cadence this is ~5 minutes, wide enough that a qBittorrent slow to
+	// surface a freshly added torrent is not mistaken for a deleted one. Query
+	// failures are handled separately by retries, so an empty result here means
+	// qBittorrent answered and the torrent genuinely was not in the category.
+	maxMissedPolls = 30
 )
 
 // nextPollInterval returns the poll cadence given elapsed time since monitoring began:
@@ -753,6 +846,17 @@ func nextPollInterval(elapsed time.Duration) time.Duration {
 		return monitorFastInterval
 	}
 	return monitorSlowInterval
+}
+
+// effectiveStart resolves the instant a monitor's deadline is measured from.
+// A resumed monitor supplies its original start so it inherits the deadline it
+// was born with; a zero value means "starting now" and must not be read as the
+// zero time, which would expire the monitor on its first pass.
+func effectiveStart(startedAt time.Time) time.Time {
+	if startedAt.IsZero() {
+		return time.Now()
+	}
+	return startedAt
 }
 
 // monitorTimeout reads the overall monitor deadline from MONITOR_TIMEOUT (a Go
@@ -766,12 +870,17 @@ func monitorTimeout() time.Duration {
 	return defaultMonitorTimeout
 }
 
-// monitorTorrentCompletion watches a torrent until it completes and sends the completion event
+// monitorTorrentCompletion watches a torrent until it completes and sends the completion event.
+//
+// startedAt is when this torrent's monitoring originally began, which is not the
+// same as now for a monitor resumed after a restart — a resumed monitor inherits
+// the deadline it was born with instead of getting a fresh window on every boot.
 func (q *QbittHandler) monitorTorrentCompletion(
 	ctx context.Context,
 	match *models.TorrentMatch,
 	infoHash string,
 	trackingUUID string,
+	startedAt time.Time,
 	done chan<- models.TorrentCompleteEvent,
 	wg *sync.WaitGroup,
 ) {
@@ -797,15 +906,17 @@ func (q *QbittHandler) monitorTorrentCompletion(
 	)
 	defer monitorSpan.End()
 
-	start := time.Now()
+	start := effectiveStart(startedAt)
 	timeout := monitorTimeout()
 	q.logger.InfoContext(monitorCtx, "Starting torrent monitor",
 		telemetry.WithTraceContext(monitorCtx,
 			"torrent_title", match.Torrent.Title,
 			"torrent_hash", infoHash,
+			"started_at", start.Format(time.RFC3339),
 			"timeout", timeout.String())...)
 
 	ranRecheck := false
+	missedPolls := 0
 	for {
 		elapsed := time.Since(start)
 
@@ -818,6 +929,7 @@ func (q *QbittHandler) monitorTorrentCompletion(
 					"timeout", timeout.String())...)
 			q.updateNotificationStatus(monitorCtx, match.Strategy.EpisodeTvdbID, dlstatus.CodeMonitorLost.HumanReason(), notifications.StatusFailed)
 			q.recordStrategyFailure(monitorCtx, match.Strategy, "monitor timeout")
+			q.clearActiveTorrent(monitorCtx, infoHash)
 			monitorSpan.SetStatus(codes.Error, "monitor timeout")
 			return
 		}
@@ -842,15 +954,35 @@ func (q *QbittHandler) monitorTorrentCompletion(
 					"error", err.Error())...)
 			q.updateNotificationStatus(monitorCtx, match.Strategy.EpisodeTvdbID, dlstatus.CodeMonitorLost.HumanReason(), notifications.StatusFailed)
 			q.recordStrategyFailure(monitorCtx, match.Strategy, "monitor lost: qbittorrent query exhausted")
+			q.clearActiveTorrent(monitorCtx, infoHash)
 			monitorSpan.SetStatus(codes.Error, "max retries reached")
 			return
 		}
 
 		if len(torrents) == 0 {
-			q.logger.InfoContext(monitorCtx, "Torrent not found, continuing watch", "torrent", match.Torrent.Title)
+			// A torrent removed from qBittorrent is never coming back, so don't
+			// watch an empty result set until the deadline. This matters most for
+			// resumed monitors, where the torrent may have been deleted while
+			// torrenter was down.
+			missedPolls++
+			if missedPolls >= maxMissedPolls {
+				q.logger.WarnContext(monitorCtx, "Torrent gone from qBittorrent, giving up",
+					telemetry.WithTraceContext(monitorCtx,
+						"torrent_title", match.Torrent.Title,
+						"torrent_hash", infoHash,
+						"missed_polls", missedPolls)...)
+				q.updateNotificationStatus(monitorCtx, match.Strategy.EpisodeTvdbID, dlstatus.CodeMonitorLost.HumanReason(), notifications.StatusFailed)
+				q.recordStrategyFailure(monitorCtx, match.Strategy, "monitor lost: torrent no longer in qbittorrent")
+				q.clearActiveTorrent(monitorCtx, infoHash)
+				monitorSpan.SetStatus(codes.Error, "torrent missing from qbittorrent")
+				return
+			}
+			q.logger.InfoContext(monitorCtx, "Torrent not found, continuing watch",
+				"torrent", match.Torrent.Title, "missed_polls", missedPolls)
 			continue
 		}
 
+		missedPolls = 0
 		torrent := torrents[0]
 		if q.didTorrentComplete(&torrent) {
 			if !ranRecheck {
@@ -863,10 +995,16 @@ func (q *QbittHandler) monitorTorrentCompletion(
 
 			q.logger.InfoContext(monitorCtx, "Torrent completed", "title", match.Torrent.Title)
 			monitorSpan.SetStatus(codes.Ok, "torrent downloaded successfully")
+			// The ActiveTorrents row is deliberately left in place here: the
+			// torrent is not accounted for until the completion event has been
+			// processed, and the consumer clears the row once it has been.
 			done <- models.TorrentCompleteEvent{
-				SavePath:    torrent.SavePath,
-				Req:         match.Strategy,
-				Hash:        match.Torrent.InfoHash,
+				SavePath: torrent.SavePath,
+				Req:      match.Strategy,
+				// The monitored hash, not match.Torrent.InfoHash: Prowlarr leaves
+				// InfoHash empty for .torrent files and it is resolved from
+				// qBittorrent after the add, so the match still carries "".
+				Hash:        infoHash,
 				UUID:        trackingUUID,
 				SpanContext: trace.SpanContextFromContext(monitorCtx),
 			}

@@ -13,6 +13,7 @@ import (
 // TorrentService handles torrent search and download operations
 type TorrentService interface {
 	HandleDownload(ctx context.Context, req *media.Media, done chan<- models.TorrentCompleteEvent) ([]dlstatus.EpisodeResult, error)
+	ResumeMonitors(ctx context.Context, done chan<- models.TorrentCompleteEvent) (int, error)
 	RemoveUUIDTag(ctx context.Context, hash string, uuid string) error
 }
 
@@ -46,6 +47,11 @@ type Repository interface {
 	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
 	UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error
 	GetPreferredUploaders(ctx context.Context, mediaType string, isAnime bool) ([]string, error)
+
+	// In-flight torrent tracking, so completion monitors survive a restart
+	InsertActiveTorrent(ctx context.Context, at *models.ActiveTorrent) error
+	DeleteActiveTorrent(ctx context.Context, infoHash string) error
+	GetActiveTorrents(ctx context.Context) ([]*models.ActiveTorrent, error)
 
 	// Library browsing methods
 	GetAllShows(ctx context.Context) ([]library.LibraryShow, error)

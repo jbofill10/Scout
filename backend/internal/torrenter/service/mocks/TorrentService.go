@@ -64,6 +64,34 @@ func (_m *TorrentService) RemoveUUIDTag(ctx context.Context, hash string, uuid s
 	return r0
 }
 
+// ResumeMonitors provides a mock function with given fields: ctx, done
+func (_m *TorrentService) ResumeMonitors(ctx context.Context, done chan<- models.TorrentCompleteEvent) (int, error) {
+	ret := _m.Called(ctx, done)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ResumeMonitors")
+	}
+
+	var r0 int
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, chan<- models.TorrentCompleteEvent) (int, error)); ok {
+		return rf(ctx, done)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, chan<- models.TorrentCompleteEvent) int); ok {
+		r0 = rf(ctx, done)
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, chan<- models.TorrentCompleteEvent) error); ok {
+		r1 = rf(ctx, done)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // NewTorrentService creates a new instance of TorrentService. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewTorrentService(t interface {

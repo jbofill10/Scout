@@ -85,6 +85,37 @@ func (s *FsSvcTestSuite) TestHardLink_DestAlreadyExists() {
 	s.Error(err)
 }
 
+// Re-linking the same file has to succeed: a resumed monitor can replay a
+// completion event that was already processed, and that must not fail a
+// download that actually landed.
+func (s *FsSvcTestSuite) TestHardLink_ExistingLinkToSameSourceIsSuccess() {
+	sourcePath := filepath.Join(s.tmpDir, "source.mkv")
+	s.Require().NoError(os.WriteFile(sourcePath, []byte("video"), 0644))
+	destPath := filepath.Join(s.tmpDir, "dest.mkv")
+
+	s.Require().NoError(s.fs.HardLink(sourcePath, destPath))
+
+	// Second call mirrors a replayed completion event.
+	s.NoError(s.fs.HardLink(sourcePath, destPath))
+
+	target, err := os.Readlink(destPath)
+	s.NoError(err)
+	s.Equal(sourcePath, target)
+}
+
+// A collision with a different file is a real conflict and must still fail.
+func (s *FsSvcTestSuite) TestHardLink_ExistingLinkToDifferentSourceFails() {
+	sourcePath := filepath.Join(s.tmpDir, "source.mkv")
+	otherPath := filepath.Join(s.tmpDir, "other.mkv")
+	s.Require().NoError(os.WriteFile(sourcePath, []byte("video"), 0644))
+	s.Require().NoError(os.WriteFile(otherPath, []byte("other"), 0644))
+	destPath := filepath.Join(s.tmpDir, "dest.mkv")
+
+	s.Require().NoError(s.fs.HardLink(otherPath, destPath))
+
+	s.Error(s.fs.HardLink(sourcePath, destPath))
+}
+
 func (s *FsSvcTestSuite) TestHardLink_InvalidPath() {
 	sourcePath := filepath.Join(s.tmpDir, "source.txt")
 	err := os.WriteFile(sourcePath, []byte("test"), 0644)

@@ -587,6 +587,72 @@ func (_m *Repository) UpsertTvdbEpisodes(ctx context.Context, seriesTvdbId strin
 	return r0
 }
 
+// DeleteActiveTorrent provides a mock function with given fields: ctx, infoHash
+func (_m *Repository) DeleteActiveTorrent(ctx context.Context, infoHash string) error {
+	ret := _m.Called(ctx, infoHash)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeleteActiveTorrent")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) error); ok {
+		r0 = rf(ctx, infoHash)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// GetActiveTorrents provides a mock function with given fields: ctx
+func (_m *Repository) GetActiveTorrents(ctx context.Context) ([]*models.ActiveTorrent, error) {
+	ret := _m.Called(ctx)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetActiveTorrents")
+	}
+
+	var r0 []*models.ActiveTorrent
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context) ([]*models.ActiveTorrent, error)); ok {
+		return rf(ctx)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context) []*models.ActiveTorrent); ok {
+		r0 = rf(ctx)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*models.ActiveTorrent)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = rf(ctx)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// InsertActiveTorrent provides a mock function with given fields: ctx, at
+func (_m *Repository) InsertActiveTorrent(ctx context.Context, at *models.ActiveTorrent) error {
+	ret := _m.Called(ctx, at)
+
+	if len(ret) == 0 {
+		panic("no return value specified for InsertActiveTorrent")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, *models.ActiveTorrent) error); ok {
+		r0 = rf(ctx, at)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // NewRepository creates a new instance of Repository. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewRepository(t interface {

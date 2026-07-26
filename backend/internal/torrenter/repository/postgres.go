@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -46,6 +47,11 @@ type Repository interface {
 	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
 	UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error
 	GetPreferredUploaders(ctx context.Context, mediaType string, isAnime bool) ([]string, error)
+
+	// In-flight torrent tracking, so completion monitors survive a restart
+	InsertActiveTorrent(ctx context.Context, at *models.ActiveTorrent) error
+	DeleteActiveTorrent(ctx context.Context, infoHash string) error
+	GetActiveTorrents(ctx context.Context) ([]*models.ActiveTorrent, error)
 
 	// Library browsing methods
 	GetAllShows(ctx context.Context) ([]library.LibraryShow, error)
@@ -463,6 +469,83 @@ func (r *Repo) UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, sta
 		return fmt.Errorf("failed to update download history: %w", err)
 	}
 	return nil
+}
+
+// InsertActiveTorrent records a torrent as in-flight so its completion monitor
+// can be resumed after a restart. Re-inserting the same info hash refreshes the
+// row rather than failing, which keeps a resumed monitor idempotent.
+func (r *Repo) InsertActiveTorrent(ctx context.Context, at *models.ActiveTorrent) error {
+	strategy, err := json.Marshal(at.Strategy)
+	if err != nil {
+		return fmt.Errorf("failed to marshal search strategy: %w", err)
+	}
+
+	traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
+
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO ActiveTorrents (info_hash, tracking_uuid, torrent_title, strategy, started_at, trace_id, span_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (info_hash) DO UPDATE SET
+			tracking_uuid = EXCLUDED.tracking_uuid,
+			torrent_title = EXCLUDED.torrent_title,
+			strategy = EXCLUDED.strategy,
+			trace_id = EXCLUDED.trace_id,
+			span_id = EXCLUDED.span_id
+	`, at.InfoHash, at.TrackingUUID, at.TorrentTitle, strategy, at.StartedAt, traceID, spanID)
+	if err != nil {
+		return fmt.Errorf("failed to insert active torrent: %w", err)
+	}
+	return nil
+}
+
+// DeleteActiveTorrent clears the in-flight record once a torrent has been
+// accounted for, whether it was processed or the monitor gave up on it.
+func (r *Repo) DeleteActiveTorrent(ctx context.Context, infoHash string) error {
+	_, err := r.db.ExecContext(ctx, "DELETE FROM ActiveTorrents WHERE info_hash = $1", infoHash)
+	if err != nil {
+		return fmt.Errorf("failed to delete active torrent: %w", err)
+	}
+	return nil
+}
+
+// GetActiveTorrents returns every torrent still in flight, for resuming
+// monitors on startup.
+func (r *Repo) GetActiveTorrents(ctx context.Context) ([]*models.ActiveTorrent, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT info_hash, tracking_uuid, torrent_title, strategy, started_at
+		FROM ActiveTorrents ORDER BY started_at
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query active torrents: %w", err)
+	}
+	defer rows.Close()
+
+	active := []*models.ActiveTorrent{}
+	for rows.Next() {
+		var at models.ActiveTorrent
+		var strategy []byte
+		if err := rows.Scan(&at.InfoHash, &at.TrackingUUID, &at.TorrentTitle, &strategy, &at.StartedAt); err != nil {
+			r.logger.ErrorContext(ctx, "Error scanning active torrent", "error", err)
+			continue
+		}
+		// A row we cannot unmarshal can never be resumed; drop it rather than
+		// letting it wedge the startup sweep on every boot.
+		if err := json.Unmarshal(strategy, &at.Strategy); err != nil {
+			r.logger.ErrorContext(ctx, "Discarding active torrent with unreadable strategy",
+				"error", err, "info_hash", at.InfoHash, "title", at.TorrentTitle)
+			if delErr := r.DeleteActiveTorrent(ctx, at.InfoHash); delErr != nil {
+				r.logger.ErrorContext(ctx, "Failed to delete unreadable active torrent", "error", delErr)
+			}
+			continue
+		}
+		active = append(active, &at)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating active torrent rows: %w", err)
+	}
+
+	return active, nil
 }
 
 func (r *Repo) GetPreferredUploaders(ctx context.Context, mediaType string, isAnime bool) ([]string, error) {

@@ -2,6 +2,8 @@ package models
 
 import (
 	"fmt"
+	"time"
+
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 
 	"go.opentelemetry.io/otel/trace"
@@ -34,6 +36,17 @@ type TorrentCompleteEvent struct {
 
 type MediaExistsRequest struct {
 	ID string `json:"id"`
+}
+
+// ActiveTorrent is a torrent that is downloading and not yet accounted for.
+// It is persisted so the completion monitor can be resumed after a restart —
+// the monitor is otherwise pure in-memory state and dies with the process.
+type ActiveTorrent struct {
+	InfoHash     string
+	TrackingUUID string
+	TorrentTitle string
+	Strategy     *SearchStrategy
+	StartedAt    time.Time
 }
 
 // FileEntry is a single file discovered underneath a download directory.

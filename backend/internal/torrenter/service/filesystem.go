@@ -29,10 +29,28 @@ func (fs *FsSvc) HardLink(sourcePath, destPath string) error {
 
 	err := os.Symlink(sourcePath, destPath)
 	if err != nil {
+		// Linking the same file twice is a success, not a failure. A resumed
+		// monitor can replay a completion event that was already processed —
+		// if the process died between the event and its bookkeeping — and that
+		// must not mark a download that actually landed as failed.
+		if os.IsExist(err) && fs.linksTo(destPath, sourcePath) {
+			fs.Logger.Info("Link already present, treating as success", "source", sourcePath, "dest", destPath)
+			return nil
+		}
 		fs.Logger.Error("Failed to create symbolic link", "error", err)
 		return err
 	}
 	return nil
+}
+
+// linksTo reports whether destPath already points at sourcePath, so an existing
+// link can be told apart from a genuine collision with different content.
+func (fs *FsSvc) linksTo(destPath, sourcePath string) bool {
+	target, err := os.Readlink(destPath)
+	if err != nil {
+		return false
+	}
+	return target == sourcePath
 }
 
 func (fs *FsSvc) MkDir(path string) error {
