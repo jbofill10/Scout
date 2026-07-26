@@ -6,7 +6,7 @@ import Button from "@mui/material/Button";
 import Skeleton from "@mui/material/Skeleton";
 import { useTheme } from "@mui/material/styles";
 import HorizontalCarousel from "./HorizontalCarousel";
-import MediaCard from "./MediaCard";
+import MediaCard, { MediaCardSkeleton } from "./MediaCard";
 import MediaStatusDialog from "./MediaStatusDialog";
 import type { SearchResult } from "../SearchResultsList";
 import type { ShowStatus, EnrichedMedia } from "../../types/MediaStatus";
@@ -19,6 +19,34 @@ interface GenreRowProps {
   genre: string;
   mediaType: "series" | "movie";
 }
+
+/**
+ * MediaRowSkeleton
+ *
+ * Loading placeholder for a carousel row. Mirrors the carousel's item sizing so
+ * the layout does not jump when real posters arrive.
+ */
+export const MediaRowSkeleton: React.FC<{ title?: string }> = ({ title }) => (
+  <Box sx={{ mb: 5 }}>
+    {title ? (
+      <Typography variant="h5" sx={{ mb: 1.75 }}>
+        {title}
+      </Typography>
+    ) : (
+      <Skeleton variant="text" width={180} sx={{ mb: 1.75, fontSize: "1.125rem" }} />
+    )}
+    <Box sx={{ display: "flex", gap: 2, overflow: "hidden" }}>
+      {Array.from({ length: 7 }).map((_, index) => (
+        <Box
+          key={index}
+          sx={{ flex: "0 0 calc((100% - 96px) / 7)", minWidth: 150, maxWidth: 230 }}
+        >
+          <MediaCardSkeleton />
+        </Box>
+      ))}
+    </Box>
+  </Box>
+);
 
 /**
  * GenreRow Component
@@ -186,53 +214,33 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
 
   // Loading state with skeletons
   if (isLoading) {
-    return (
-      <Box sx={{ mb: 4 }}>
-        <Typography
-          variant="h5"
-          sx={{ mb: 2, fontWeight: 600, color: theme.palette.text.primary }}
-        >
-          {genre}
-        </Typography>
-        <Box sx={{ display: "flex", gap: 2 }}>
-          {Array.from({ length: 7 }).map((_, index) => (
-            <Skeleton
-              key={index}
-              variant="rectangular"
-              width={180}
-              height={270}
-              sx={{ borderRadius: 2, flex: "0 0 180px" }}
-            />
-          ))}
-        </Box>
-      </Box>
-    );
+    return <MediaRowSkeleton title={genre} />;
   }
 
   // Error state with retry button
   if (isError) {
     return (
-      <Box sx={{ mb: 4 }}>
-        <Typography
-          variant="h5"
-          sx={{ mb: 2, fontWeight: 600, color: theme.palette.text.primary }}
-        >
+      <Box sx={{ mb: 5 }}>
+        <Typography variant="h5" sx={{ mb: 1.75, color: theme.palette.text.primary }}>
           {genre}
         </Typography>
         <Box
           sx={{
             display: "flex",
             alignItems: "center",
+            justifyContent: "space-between",
             gap: 2,
-            p: 3,
+            px: 3,
+            py: 2.5,
             backgroundColor: theme.palette.background.paper,
-            borderRadius: 2,
+            border: `1px solid ${theme.palette.divider}`,
+            borderRadius: 3,
           }}
         >
-          <Typography variant="body1" sx={{ color: theme.palette.error.main }}>
-            Failed to load content for {genre}
+          <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
+            Couldn't load {genre}.
           </Typography>
-          <Button variant="outlined" color="primary" onClick={() => refetch()}>
+          <Button variant="outlined" color="primary" size="small" onClick={() => refetch()}>
             Retry
           </Button>
         </Box>

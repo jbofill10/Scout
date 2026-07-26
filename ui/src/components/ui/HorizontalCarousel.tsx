@@ -4,27 +4,28 @@ import IconButton from '@mui/material/IconButton';
 import Typography from '@mui/material/Typography';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import { useTheme } from '@mui/material/styles';
+import { alpha, useTheme } from '@mui/material/styles';
 
 interface HorizontalCarouselProps<T> {
   items: T[];
   renderItem: (item: T, index: number) => React.ReactNode;
   title?: string;
+  /** Optional count rendered as a muted suffix after the title. */
+  subtitle?: string;
 }
 
 /**
  * HorizontalCarousel Component
  *
- * Netflix-style horizontal scrolling carousel with CSS scroll-snap.
+ * Horizontal scrolling row with CSS scroll-snap.
  * Features:
- * - CSS scroll-snap for smooth, snap-to-item scrolling
- * - Left/right navigation buttons (shown on hover)
+ * - Floating circular nav buttons that fade in on hover, centered on the row
+ * - Edge fades that hint at off-screen content without a hard clip
  * - Keyboard navigation (arrow keys)
  * - Hidden scrollbar for clean appearance
- * - Desktop-optimized for 6-8 items per row at 1920x1080
- * - Smooth scrollBy() animation for navigation
+ * - Desktop-optimized for ~6.5 items per row at 1920x1080
  */
-function HorizontalCarousel<T>({ items, renderItem, title }: HorizontalCarouselProps<T>) {
+function HorizontalCarousel<T>({ items, renderItem, title, subtitle }: HorizontalCarouselProps<T>) {
   const theme = useTheme();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [showLeftButton, setShowLeftButton] = useState(false);
@@ -58,21 +59,11 @@ function HorizontalCarousel<T>({ items, renderItem, title }: HorizontalCarouselP
   };
 
   const scrollLeft = () => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollBy({
-        left: -scrollAmount(),
-        behavior: 'smooth',
-      });
-    }
+    scrollContainerRef.current?.scrollBy({ left: -scrollAmount(), behavior: 'smooth' });
   };
 
   const scrollRight = () => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollBy({
-        left: scrollAmount(),
-        behavior: 'smooth',
-      });
-    }
+    scrollContainerRef.current?.scrollBy({ left: scrollAmount(), behavior: 'smooth' });
   };
 
   // Keyboard navigation
@@ -86,6 +77,40 @@ function HorizontalCarousel<T>({ items, renderItem, title }: HorizontalCarouselP
     }
   };
 
+  const navButtonSx = {
+    position: 'absolute' as const,
+    top: '50%',
+    transform: 'translateY(-50%)',
+    zIndex: 3,
+    width: 44,
+    height: 44,
+    color: theme.palette.text.primary,
+    backgroundColor: alpha('#020617', 0.68),
+    border: `1px solid ${alpha('#F8FAFC', 0.14)}`,
+    backdropFilter: 'blur(10px)',
+    boxShadow: theme.shadows[6],
+    opacity: isHovered ? 1 : 0,
+    transition: 'opacity .24s ease, background-color .24s ease, transform .24s ease',
+    '&:hover': {
+      backgroundColor: alpha(theme.palette.primary.main, 0.9),
+      transform: 'translateY(-50%) scale(1.06)',
+    },
+  };
+
+  // Fade the row edges so cut-off posters read as "more to come"
+  const edgeFadeSx = (side: 'left' | 'right') => ({
+    position: 'absolute' as const,
+    top: 0,
+    bottom: 0,
+    [side]: 0,
+    width: 56,
+    zIndex: 2,
+    pointerEvents: 'none' as const,
+    background: `linear-gradient(to ${side === 'left' ? 'right' : 'left'}, ${
+      theme.palette.background.default
+    } 0%, transparent 100%)`,
+  });
+
   return (
     <Box
       onMouseEnter={() => setIsHovered(true)}
@@ -93,110 +118,86 @@ function HorizontalCarousel<T>({ items, renderItem, title }: HorizontalCarouselP
       onKeyDown={handleKeyDown}
       role="region"
       aria-label={title ? `${title} carousel` : 'Media carousel'}
-      sx={{ position: 'relative', width: '100%', mb: 4 }}
+      sx={{ width: '100%', mb: 5 }}
     >
       {title && (
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600, color: theme.palette.text.primary }}>
-          {title}
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.5, mb: 1.75 }}>
+          <Typography variant="h5" sx={{ color: theme.palette.text.primary }}>
+            {title}
+          </Typography>
+          {subtitle && (
+            <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
+              {subtitle}
+            </Typography>
+          )}
+        </Box>
       )}
 
-      {/* Left Navigation Button */}
-      {showLeftButton && (
-        <IconButton
-          onClick={scrollLeft}
+      {/* Row viewport — nav buttons and edge fades are positioned against this,
+          not the title, so they stay centered on the posters. */}
+      <Box sx={{ position: 'relative' }}>
+        {showLeftButton && <Box aria-hidden sx={edgeFadeSx('left')} />}
+        {showRightButton && <Box aria-hidden sx={edgeFadeSx('right')} />}
+
+        {showLeftButton && (
+          <IconButton onClick={scrollLeft} sx={{ ...navButtonSx, left: 8 }} aria-label="Scroll left">
+            <ChevronLeftIcon />
+          </IconButton>
+        )}
+
+        {/* Scroll Container with CSS Scroll Snap */}
+        <Box
+          ref={scrollContainerRef}
           sx={{
-            position: 'absolute',
-            left: 0,
-            top: title ? '50%' : '50%',
-            transform: 'translateY(-50%)',
-            zIndex: 2,
-            backgroundColor: 'rgba(0, 0, 0, 0.7)',
-            color: theme.palette.text.primary,
-            opacity: isHovered ? 1 : 0,
-            transition: 'opacity 0.3s ease-in-out',
-            '&:hover': {
-              backgroundColor: 'rgba(0, 0, 0, 0.85)',
+            display: 'flex',
+            gap: 2,
+            // Room for the hover lift so raised cards are not clipped
+            py: 1.5,
+            my: -1.5,
+            overflowX: 'auto',
+            overflowY: 'hidden',
+            scrollSnapType: 'x proximity',
+            scrollBehavior: 'smooth',
+            // Hide scrollbar
+            '&::-webkit-scrollbar': {
+              display: 'none',
+            },
+            scrollbarWidth: 'none',
+            msOverflowStyle: 'none',
+            // Each item gets approximately 1/7 of container width (shows ~6.5 items)
+            '& > *': {
+              flex: '0 0 calc((100% - 96px) / 7)',
+              scrollSnapAlign: 'start',
+              minWidth: '150px',
+              maxWidth: '230px',
             },
           }}
-          aria-label="Scroll left"
         >
-          <ChevronLeftIcon fontSize="large" />
-        </IconButton>
-      )}
+          {items.map((item, index) => (
+            <Box
+              key={index}
+              sx={{
+                animation: 'mediaRowFadeIn .45s cubic-bezier(0.22, 1, 0.36, 1)',
+                // Cap the stagger so long rows do not trail in noticeably late
+                animationDelay: `${Math.min(index, 8) * 0.04}s`,
+                animationFillMode: 'backwards',
+                '@keyframes mediaRowFadeIn': {
+                  from: { opacity: 0, transform: 'translateY(12px)' },
+                  to: { opacity: 1, transform: 'translateY(0)' },
+                },
+              }}
+            >
+              {renderItem(item, index)}
+            </Box>
+          ))}
+        </Box>
 
-      {/* Scroll Container with CSS Scroll Snap */}
-      <Box
-        ref={scrollContainerRef}
-        sx={{
-          display: 'flex',
-          gap: 2,
-          overflowX: 'auto',
-          overflowY: 'hidden',
-          scrollSnapType: 'x mandatory',
-          scrollBehavior: 'smooth',
-          // Hide scrollbar
-          '&::-webkit-scrollbar': {
-            display: 'none',
-          },
-          scrollbarWidth: 'none',
-          msOverflowStyle: 'none',
-          // Each item gets approximately 1/7 of container width (shows ~6.5 items)
-          '& > *': {
-            flex: '0 0 calc((100% - 96px) / 7)',
-            scrollSnapAlign: 'start',
-            minWidth: '150px',
-            maxWidth: '220px',
-          },
-        }}
-      >
-        {items.map((item, index) => (
-          <Box
-            key={index}
-            sx={{
-              animation: 'fadeIn 0.4s ease-in-out',
-              animationDelay: `${index * 0.05}s`,
-              animationFillMode: 'backwards',
-              '@keyframes fadeIn': {
-                from: {
-                  opacity: 0,
-                  transform: 'translateY(10px)',
-                },
-                to: {
-                  opacity: 1,
-                  transform: 'translateY(0)',
-                },
-              },
-            }}
-          >
-            {renderItem(item, index)}
-          </Box>
-        ))}
+        {showRightButton && (
+          <IconButton onClick={scrollRight} sx={{ ...navButtonSx, right: 8 }} aria-label="Scroll right">
+            <ChevronRightIcon />
+          </IconButton>
+        )}
       </Box>
-
-      {/* Right Navigation Button */}
-      {showRightButton && (
-        <IconButton
-          onClick={scrollRight}
-          sx={{
-            position: 'absolute',
-            right: 0,
-            top: title ? '50%' : '50%',
-            transform: 'translateY(-50%)',
-            zIndex: 2,
-            backgroundColor: 'rgba(0, 0, 0, 0.7)',
-            color: theme.palette.text.primary,
-            opacity: isHovered ? 1 : 0,
-            transition: 'opacity 0.3s ease-in-out',
-            '&:hover': {
-              backgroundColor: 'rgba(0, 0, 0, 0.85)',
-            },
-          }}
-          aria-label="Scroll right"
-        >
-          <ChevronRightIcon fontSize="large" />
-        </IconButton>
-      )}
     </Box>
   );
 }
