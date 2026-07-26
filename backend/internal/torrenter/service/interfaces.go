@@ -59,7 +59,7 @@ type Repository interface {
 type FileSystem interface {
 	HardLink(sourcePath, destPath string) error
 	MkDir(path string) error
-	ReadDir(path string) ([]string, error)
+	WalkFiles(root string) ([]models.FileEntry, error)
 }
 
 // PlexService handles Plex library operations

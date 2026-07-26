@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
@@ -122,11 +123,13 @@ func (mp *MediaProcessSvc) ProcessDownloadedTorrent(ctx context.Context, media *
 		}
 	}
 
-	// Get original filename from torrent download
-	originalFileName, err := mp.getFile(media.SavePath)
+	// Get the media file from the torrent download. The path is relative to the
+	// save path and may include the torrent's own root folder.
+	relFilePath, err := mp.getFile(media.SavePath)
 	if err != nil {
 		return fmt.Errorf("failed to get file: %v", err)
 	}
+	originalFileName := filepath.Base(relFilePath)
 
 	// For shows, construct Plex-friendly filename (ShowName - S##E##.ext)
 	// For movies, keep the original filename
@@ -212,7 +215,7 @@ func (mp *MediaProcessSvc) ProcessDownloadedTorrent(ctx context.Context, media *
 	}
 
 	// Create source path (where qBittorrent saved the file)
-	sourcePath := filepath.Join(media.SavePath, originalFileName)
+	sourcePath := filepath.Join(media.SavePath, relFilePath)
 
 	// Extract target directory from full save path
 	targetDir := filepath.Dir(fullSavePath)
@@ -272,19 +275,30 @@ func (mp *MediaProcessSvc) constructPlexFilename(mediaName string, episodeMeta *
 	)
 }
 
+func isVideoFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	for _, videoExt := range commonFileExtensions {
+		if ext == videoExt {
+			return true
+		}
+	}
+	return false
+}
+
+// getFile finds the media file for a completed torrent and returns its path
+// relative to dirPath. The file is often nested (qBittorrent saves multi-file
+// torrents inside their own root folder), and the release may ship extras or a
+// sample alongside it, so the largest video file underneath dirPath wins.
 func (mp *MediaProcessSvc) getFile(dirPath string) (string, error) {
-	files, err := mp.fs.ReadDir(dirPath)
+	files, err := mp.fs.WalkFiles(dirPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read directory %s: %w", dirPath, err)
 	}
 
-	var videoFiles []string
+	var videoFiles []models.FileEntry
 	for _, file := range files {
-		for _, ext := range commonFileExtensions {
-			if len(file) >= len(ext) && file[len(file)-len(ext):] == ext {
-				videoFiles = append(videoFiles, file)
-				break
-			}
+		if isVideoFile(file.Path) {
+			videoFiles = append(videoFiles, file)
 		}
 	}
 
@@ -292,11 +306,19 @@ func (mp *MediaProcessSvc) getFile(dirPath string) (string, error) {
 		return "", fmt.Errorf("no video files found in directory %s", dirPath)
 	}
 
-	if len(videoFiles) > 1 {
-		mp.Logger.Warn("Multiple video files found in directory, using first", "directory", dirPath, "files", videoFiles)
+	largest := videoFiles[0]
+	for _, file := range videoFiles[1:] {
+		if file.Size > largest.Size {
+			largest = file
+		}
 	}
 
-	return videoFiles[0], nil
+	if len(videoFiles) > 1 {
+		mp.Logger.Warn("Multiple video files found in directory, using largest",
+			"directory", dirPath, "files", videoFiles, "chosen", largest.Path)
+	}
+
+	return largest.Path, nil
 }
 
 func (mp *MediaProcessSvc) getLibraryPath(ctx context.Context, isShow bool) (models.PlexLibrary, error) {
