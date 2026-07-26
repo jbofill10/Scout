@@ -21,6 +21,7 @@ import MediaStatusDialog from "./MediaStatusDialog";
 import type { EnrichedMedia, ShowStatus } from "../../types/MediaStatus";
 import { buildStatusBadgeFromEnriched } from "../../utils/statusHelpers";
 import { logError } from "../../lib/logger";
+import { useDownloadRequest } from "../../hooks/useDownloadRequest";
 
 interface SearchDropdownProps {
   isOpen: boolean;
@@ -58,6 +59,7 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
     tvdbId: string;
   } | null>(null);
   const [selectedEnrichedMedia, setSelectedEnrichedMedia] = useState<EnrichedMedia | null>(null);
+  const { requestDownload, isPending: isDownloading } = useDownloadRequest();
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Debounce search term (500ms)
@@ -170,38 +172,15 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
   const handleDownload = () => {
     if (!selectedEnrichedMedia) return;
 
-    const endpoint = mediaType === "movie" ? "/api/movies" : "/api/shows";
-
-    fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+    requestDownload(
+      {
+        media: selectedEnrichedMedia.media,
+        mediaType,
+        title: selectedEnrichedMedia.media.mediaName,
+        component: "SearchDropdown",
       },
-      body: JSON.stringify(selectedEnrichedMedia.media),
-    })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error("Network response was not ok");
-        }
-        return response.json();
-      })
-      .then(() => {
-        // Download initiated successfully
-        handleCloseStatusDialog();
-      })
-      .catch((error) => {
-        console.error("Error initiating download:", error);
-        logError(
-          "Download initiation failed in SearchDropdown",
-          error as Error,
-          {
-            component: "SearchDropdown",
-            endpoint: endpoint,
-            mediaType: mediaType,
-            resultId: selectedEnrichedMedia.media.id,
-          },
-        );
-      });
+      { onSuccess: () => handleCloseStatusDialog() },
+    );
   };
 
   // Handle ESC key
@@ -419,6 +398,7 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
           enrichedMedia={selectedEnrichedMedia}
           onDownload={handleDownload}
           showDownloadButton={true}
+          isDownloading={isDownloading}
           mediaType={mediaType === "movie" ? "movie" : "series"}
         />
       )}
