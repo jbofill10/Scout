@@ -6,10 +6,12 @@ import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import Box from '@mui/material/Box';
+import Badge from '@mui/material/Badge';
 import SearchIcon from '@mui/icons-material/Search';
 import { alpha, useTheme } from '@mui/material/styles';
 import NotificationDropdown from './NotificationDropdown';
 import ScoutLogo from './ScoutLogo';
+import { useActiveDownloadCount } from '../../hooks/useActivity';
 
 interface NavbarProps {
   onSearchClick: () => void;
@@ -20,6 +22,7 @@ const NAV_LINKS = [
   { label: 'Shows', path: '/shows' },
   { label: 'Movies', path: '/movies' },
   { label: 'Library', path: '/library' },
+  { label: 'Activity', path: '/activity' },
 ];
 
 /**
@@ -36,6 +39,7 @@ const Navbar: React.FC<NavbarProps> = ({ onSearchClick }) => {
   const theme = useTheme();
   const location = useLocation();
   const [isScrolled, setIsScrolled] = useState(false);
+  const { data: activeDownloads } = useActiveDownloadCount();
 
   useEffect(() => {
     const onScroll = () => setIsScrolled(window.scrollY > 8);
@@ -89,12 +93,17 @@ const Navbar: React.FC<NavbarProps> = ({ onSearchClick }) => {
         >
           {NAV_LINKS.map(({ label, path }) => {
             const active = isActive(path);
+            // The Activity link doubles as the "work is happening" indicator.
+            const badgeCount = path === '/activity' ? activeDownloads ?? 0 : 0;
             return (
               <Button
                 key={path}
                 component={Link}
                 to={path}
                 aria-current={active ? 'page' : undefined}
+                aria-label={
+                  badgeCount > 0 ? `${label}, ${badgeCount} in flight` : undefined
+                }
                 sx={{
                   px: 2.5,
                   py: 0.75,
@@ -112,7 +121,28 @@ const Navbar: React.FC<NavbarProps> = ({ onSearchClick }) => {
                   },
                 }}
               >
-                {label}
+                {badgeCount > 0 ? (
+                  <Badge
+                    badgeContent={badgeCount}
+                    max={99}
+                    sx={{
+                      '& .MuiBadge-badge': {
+                        top: -2,
+                        right: -12,
+                        minWidth: 18,
+                        height: 18,
+                        fontSize: '0.6875rem',
+                        fontWeight: 700,
+                        backgroundColor: theme.palette.secondary.main,
+                        color: theme.palette.common.white,
+                      },
+                    }}
+                  >
+                    {label}
+                  </Badge>
+                ) : (
+                  label
+                )}
               </Button>
             );
           })}
