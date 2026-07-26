@@ -18,11 +18,15 @@ import (
 func InitLogger(serviceName, serviceVersion, otlpEndpoint string) (*slog.Logger, func(), error) {
 	ctx := context.Background()
 
-	// Create OTLP log exporter with endpoint (host:port format)
-	exporter, err := otlploggrpc.New(ctx,
-		otlploggrpc.WithEndpoint(otlpEndpoint),
-		otlploggrpc.WithInsecure(),
-	)
+	// Create OTLP log exporter. The gRPC exporter needs a bare host:port target,
+	// so strip any scheme the endpoint was configured with.
+	endpoint, insecure := normalizeOTLPEndpoint(otlpEndpoint)
+	opts := []otlploggrpc.Option{otlploggrpc.WithEndpoint(endpoint)}
+	if insecure {
+		opts = append(opts, otlploggrpc.WithInsecure())
+	}
+
+	exporter, err := otlploggrpc.New(ctx, opts...)
 	if err != nil {
 		return nil, nil, err
 	}

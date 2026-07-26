@@ -17,11 +17,15 @@ import (
 func InitTracer(serviceName, serviceVersion, otlpEndpoint string) (func(), error) {
 	ctx := context.Background()
 
-	// Create OTLP trace exporter with endpoint (host:port format)
-	exporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(otlpEndpoint),
-		otlptracegrpc.WithInsecure(),
-	)
+	// Create OTLP trace exporter. The gRPC exporter needs a bare host:port target,
+	// so strip any scheme the endpoint was configured with.
+	endpoint, insecure := normalizeOTLPEndpoint(otlpEndpoint)
+	opts := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(endpoint)}
+	if insecure {
+		opts = append(opts, otlptracegrpc.WithInsecure())
+	}
+
+	exporter, err := otlptracegrpc.New(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}

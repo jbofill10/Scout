@@ -31,6 +31,8 @@ type Repository interface {
 	UpsertLibraries(ctx context.Context, libs models.PlexLibrariesResponse)
 	UpsertMovies(ctx context.Context, movies models.PlexMovieLibraryData)
 	UpsertShows(ctx context.Context, shows *models.PlexShowLibraryData)
+	PruneMissingShows(ctx context.Context, shows *models.PlexShowLibraryData) error
+	PruneMissingMovies(ctx context.Context, movies models.PlexMovieLibraryData) error
 	SetPreferredLibrary(ctx context.Context, id int, libType string) error
 	GetPreferredLibrary(ctx context.Context, libType string) (models.PlexLibrary, error)
 	GetLibraryByType(ctx context.Context, libType string) (int, error)

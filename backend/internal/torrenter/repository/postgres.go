@@ -12,7 +12,7 @@ import (
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
 	"github.com/XSAM/otelsql"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -31,6 +31,8 @@ type Repository interface {
 	UpsertLibraries(ctx context.Context, libs models.PlexLibrariesResponse)
 	UpsertMovies(ctx context.Context, movies models.PlexMovieLibraryData)
 	UpsertShows(ctx context.Context, shows *models.PlexShowLibraryData)
+	PruneMissingShows(ctx context.Context, shows *models.PlexShowLibraryData) error
+	PruneMissingMovies(ctx context.Context, movies models.PlexMovieLibraryData) error
 	SetPreferredLibrary(ctx context.Context, id int, libType string) error
 	GetPreferredLibrary(ctx context.Context, libType string) (models.PlexLibrary, error)
 	GetLibraryByType(ctx context.Context, libType string) (int, error)
@@ -301,6 +303,15 @@ func (r *Repo) UpsertMovies(ctx context.Context, movies models.PlexMovieLibraryD
 			continue
 		}
 
+		// Replace this movie's media rows rather than appending. MovieMedia has no
+		// natural key to conflict on, so a plain INSERT duplicated every row on every
+		// sync and the table grew without bound.
+		if _, err := r.db.ExecContext(ctx, `DELETE FROM MovieMedia WHERE parentId = $1`, movie.Id); err != nil {
+			r.logger.ErrorContext(ctx, "Failed to clear movie media", "title", movie.Title, "error", err)
+			span.RecordError(err)
+			continue
+		}
+
 		for _, meta := range movie.MovieMeta {
 			for _, part := range meta.Part {
 				_, err = r.db.ExecContext(ctx, `
@@ -375,6 +386,16 @@ func (r *Repo) UpsertShows(ctx context.Context, lib *models.PlexShowLibraryData)
 				`, episode.Id, season.Id, episode.EpisodeMeta, episode.EpisodeNumber, episode.TvdbId)
 				if err != nil {
 					r.logger.ErrorContext(ctx, "Failed to upsert episode", "episode", episode.EpisodeNumber, "error", err)
+					span.RecordError(err)
+					continue
+				}
+
+				// Replace this episode's media rows rather than appending. EpisodeMedia has
+				// no natural key to conflict on, so a plain INSERT duplicated every row on
+				// every sync and the table grew without bound.
+				if _, err := r.db.ExecContext(ctx,
+					`DELETE FROM EpisodeMedia WHERE parentId = $1`, episode.Id); err != nil {
+					r.logger.ErrorContext(ctx, "Failed to clear plex media for episode", "episode_id", episode.Id, "error", err)
 					span.RecordError(err)
 					continue
 				}
@@ -495,3 +516,149 @@ func (r *Repo) GetShowSeasonEpisodes(ctx context.Context, tvdbId string) (map[in
 // Note: CreateNotification, GetNotification, and UpdateNotification are provided by the embedded PostgresRepository
 // OpenTelemetry tracing was removed in favor of code reuse. If detailed tracing is needed,
 // these methods can be overridden with torrenter-specific implementations that include spans.
+
+// PruneMissingShows removes shows, seasons, episodes and episode media that are no longer
+// present in Plex. It is the counterpart to UpsertShows, which only ever adds or updates —
+// without this, media deleted from Plex lingered in the mirror forever and made
+// EpisodeExistsByTvdbId report true for files that are gone.
+//
+// Callers must only invoke this after a COMPLETE Plex fetch. Pruning against a partial
+// result would delete live rows, so an empty show set is treated as "no data" and is
+// refused rather than interpreted as "Plex is empty".
+func (r *Repo) PruneMissingShows(ctx context.Context, lib *models.PlexShowLibraryData) error {
+	ctx, span := repoTracer.Start(ctx, "repository.PruneMissingShows")
+	defer span.End()
+
+	if lib == nil || len(lib.Shows) == 0 {
+		span.SetStatus(codes.Ok, "nothing to prune, empty show set")
+		return nil
+	}
+
+	showIDs := make([]string, 0, len(lib.Shows))
+	seasonIDs := []string{}
+	episodeIDs := []string{}
+	for _, show := range lib.Shows {
+		showIDs = append(showIDs, show.Id)
+		for _, season := range show.Seasons {
+			seasonIDs = append(seasonIDs, season.Id)
+			for _, episode := range season.Episodes {
+				episodeIDs = append(episodeIDs, episode.Id)
+			}
+		}
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("begin prune shows transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Children first — these tables are linked by foreign keys with no cascade.
+	//
+	// The media queries also match NULL parentId. `NULL <> ALL(...)` evaluates to NULL,
+	// not true, so without the explicit IS NULL arm an orphaned media row could never be
+	// pruned by any keep-set.
+	deletes := []struct {
+		label string
+		query string
+		ids   []string
+	}{
+		{"episode media", `DELETE FROM EpisodeMedia WHERE parentId IS NULL OR parentId <> ALL($1)`, episodeIDs},
+		{"episodes", `DELETE FROM Episodes WHERE id <> ALL($1)`, episodeIDs},
+		{"seasons", `DELETE FROM Seasons WHERE id <> ALL($1)`, seasonIDs},
+		{"shows", `DELETE FROM Shows WHERE id <> ALL($1)`, showIDs},
+	}
+
+	removed := map[string]int64{}
+	for _, d := range deletes {
+		// An empty keep-set is never safe to delete against: `x <> ALL(ARRAY[]::text[])`
+		// is vacuously TRUE for every row, so this DELETE would empty the table. Reaching
+		// here with no IDs means a level returned nothing, which we treat as absent data
+		// rather than as "Plex has none of these".
+		if len(d.ids) == 0 {
+			r.logger.WarnContext(ctx, "Skipping prune level with an empty keep-set", "level", d.label)
+			continue
+		}
+
+		res, err := tx.ExecContext(ctx, d.query, pq.Array(d.ids))
+		if err != nil {
+			span.RecordError(err)
+			return fmt.Errorf("prune %s: %w", d.label, err)
+		}
+		if n, err := res.RowsAffected(); err == nil {
+			removed[d.label] = n
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("commit prune shows: %w", err)
+	}
+
+	span.SetAttributes(
+		attribute.Int64("pruned.episode_media", removed["episode media"]),
+		attribute.Int64("pruned.episodes", removed["episodes"]),
+		attribute.Int64("pruned.seasons", removed["seasons"]),
+		attribute.Int64("pruned.shows", removed["shows"]),
+	)
+	span.SetStatus(codes.Ok, "Stale show rows pruned")
+	r.logger.InfoContext(ctx, "Pruned stale show rows",
+		"episode_media", removed["episode media"], "episodes", removed["episodes"],
+		"seasons", removed["seasons"], "shows", removed["shows"])
+	return nil
+}
+
+// PruneMissingMovies removes movies and movie media no longer present in Plex. Same
+// contract as PruneMissingShows: only call it after a complete fetch.
+func (r *Repo) PruneMissingMovies(ctx context.Context, movies models.PlexMovieLibraryData) error {
+	ctx, span := repoTracer.Start(ctx, "repository.PruneMissingMovies")
+	defer span.End()
+
+	if len(movies.Movies) == 0 {
+		span.SetStatus(codes.Ok, "nothing to prune, empty movie set")
+		return nil
+	}
+
+	movieIDs := make([]string, 0, len(movies.Movies))
+	for _, movie := range movies.Movies {
+		movieIDs = append(movieIDs, movie.Id)
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("begin prune movies transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// The IS NULL arm matters here too: `NULL <> ALL(...)` is NULL, so an orphaned media
+	// row would otherwise be permanently un-prunable.
+	mediaRes, err := tx.ExecContext(ctx,
+		`DELETE FROM MovieMedia WHERE parentId IS NULL OR parentId <> ALL($1)`, pq.Array(movieIDs))
+	if err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("prune movie media: %w", err)
+	}
+
+	movieRes, err := tx.ExecContext(ctx, `DELETE FROM Movies WHERE id <> ALL($1)`, pq.Array(movieIDs))
+	if err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("prune movies: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("commit prune movies: %w", err)
+	}
+
+	prunedMedia, _ := mediaRes.RowsAffected()
+	prunedMovies, _ := movieRes.RowsAffected()
+	span.SetAttributes(
+		attribute.Int64("pruned.movie_media", prunedMedia),
+		attribute.Int64("pruned.movies", prunedMovies),
+	)
+	span.SetStatus(codes.Ok, "Stale movie rows pruned")
+	r.logger.InfoContext(ctx, "Pruned stale movie rows", "movie_media", prunedMedia, "movies", prunedMovies)
+	return nil
+}

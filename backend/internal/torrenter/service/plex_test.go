@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
@@ -106,8 +107,9 @@ func (s *PlexHandlerTestSuite) TestGetMovies_Success() {
 
 	s.handler.cfg.Host = server.URL
 
-	movies := s.handler.getMovies(context.Background())
+	movies, complete := s.handler.getMovies(context.Background())
 
+	s.True(complete)
 	s.Len(movies.Movies, 1)
 	s.Equal("Test Movie", movies.Movies[0].Title)
 }
@@ -116,8 +118,10 @@ func (s *PlexHandlerTestSuite) TestGetMovies_NoLibrary() {
 	// Setup repo mock to return error
 	s.repo.On("GetPreferredLibrary", mock.Anything, "movie").Return(models.PlexLibrary{}, http.ErrMissingFile)
 
-	movies := s.handler.getMovies(context.Background())
+	movies, complete := s.handler.getMovies(context.Background())
 
+	// A failed fetch must report incomplete so the caller never prunes against it.
+	s.False(complete)
 	s.Empty(movies.Movies)
 }
 
@@ -186,16 +190,216 @@ func (s *PlexHandlerTestSuite) TestNewPlexHandler() {
 	s.Equal(mediaProc, handler.mediaProcessor)
 }
 
-func (s *PlexHandlerTestSuite) TestSyncPlexLibrary_Integration() {
-	// This test would be complex as it requires mocking multiple HTTP calls
-	// and repository calls. For now, just verify the function exists and doesn't panic
-	// with proper mocking setup.
 
-	s.repo.On("UpsertLibraries", mock.Anything, models.PlexLibrariesResponse{}).Maybe()
-	s.repo.On("UpsertMovies", mock.Anything, models.PlexMovieLibraryData{}).Maybe()
-	s.repo.On("UpsertShows", mock.Anything, &models.PlexShowLibraryData{}).Maybe()
+// TestSyncPlexLibrary_ShowFetchFailureReturnsError verifies that when the show library
+// cannot be resolved, getShows returns nil and SyncPlexLibrary surfaces an error rather
+// than reporting success. Reporting success left the mirror stale with no retry.
+func (s *PlexHandlerTestSuite) TestSyncPlexLibrary_ShowFetchFailureReturnsError() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<MediaContainer size="0"></MediaContainer>`))
+	}))
+	defer server.Close()
 
-	// We can't easily test this without a full mock setup
-	// Just verify it exists
-	s.NotNil(s.handler.SyncPlexLibrary)
+	s.handler.cfg.Host = server.URL
+
+	s.repo.On("UpsertLibraries", mock.Anything, mock.Anything).Return().Maybe()
+	s.repo.On("UpsertMovies", mock.Anything, mock.Anything).Return().Maybe()
+	s.repo.On("GetPreferredLibrary", mock.Anything, libraryTypeMovie).
+		Return(models.PlexLibrary{}, assert.AnError).Maybe()
+	s.repo.On("GetPreferredLibrary", mock.Anything, libraryTypeShow).
+		Return(models.PlexLibrary{}, assert.AnError)
+
+	err := s.handler.SyncPlexLibrary(context.Background())
+
+	s.Error(err)
+	s.Contains(err.Error(), "failed to fetch shows")
+	// The mirror must not be touched when the fetch failed.
+	s.repo.AssertNotCalled(s.T(), "UpsertShows", mock.Anything, mock.Anything)
+}
+
+// TestGetLibraries_Non200ReturnsError guards against the silent-failure mode where a 401
+// body unmarshalled into an empty MediaContainer and the sync carried on with 0 libraries.
+func (s *PlexHandlerTestSuite) TestGetLibraries_Non200ReturnsError() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`<MediaContainer size="0"></MediaContainer>`))
+	}))
+	defer server.Close()
+
+	s.handler.cfg.Host = server.URL
+
+	_, err := s.handler.getLibraries(context.Background())
+
+	s.Error(err)
+	s.Contains(err.Error(), "401")
+}
+
+// TestSyncPlexLibrary_PartialShowFetchSkipsPrune is the safety property that makes pruning
+// tolerable: when one show's seasons fail to fetch, that show is missing from the result,
+// so pruning against it would delete a show that actually still exists in Plex. The sync
+// must upsert what it got and skip the prune entirely.
+func (s *PlexHandlerTestSuite) TestSyncPlexLibrary_PartialShowFetchSkipsPrune() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+
+		switch r.URL.Path {
+		case "/library/sections":
+			_ = xml.NewEncoder(w).Encode(models.PlexLibrariesResponse{})
+
+		case "/library/sections/3/all": // movies
+			_ = xml.NewEncoder(w).Encode(models.PlexMovieLibraryData{})
+
+		case "/library/sections/4/all": // shows
+			_ = xml.NewEncoder(w).Encode(models.PlexShowsResponse{
+				Shows: []models.PlexShow{
+					{ShowKey: "show1", Title: "Healthy Show", Key: "/show1/children"},
+					{ShowKey: "show2", Title: "Broken Show", Key: "/show2/children"},
+				},
+			})
+
+		case "/show1/children":
+			_ = xml.NewEncoder(w).Encode(models.PlexSeasonsResponse{
+				Seasons: []models.PlexSeason{
+					{SeasonKey: "s1", Key: "/s1/children", Index: 1},
+				},
+			})
+
+		case "/s1/children":
+			_ = xml.NewEncoder(w).Encode(models.PlexEpisodesResponse{
+				Videos: []models.PlexEpisode{{EpisodeKey: "e1", Key: "/e1", Index: 1}},
+			})
+
+		case "/show2/children": // the failure that makes the fetch partial
+			w.WriteHeader(http.StatusInternalServerError)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	s.handler.cfg.Host = server.URL
+
+	s.repo.On("GetPreferredLibrary", mock.Anything, libraryTypeMovie).
+		Return(models.PlexLibrary{Section: 3, Path: "/data/movies"}, nil)
+	s.repo.On("GetPreferredLibrary", mock.Anything, libraryTypeShow).
+		Return(models.PlexLibrary{Section: 4, Path: "/data/shows"}, nil)
+	s.repo.On("UpsertLibraries", mock.Anything, mock.Anything).Return()
+	s.repo.On("UpsertMovies", mock.Anything, mock.Anything).Return()
+	s.repo.On("UpsertShows", mock.Anything, mock.Anything).Return()
+	// Movies fetched cleanly, so that prune is allowed to run.
+	s.repo.On("PruneMissingMovies", mock.Anything, mock.Anything).Return(nil)
+	s.mediaProcessor.On("InvalidateCache", mock.Anything).Return().Maybe()
+
+	err := s.handler.SyncPlexLibrary(context.Background())
+
+	s.NoError(err)
+	// The whole point: show2 is absent from the fetch, so nothing may be pruned.
+	s.repo.AssertNotCalled(s.T(), "PruneMissingShows", mock.Anything, mock.Anything)
+}
+
+// TestSyncPlexLibrary_CompleteFetchPrunes is the counterpart guard: without it, a
+// permanently-false complete flag would silently disable pruning and nobody would notice.
+func (s *PlexHandlerTestSuite) TestSyncPlexLibrary_CompleteFetchPrunes() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+
+		switch r.URL.Path {
+		case "/library/sections":
+			_ = xml.NewEncoder(w).Encode(models.PlexLibrariesResponse{})
+
+		case "/library/sections/3/all":
+			_ = xml.NewEncoder(w).Encode(models.PlexMovieLibraryData{})
+
+		case "/library/sections/4/all":
+			_ = xml.NewEncoder(w).Encode(models.PlexShowsResponse{
+				Shows: []models.PlexShow{{ShowKey: "show1", Title: "Healthy Show", Key: "/show1/children"}},
+			})
+
+		case "/show1/children":
+			_ = xml.NewEncoder(w).Encode(models.PlexSeasonsResponse{
+				Seasons: []models.PlexSeason{{SeasonKey: "s1", Key: "/s1/children", Index: 1}},
+			})
+
+		case "/s1/children":
+			_ = xml.NewEncoder(w).Encode(models.PlexEpisodesResponse{
+				Videos: []models.PlexEpisode{{EpisodeKey: "e1", Key: "/e1", Index: 1}},
+			})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	s.handler.cfg.Host = server.URL
+
+	s.repo.On("GetPreferredLibrary", mock.Anything, libraryTypeMovie).
+		Return(models.PlexLibrary{Section: 3, Path: "/data/movies"}, nil)
+	s.repo.On("GetPreferredLibrary", mock.Anything, libraryTypeShow).
+		Return(models.PlexLibrary{Section: 4, Path: "/data/shows"}, nil)
+	s.repo.On("UpsertLibraries", mock.Anything, mock.Anything).Return()
+	s.repo.On("UpsertMovies", mock.Anything, mock.Anything).Return()
+	s.repo.On("UpsertShows", mock.Anything, mock.Anything).Return()
+	s.repo.On("PruneMissingMovies", mock.Anything, mock.Anything).Return(nil)
+	s.repo.On("PruneMissingShows", mock.Anything, mock.Anything).Return(nil)
+	s.mediaProcessor.On("InvalidateCache", mock.Anything).Return().Maybe()
+
+	err := s.handler.SyncPlexLibrary(context.Background())
+
+	s.NoError(err)
+	s.repo.AssertCalled(s.T(), "PruneMissingShows", mock.Anything, mock.Anything)
+	s.repo.AssertCalled(s.T(), "PruneMissingMovies", mock.Anything, mock.Anything)
+}
+
+// TestGetShows_SkipsSyntheticAllEpisodesDirectory ensures Plex's keyless "All episodes"
+// aggregate is ignored: it previously became a season with an empty id and caused every
+// show's episodes to be fetched twice.
+func (s *PlexHandlerTestSuite) TestGetShows_SkipsSyntheticAllEpisodesDirectory() {
+	allLeavesFetched := false
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+
+		switch r.URL.Path {
+		case "/library/sections/4/all":
+			_ = xml.NewEncoder(w).Encode(models.PlexShowsResponse{
+				Shows: []models.PlexShow{{ShowKey: "show1", Title: "Show", Key: "/show1/children"}},
+			})
+
+		case "/show1/children":
+			_ = xml.NewEncoder(w).Encode(models.PlexSeasonsResponse{
+				Seasons: []models.PlexSeason{
+					{SeasonKey: "", Key: "/show1/allLeaves", Title: "All episodes"},
+					{SeasonKey: "s1", Key: "/s1/children", Index: 1},
+				},
+			})
+
+		case "/show1/allLeaves":
+			allLeavesFetched = true
+			_ = xml.NewEncoder(w).Encode(models.PlexEpisodesResponse{})
+
+		case "/s1/children":
+			_ = xml.NewEncoder(w).Encode(models.PlexEpisodesResponse{
+				Videos: []models.PlexEpisode{{EpisodeKey: "e1", Key: "/e1", Index: 1}},
+			})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	s.handler.cfg.Host = server.URL
+	s.repo.On("GetPreferredLibrary", mock.Anything, libraryTypeShow).
+		Return(models.PlexLibrary{Section: 4, Path: "/data/shows"}, nil)
+
+	shows, complete := s.handler.getShows(context.Background())
+
+	s.True(complete)
+	s.Require().Len(shows.Shows, 1)
+	s.Require().Len(shows.Shows[0].Seasons, 1)
+	s.Equal("s1", shows.Shows[0].Seasons[0].Id)
+	s.False(allLeavesFetched, "the synthetic aggregate must not be fetched")
 }

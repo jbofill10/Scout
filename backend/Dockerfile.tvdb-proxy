@@ -15,9 +15,8 @@ RUN go mod download
 # Copy shared packages
 COPY pkg/ ./pkg/
 
-# Copy tvdb-proxy service code
+# Copy tvdb-proxy service code (no internal/ package — the service lives in cmd/)
 COPY cmd/tvdb-proxy/ ./cmd/tvdb-proxy/
-COPY internal/tvdbproxy/ ./internal/tvdbproxy/
 
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w" -o tvdb-proxy ./cmd/tvdb-proxy
