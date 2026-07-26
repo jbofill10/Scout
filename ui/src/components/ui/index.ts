@@ -8,6 +8,9 @@
 export { default as ScoutLogo, ScoutMark } from './ScoutLogo';
 export type { ScoutLogoProps } from './ScoutLogo';
 
+export { default as PageHeader } from './PageHeader';
+export type { PageHeaderProps } from './PageHeader';
+
 export { default as MediaCard } from './MediaCard';
 export type { MediaCardProps } from './MediaCard';
 
