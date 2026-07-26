@@ -140,7 +140,11 @@ func (r *SchedulerRepo) Schedule(ctx context.Context, media tvdb.Media, releaseT
 		slog.String("release_time", releaseTime.Format(time.RFC3339)),
 		slog.String("content_hash", contentHash),
 	)
-	err = r.db.QueryRow(stmt, mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, contentHash, scheduledTraceID, scheduledSpanID).Scan(&contentHash)
+	var insertedID int
+	err = r.db.QueryRowContext(ctx, stmt,
+		mediaJSON, releaseTime.Format(time.RFC3339), StatusPending, contentHash,
+		scheduledTraceID, scheduledSpanID,
+	).Scan(&insertedID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			// ON CONFLICT DO NOTHING caused no insert; treat as duplicate
@@ -158,6 +162,7 @@ func (r *SchedulerRepo) Schedule(ctx context.Context, media tvdb.Media, releaseT
 		slog.String("media", media.Name),
 		slog.String("release_time", releaseTime.Format(time.RFC3339)),
 		slog.String("content_hash", contentHash),
+		slog.Int("scheduled_id", insertedID),
 	)
 
 	return nil
