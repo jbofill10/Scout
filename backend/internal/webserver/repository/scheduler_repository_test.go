@@ -358,3 +358,54 @@ func (s *SchedulerRepoTestSuite) TestComputeContentHash_MovieUsesDate() {
 	s.NotEqual(hash1, hash2, "Same movie with different release dates must produce different hashes")
 	s.Equal(hash1, ComputeContentHash(movie, t1))
 }
+
+func (s *SchedulerRepoTestSuite) TestGetPendingScheduleMeta_KeysByNotificationID() {
+	show := tvdb.Media{
+		Id:       "111",
+		Name:     "Test Show",
+		Category: "series",
+		Metadata: tvdb.TVDBSeriesMetadata{
+			Episodes: []tvdb.Episode{{Id: 4242, SeasonNumber: 1, Number: 5}},
+		},
+	}
+	movie := tvdb.Media{Id: "999", Name: "Test Movie", Category: "movie"}
+
+	showJSON, err := json.Marshal(show)
+	s.Require().NoError(err)
+	movieJSON, err := json.Marshal(movie)
+	s.Require().NoError(err)
+
+	releaseTime := time.Now().Add(-2 * time.Hour)
+	nextAttempt := time.Now().Add(15 * time.Minute)
+
+	rows := sqlmock.NewRows([]string{
+		"media", "release_time", "schedule_status", "attempts",
+		"next_attempt_at", "last_failure_code", "last_failure_reason",
+	}).
+		AddRow(showJSON, releaseTime, StatusPending, 2, nextAttempt, "no_torrent_found", "No torrent found yet").
+		AddRow(movieJSON, releaseTime, StatusQueued, 0, nil, nil, nil)
+
+	s.mock.ExpectQuery("SELECT media, release_time, schedule_status, attempts").
+		WithArgs(StatusPending, StatusQueued).
+		WillReturnRows(rows)
+
+	meta, err := s.repo.GetPendingScheduleMeta(context.Background())
+	s.Require().NoError(err)
+	s.Len(meta, 2)
+
+	// Shows are keyed by episode id, movies by media id — matching notifications.
+	episodeMeta, ok := meta["4242"]
+	s.Require().True(ok, "show should be keyed by its episode id")
+	s.Equal(2, episodeMeta.Attempts)
+	s.Equal("no_torrent_found", episodeMeta.LastFailureCode)
+	s.Require().NotNil(episodeMeta.NextAttemptAt)
+	s.WithinDuration(nextAttempt, *episodeMeta.NextAttemptAt, time.Second)
+
+	movieMeta, ok := meta["999"]
+	s.Require().True(ok, "movie should be keyed by its media id")
+	s.Equal(StatusQueued, movieMeta.ScheduleStatus)
+	s.Nil(movieMeta.NextAttemptAt)
+	s.Empty(movieMeta.LastFailureCode)
+
+	s.Require().NoError(s.mock.ExpectationsWereMet())
+}

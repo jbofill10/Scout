@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -44,6 +45,19 @@ type ScheduledDownload struct {
 	IsAnime     bool      `json:"isAnime"`
 }
 
+// ScheduleMeta is the scheduling and retry state of a download that has not
+// reached a terminal status yet. It is keyed by the same tvdb id the item's
+// notification uses (episode id for shows, media id for movies) so the two can
+// be joined for the activity view.
+type ScheduleMeta struct {
+	Attempts          int        `json:"attempts"`
+	NextAttemptAt     *time.Time `json:"next_attempt_at,omitempty"`
+	ReleaseTime       time.Time  `json:"release_time"`
+	ScheduleStatus    string     `json:"schedule_status"`
+	LastFailureCode   string     `json:"last_failure_code,omitempty"`
+	LastFailureReason string     `json:"last_failure_reason,omitempty"`
+}
+
 // SchedulerRepository defines DB operations for scheduled shows
 type SchedulerRepository interface {
 	Schedule(ctx context.Context, media tvdb.Media, releaseTime time.Time, scheduledTraceID, scheduledSpanID string) error
@@ -56,6 +70,7 @@ type SchedulerRepository interface {
 	ResetStaleQueued(ctx context.Context, olderThan time.Duration) (int64, error)
 	InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, status, reason, traceID, spanID string) error
 	GetWeeklySchedule() ([]ScheduledDownload, error)
+	GetPendingScheduleMeta(ctx context.Context) (map[string]ScheduleMeta, error)
 }
 
 type SchedulerRepo struct {
@@ -352,6 +367,79 @@ func mediaReleaseTime(media tvdb.Media) time.Time {
 		return t
 	}
 	return time.Time{}
+}
+
+// GetPendingScheduleMeta returns the retry/scheduling state of every download
+// that is still pending or queued, keyed by notification tvdb id. Rows whose
+// media cannot be decoded are skipped rather than failing the whole lookup.
+func (r *SchedulerRepo) GetPendingScheduleMeta(ctx context.Context) (map[string]ScheduleMeta, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	stmt := `SELECT media, release_time, schedule_status, attempts, next_attempt_at,
+			        last_failure_code, last_failure_reason
+			 FROM ScheduledDownloads
+			 WHERE schedule_status IN ($1, $2)`
+
+	rows, err := r.db.QueryContext(ctx, stmt, StatusPending, StatusQueued)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query pending schedule metadata: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			r.logger.ErrorContext(ctx, "Failed to close rows", "error", err)
+		}
+	}()
+
+	meta := make(map[string]ScheduleMeta)
+	for rows.Next() {
+		var mediaJSON []byte
+		var releaseTime time.Time
+		var scheduleStatus string
+		var attempts int
+		var nextAttempt sql.NullTime
+		var failureCode, failureReason sql.NullString
+
+		if err := rows.Scan(&mediaJSON, &releaseTime, &scheduleStatus, &attempts,
+			&nextAttempt, &failureCode, &failureReason); err != nil {
+			r.logger.ErrorContext(ctx, "Failed to scan schedule metadata row", "error", err)
+			continue
+		}
+
+		var media tvdb.Media
+		if err := json.Unmarshal(mediaJSON, &media); err != nil {
+			r.logger.ErrorContext(ctx, "Failed to unmarshal media for schedule metadata", "error", err)
+			continue
+		}
+
+		entry := ScheduleMeta{
+			Attempts:          attempts,
+			ReleaseTime:       releaseTime,
+			ScheduleStatus:    scheduleStatus,
+			LastFailureCode:   failureCode.String,
+			LastFailureReason: failureReason.String,
+		}
+		if nextAttempt.Valid {
+			next := nextAttempt.Time
+			entry.NextAttemptAt = &next
+		}
+		meta[NotificationKey(media)] = entry
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating schedule metadata rows: %w", err)
+	}
+
+	return meta, nil
+}
+
+// NotificationKey returns the tvdb id a notification uses for this media: the
+// first episode's id for shows, the media id for movies.
+func NotificationKey(media tvdb.Media) string {
+	if len(media.Metadata.Episodes) > 0 {
+		return strconv.Itoa(media.Metadata.Episodes[0].Id)
+	}
+	return media.Id
 }
 
 func (r *SchedulerRepo) InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, status, reason, traceID, spanID string) error {
