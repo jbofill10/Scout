@@ -411,6 +411,7 @@ const ScheduleWidget: React.FC = () => {
           enrichedMedia={selectedEnrichedMedia}
           onDownload={handleDownload}
           showDownloadButton={true}
+          mediaType={selectedMediaType === "movie" ? "movie" : "series"}
         />
       )}
     </>
