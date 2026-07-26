@@ -28,3 +28,5 @@ export { default as NotificationDropdown } from './NotificationDropdown';
 
 export { default as MediaStatusDialog } from './MediaStatusDialog';
 export type { MediaStatusDialogProps } from './MediaStatusDialog';
+
+export { default as ToastProvider } from './ToastProvider';
