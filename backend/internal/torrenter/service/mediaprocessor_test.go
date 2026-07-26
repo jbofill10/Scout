@@ -216,6 +216,7 @@ func (ts *testSuite) TestProcessDownloadedTorrent_Movie_Success() {
 			Season:      0,
 			Episode:     0,
 			TvdbId:      "67890",
+			IsMovie:     true,
 		},
 	}
 	ts.fs.On("ReadDir", "/downloads").Return([]string{"movie.mkv"}, nil)
