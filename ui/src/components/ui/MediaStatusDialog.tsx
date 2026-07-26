@@ -7,20 +7,15 @@ import Button from "@mui/material/Button";
 import Box from "@mui/material/Box";
 import Tabs from "@mui/material/Tabs";
 import Tab from "@mui/material/Tab";
-import Table from "@mui/material/Table";
-import TableBody from "@mui/material/TableBody";
-import TableCell from "@mui/material/TableCell";
-import TableContainer from "@mui/material/TableContainer";
-import TableRow from "@mui/material/TableRow";
-import Paper from "@mui/material/Paper";
+import LinearProgress from "@mui/material/LinearProgress";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
 import CircularProgress from "@mui/material/CircularProgress";
 import CloseIcon from "@mui/icons-material/Close";
-import CheckCircleIcon from "@mui/icons-material/CheckCircle";
-import CancelIcon from "@mui/icons-material/Cancel";
+import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
+import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import type { ShowStatus, EnrichedMedia } from "../../types/MediaStatus";
-import { useTheme } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
 
 export interface MediaStatusDialogProps {
   open: boolean;
@@ -70,7 +65,7 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
   isDownloading = false,
 }) => {
   const theme = useTheme();
-  const [selectedSeasonIndex, setSelectedSeasonIndex] = useState(0);
+  const [selectedSeasonIndex, setSelectedSeasonIndex] = useState<number | null>(null);
 
   // Merge TVDB episode metadata with Plex download status
   const enrichedSeasons = useMemo<EnrichedSeasonInfo[]>(() => {
@@ -169,6 +164,13 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
       .sort((a, b) => a.seasonNum - b.seasonNum);
   }, [status, enrichedMedia]);
 
+  // Library coverage across every season, shown as a progress bar in the header
+  const totals = useMemo(() => {
+    const episodes = enrichedSeasons.flatMap((season) => season.episodes);
+    const downloaded = episodes.filter((episode) => episode.downloaded).length;
+    return { downloaded, total: episodes.length };
+  }, [enrichedSeasons]);
+
   if (enrichedSeasons.length === 0) {
     return null;
   }
@@ -177,7 +179,14 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
     setSelectedSeasonIndex(newValue);
   };
 
-  const currentSeason = enrichedSeasons[selectedSeasonIndex];
+  // Land on the first real season rather than Specials, which sorts first
+  const defaultSeasonIndex = Math.max(
+    enrichedSeasons.findIndex((season) => season.seasonNum > 0),
+    0,
+  );
+  const activeSeasonIndex = selectedSeasonIndex ?? defaultSeasonIndex;
+  const currentSeason = enrichedSeasons[activeSeasonIndex];
+  const percentComplete = totals.total > 0 ? (totals.downloaded / totals.total) * 100 : 0;
 
   return (
     <Dialog
@@ -186,75 +195,87 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
       maxWidth="md"
       fullWidth
       aria-labelledby="media-status-dialog-title"
-      PaperProps={{
-        sx: {
-          backgroundColor: theme.palette.background.paper,
-          borderRadius: 2,
-        },
-      }}
     >
-      {/* Header with poster and title */}
+      {/* Header with poster, title and overall coverage */}
       <DialogTitle
         id="media-status-dialog-title"
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          gap: 2,
-          pb: 1,
-        }}
+        component="div"
+        sx={{ display: "flex", alignItems: "flex-start", gap: 2.5, p: 3, pb: 2.5 }}
       >
         <Box
           component="img"
           src={posterUrl}
           alt={mediaName}
           sx={{
-            width: 60,
-            height: 90,
+            width: 72,
+            height: 108,
+            flexShrink: 0,
             objectFit: "cover",
-            borderRadius: 1,
-            border: `2px solid ${theme.palette.divider}`,
+            borderRadius: 2,
+            border: `1px solid ${theme.palette.divider}`,
           }}
         />
-        <Box sx={{ flex: 1 }}>
-          <Typography variant="h5" component="div" sx={{ fontWeight: 600 }}>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography variant="h4" component="h2" sx={{ color: theme.palette.text.primary }}>
             {mediaName}
           </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Download Status
+          <Typography variant="body2" sx={{ mt: 0.5, color: theme.palette.text.secondary }}>
+            {totals.downloaded} of {totals.total} {totals.total === 1 ? "episode" : "episodes"} in
+            your library
           </Typography>
+          <LinearProgress
+            variant="determinate"
+            value={percentComplete}
+            aria-label="Library coverage"
+            sx={{
+              mt: 1.5,
+              maxWidth: 320,
+              backgroundColor: alpha(theme.palette.common.white, 0.08),
+              "& .MuiLinearProgress-bar": {
+                backgroundColor:
+                  percentComplete === 100 ? theme.palette.success.main : theme.palette.primary.main,
+              },
+            }}
+          />
         </Box>
-        <IconButton
-          aria-label="close"
-          onClick={onClose}
-          sx={{
-            color: theme.palette.text.secondary,
-          }}
-        >
+        <IconButton aria-label="close" onClick={onClose} sx={{ color: theme.palette.text.secondary }}>
           <CloseIcon />
         </IconButton>
       </DialogTitle>
 
       <DialogContent sx={{ p: 0 }}>
-        {/* Season Tabs */}
-        <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
+        {/* Season Tabs — each label carries that season's coverage */}
+        <Box sx={{ borderBottom: `1px solid ${theme.palette.divider}` }}>
           <Tabs
-            value={selectedSeasonIndex}
+            value={activeSeasonIndex}
             onChange={handleSeasonChange}
             variant="scrollable"
             scrollButtons="auto"
             aria-label="season tabs"
             sx={{
-              px: 2,
+              px: 3,
+              minHeight: 48,
+              "& .MuiTab-root": {
+                minHeight: 48,
+                textTransform: "none",
+                fontWeight: 600,
+                fontSize: "0.875rem",
+                color: theme.palette.text.secondary,
+                "&.Mui-selected": { color: theme.palette.text.primary },
+              },
             }}
           >
-            {enrichedSeasons.map((season) => (
-              <Tab
-                key={season.seasonNum}
-                label={`Season ${season.seasonNum}`}
-                id={`season-tab-${season.seasonNum}`}
-                aria-controls={`season-panel-${season.seasonNum}`}
-              />
-            ))}
+            {enrichedSeasons.map((season) => {
+              const have = season.episodes.filter((episode) => episode.downloaded).length;
+              return (
+                <Tab
+                  key={season.seasonNum}
+                  label={`${season.seasonNum === 0 ? "Specials" : `Season ${season.seasonNum}`} · ${have}/${season.episodes.length}`}
+                  id={`season-tab-${season.seasonNum}`}
+                  aria-controls={`season-panel-${season.seasonNum}`}
+                />
+              );
+            })}
           </Tabs>
         </Box>
 
@@ -263,113 +284,96 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
           role="tabpanel"
           id={`season-panel-${currentSeason.seasonNum}`}
           aria-labelledby={`season-tab-${currentSeason.seasonNum}`}
-          sx={{ p: 2 }}
+          sx={{ px: 3, py: 2, maxHeight: "48vh", overflowY: "auto" }}
         >
           {currentSeason.episodes.length === 0 ? (
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              align="center"
-              sx={{ py: 4 }}
-            >
+            <Typography variant="body2" color="text.secondary" align="center" sx={{ py: 6 }}>
               No episodes found for this season
             </Typography>
           ) : (
-            <TableContainer component={Paper} elevation={0}>
-              <Table aria-label="episode status table">
-                <TableBody>
-                  {currentSeason.episodes.map((episode) => (
-                    <TableRow
-                      key={episode.episodeNum}
-                      sx={{
-                        "&:last-child td, &:last-child th": { border: 0 },
-                        "&:hover": {
-                          backgroundColor: theme.palette.action.hover,
-                        },
-                      }}
-                    >
-                      <TableCell
-                        component="th"
-                        scope="row"
-                        sx={{
-                          fontWeight: 500,
-                          color: theme.palette.text.primary,
-                        }}
-                      >
-                        <Box>
-                          <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                            Episode {episode.episodeNum}
-                            {episode.name && `: ${episode.name}`}
-                          </Typography>
-                          {episode.aired && (
-                            <Typography
-                              variant="caption"
-                              sx={{ color: theme.palette.text.secondary }}
-                            >
-                              Aired: {new Date(episode.aired).toLocaleDateString()}
-                            </Typography>
-                          )}
-                        </Box>
-                      </TableCell>
-                      <TableCell align="right">
-                        {episode.downloaded ? (
-                          <Box
-                            sx={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "flex-end",
-                              gap: 1,
-                            }}
-                          >
-                            <Typography
-                              variant="body2"
-                              sx={{ color: theme.palette.success.main }}
-                            >
-                              Downloaded
-                            </Typography>
-                            <CheckCircleIcon
-                              sx={{
-                                color: theme.palette.success.main,
-                                fontSize: 20,
-                              }}
-                            />
-                          </Box>
-                        ) : (
-                          <Box
-                            sx={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "flex-end",
-                              gap: 1,
-                            }}
-                          >
-                            <Typography
-                              variant="body2"
-                              sx={{ color: theme.palette.error.main, fontWeight: 600 }}
-                            >
-                              Missing
-                            </Typography>
-                            <CancelIcon
-                              sx={{
-                                color: theme.palette.error.main,
-                                fontSize: 20,
-                              }}
-                            />
-                          </Box>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
+            currentSeason.episodes.map((episode) => (
+              <Box
+                key={episode.episodeNum}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 2,
+                  py: 1.25,
+                  borderBottom: `1px solid ${theme.palette.divider}`,
+                  "&:last-of-type": { borderBottom: 0 },
+                }}
+              >
+                {/* Episode number, fixed width so titles align down the column */}
+                <Typography
+                  variant="body2"
+                  sx={{
+                    width: 34,
+                    flexShrink: 0,
+                    textAlign: "right",
+                    fontVariantNumeric: "tabular-nums",
+                    color: theme.palette.text.disabled,
+                  }}
+                >
+                  {episode.episodeNum}
+                </Typography>
+
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontWeight: 600,
+                      color: theme.palette.text.primary,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {episode.name || `Episode ${episode.episodeNum}`}
+                  </Typography>
+                  {episode.aired && (
+                    <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
+                      {new Date(episode.aired).toLocaleDateString()}
+                    </Typography>
+                  )}
+                </Box>
+
+                {episode.downloaded ? (
+                  <Box
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 0.5,
+                      flexShrink: 0,
+                      px: 1,
+                      py: "3px",
+                      borderRadius: 999,
+                      fontSize: "0.6875rem",
+                      fontWeight: 700,
+                      color: theme.palette.success.main,
+                      backgroundColor: alpha(theme.palette.success.main, 0.14),
+                      border: `1px solid ${alpha(theme.palette.success.main, 0.35)}`,
+                    }}
+                  >
+                    <CheckRoundedIcon sx={{ fontSize: 14 }} />
+                    In library
+                  </Box>
+                ) : (
+                  <Typography
+                    variant="caption"
+                    sx={{ flexShrink: 0, color: theme.palette.text.disabled, fontWeight: 600 }}
+                  >
+                    Missing
+                  </Typography>
+                )}
+              </Box>
+            ))
           )}
         </Box>
       </DialogContent>
 
       {/* Dialog Actions */}
-      <DialogActions sx={{ p: 2, borderTop: `1px solid ${theme.palette.divider}` }}>
-        <Button onClick={onClose} variant="outlined" color="inherit">
+      <DialogActions sx={{ px: 3, py: 2, borderTop: `1px solid ${theme.palette.divider}` }}>
+        <Button onClick={onClose} variant="text" color="inherit">
           Close
         </Button>
         {showDownloadButton && onDownload && (
@@ -378,9 +382,15 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
             variant="contained"
             color="primary"
             disabled={isDownloading}
-            startIcon={isDownloading ? <CircularProgress size={18} color="inherit" /> : undefined}
+            startIcon={
+              isDownloading ? (
+                <CircularProgress size={16} color="inherit" />
+              ) : (
+                <DownloadRoundedIcon />
+              )
+            }
           >
-            {isDownloading ? "Requesting..." : "Download"}
+            {isDownloading ? "Requesting..." : "Download missing"}
           </Button>
         )}
       </DialogActions>
