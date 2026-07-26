@@ -16,6 +16,8 @@ import {
   Skeleton,
   Slide,
   Chip,
+  Tooltip,
+  alpha,
   useTheme,
 } from "@mui/material";
 import {
@@ -28,6 +30,7 @@ import {
   Schedule as ScheduledIcon,
   Error as FailedIcon,
   Clear as DismissIcon,
+  NotificationsNoneOutlined as NoNotificationsIcon,
 } from "@mui/icons-material";
 import {
   useUnreadCount,
@@ -190,7 +193,7 @@ function NotificationCard({
                 sx={{
                   fontSize: "1rem",
                   fontWeight: 600,
-                  color: "white",
+                  color: theme.palette.text.primary,
                   mr: 1,
                 }}
               >
@@ -214,7 +217,7 @@ function NotificationCard({
               label={getStatusLabel(group.latest_status)}
               size="small"
               sx={{
-                backgroundColor: `${getStatusColor(group.latest_status)}22`,
+                backgroundColor: alpha(getStatusColor(group.latest_status), 0.16),
                 color: getStatusColor(group.latest_status),
                 fontWeight: 600,
                 fontSize: "0.75rem",
@@ -247,7 +250,7 @@ function NotificationCard({
               latestNotification.reason && (
                 <Typography
                   variant="caption"
-                  sx={{ color: "#EF4444", display: "block", mb: 0.5 }}
+                  sx={{ color: theme.palette.error.main, display: "block", mb: 0.5 }}
                 >
                   {latestNotification.reason}
                 </Typography>
@@ -332,7 +335,7 @@ function NotificationCard({
                       secondary={getStatusLabel(notification.status)}
                       primaryTypographyProps={{
                         variant: "body2",
-                        sx: { color: "white", fontSize: "0.875rem" },
+                        sx: { color: theme.palette.text.primary, fontSize: "0.875rem" },
                       }}
                       secondaryTypographyProps={{
                         variant: "caption",
@@ -347,7 +350,7 @@ function NotificationCard({
                         <Typography
                           variant="caption"
                           sx={{
-                            color: "#EF4444",
+                            color: theme.palette.error.main,
                             fontSize: "0.7rem",
                             maxWidth: 200,
                             overflow: "hidden",
@@ -423,28 +426,39 @@ export default function NotificationDropdown() {
   return (
     <>
       {/* Bell Icon Button */}
-      <IconButton
-        onClick={handleToggle}
-        sx={{
-          color: "white",
-          "&:hover": {
-            backgroundColor: "rgba(255, 255, 255, 0.08)",
-          },
-        }}
-      >
-        <Badge
-          badgeContent={unreadCount.data || 0}
-          color="primary"
+      <Tooltip title="Notifications">
+        <IconButton
+          onClick={handleToggle}
+          aria-label={
+            unreadCount.data ? `Notifications, ${unreadCount.data} unread` : "Notifications"
+          }
+          aria-expanded={isOpen}
           sx={{
-            "& .MuiBadge-badge": {
-              backgroundColor: theme.palette.primary.main,
-              color: "white",
+            color: isOpen ? theme.palette.text.primary : theme.palette.text.secondary,
+            "&:hover": {
+              color: theme.palette.text.primary,
+              backgroundColor: alpha(theme.palette.primary.main, 0.14),
             },
           }}
         >
-          <NotificationsIcon />
-        </Badge>
-      </IconButton>
+          <Badge
+            badgeContent={unreadCount.data || 0}
+            sx={{
+              "& .MuiBadge-badge": {
+                minWidth: 18,
+                height: 18,
+                fontSize: "0.6875rem",
+                fontWeight: 700,
+                backgroundColor: theme.palette.primary.main,
+                color: theme.palette.common.white,
+                border: `2px solid ${theme.palette.background.default}`,
+              },
+            }}
+          >
+            <NotificationsIcon />
+          </Badge>
+        </IconButton>
+      </Tooltip>
 
       {/* Backdrop */}
       {isOpen && (
@@ -452,7 +466,8 @@ export default function NotificationDropdown() {
           open={isOpen}
           onClick={handleClose}
           sx={{
-            backgroundColor: "rgba(0, 0, 0, 0.5)",
+            backgroundColor: alpha("#020617", 0.6),
+            backdropFilter: "blur(6px)",
             zIndex: 1200,
           }}
         />
@@ -463,23 +478,23 @@ export default function NotificationDropdown() {
         <Box
           ref={dropdownRef}
           tabIndex={-1}
+          role="dialog"
+          aria-label="Notifications"
           sx={{
             position: "fixed",
-            top: 0,
-            right: { xs: 0, sm: "auto" },
-            left: { xs: 0, sm: "50%" },
-            transform: { xs: "none", sm: "translateX(-50%)" },
-            width: { xs: "100%", sm: 600 },
-            maxWidth: "100vw",
-            maxHeight: "80vh",
-            backgroundColor: theme.palette.background.default,
-            borderRadius: { xs: 0, sm: 2 },
-            boxShadow: theme.shadows[10],
+            // Hangs off the bell rather than covering the navbar
+            top: 76,
+            right: { xs: 8, sm: 24 },
+            width: { xs: "calc(100vw - 16px)", sm: 440 },
+            maxHeight: "calc(100vh - 100px)",
+            backgroundColor: theme.palette.background.paper,
+            border: `1px solid ${theme.palette.divider}`,
+            borderRadius: 3,
+            boxShadow: theme.shadows[16],
             zIndex: 1300,
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
-            mt: { xs: 0, sm: 2 },
           }}
         >
           {/* Header */}
@@ -488,14 +503,21 @@ export default function NotificationDropdown() {
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
-              p: 2,
+              px: 2.5,
+              py: 1.75,
               borderBottom: `1px solid ${theme.palette.divider}`,
-              backgroundColor: theme.palette.background.paper,
             }}
           >
-            <Typography variant="h6" sx={{ fontWeight: 600, color: "white" }}>
-              Notifications
-            </Typography>
+            <Box sx={{ display: "flex", alignItems: "baseline", gap: 1.25 }}>
+              <Typography variant="h6" sx={{ color: theme.palette.text.primary }}>
+                Notifications
+              </Typography>
+              {!!unreadCount.data && (
+                <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
+                  {unreadCount.data} unread
+                </Typography>
+              )}
+            </Box>
             <IconButton onClick={handleClose} size="small">
               <CloseIcon />
             </IconButton>
@@ -562,17 +584,21 @@ export default function NotificationDropdown() {
 
             {/* Error State */}
             {groupedNotifications.isError && (
-              <Box sx={{ textAlign: "center", py: 4 }}>
+              <Box sx={{ textAlign: "center", py: 6 }}>
+                <Typography variant="subtitle1" sx={{ color: theme.palette.text.primary }}>
+                  Couldn't load notifications
+                </Typography>
                 <Typography
-                  variant="body1"
-                  sx={{ color: theme.palette.error.main, mb: 2 }}
+                  variant="body2"
+                  sx={{ color: theme.palette.text.secondary, mb: 2 }}
                 >
-                  Failed to load notifications
+                  Scout couldn't reach the server.
                 </Typography>
                 <Button
                   variant="outlined"
+                  size="small"
+                  color="primary"
                   onClick={() => groupedNotifications.refetch()}
-                  sx={{ color: theme.palette.primary.main }}
                 >
                   Retry
                 </Button>
@@ -584,18 +610,14 @@ export default function NotificationDropdown() {
               !groupedNotifications.isError &&
               notificationGroups.length === 0 && (
                 <Box sx={{ textAlign: "center", py: 6 }}>
-                  <NotificationsIcon
-                    sx={{
-                      fontSize: 48,
-                      color: theme.palette.text.secondary,
-                      mb: 2,
-                    }}
+                  <NoNotificationsIcon
+                    sx={{ fontSize: 34, color: theme.palette.text.disabled, mb: 1 }}
                   />
-                  <Typography
-                    variant="body1"
-                    sx={{ color: theme.palette.text.secondary }}
-                  >
-                    No notifications
+                  <Typography variant="subtitle1" sx={{ color: theme.palette.text.primary }}>
+                    You're all caught up
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
+                    Download activity will show up here.
                   </Typography>
                 </Box>
               )}
