@@ -10,6 +10,7 @@ import (
 	"github.com/jbofill10/scout/backend/pkg/media"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -312,6 +313,11 @@ func (s *RepoTestSuite) TestUpsertMovies_Success() {
 		WithArgs("1", "Test Movie", 2023, "/thumb.jpg", "/art.jpg", "123456", "/data/movies").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
+	// Existing media rows are cleared first so repeated syncs don't duplicate them
+	s.mock.ExpectExec(`DELETE FROM MovieMedia`).
+		WithArgs("1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
 	// Expect movie media insert - uses movie's Plex ID ("1") as parentId
 	s.mock.ExpectExec(`INSERT INTO MovieMedia`).
 		WithArgs("1", "1080p", "/data/movies/test.mkv").
@@ -373,6 +379,11 @@ func (s *RepoTestSuite) TestUpsertShows_Success() {
 	s.mock.ExpectExec(`INSERT INTO Episodes`).
 		WithArgs("e1", "s1", "/shows/1/season/1/episode/1", 1, "ep123").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Existing media rows are cleared first so repeated syncs don't duplicate them
+	s.mock.ExpectExec(`DELETE FROM EpisodeMedia`).
+		WithArgs("e1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	// Expect episode media insert - uses episode's Plex ID ("e1") as parentId
 	s.mock.ExpectExec(`INSERT INTO EpisodeMedia`).
@@ -543,4 +554,118 @@ func (s *RepoTestSuite) TestMovieExistsByTvdbId_EmptyTvdbId() {
 
 	s.NoError(err)
 	s.False(exists)
+}
+
+// TestPruneMissingShows_EmptySetIsRefused is the important guard: an empty show set means
+// "no data", not "Plex is empty". Pruning against it would wipe the whole mirror.
+func (s *RepoTestSuite) TestPruneMissingShows_EmptySetIsRefused() {
+	err := s.repo.PruneMissingShows(context.Background(), &models.PlexShowLibraryData{})
+
+	s.NoError(err)
+	// No statements at all — not even a transaction.
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *RepoTestSuite) TestPruneMissingShows_NilIsRefused() {
+	err := s.repo.PruneMissingShows(context.Background(), nil)
+
+	s.NoError(err)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *RepoTestSuite) TestPruneMissingMovies_EmptySetIsRefused() {
+	err := s.repo.PruneMissingMovies(context.Background(), models.PlexMovieLibraryData{})
+
+	s.NoError(err)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+// TestPruneMissingShows_DeletesChildrenFirst verifies the delete order respects the
+// foreign keys (media -> episodes -> seasons -> shows) and that it all runs in one tx.
+func (s *RepoTestSuite) TestPruneMissingShows_DeletesChildrenFirst() {
+	lib := &models.PlexShowLibraryData{
+		Shows: []models.PlexShowData{
+			{
+				Id: "show1",
+				Seasons: []models.PlexSeasonData{
+					{
+						Id:       "s1",
+						Episodes: []models.PlexEpisodeData{{Id: "e1"}},
+					},
+				},
+			},
+		},
+	}
+
+	// Assert the actual keep-sets, not just the statement order — otherwise a swapped
+	// episodeIDs/seasonIDs would still pass.
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`DELETE FROM EpisodeMedia`).
+		WithArgs(pq.Array([]string{"e1"})).WillReturnResult(sqlmock.NewResult(0, 3))
+	s.mock.ExpectExec(`DELETE FROM Episodes`).
+		WithArgs(pq.Array([]string{"e1"})).WillReturnResult(sqlmock.NewResult(0, 2))
+	s.mock.ExpectExec(`DELETE FROM Seasons`).
+		WithArgs(pq.Array([]string{"s1"})).WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectExec(`DELETE FROM Shows`).
+		WithArgs(pq.Array([]string{"show1"})).WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectCommit()
+
+	err := s.repo.PruneMissingShows(context.Background(), lib)
+
+	s.NoError(err)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+// TestPruneMissingShows_RollsBackOnError ensures a mid-prune failure leaves nothing partly deleted.
+func (s *RepoTestSuite) TestPruneMissingShows_RollsBackOnError() {
+	lib := &models.PlexShowLibraryData{
+		Shows: []models.PlexShowData{{Id: "show1"}},
+	}
+
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`DELETE FROM Shows`).WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
+
+	err := s.repo.PruneMissingShows(context.Background(), lib)
+
+	s.Error(err)
+	s.Contains(err.Error(), "prune shows")
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *RepoTestSuite) TestPruneMissingMovies_DeletesMediaThenMovies() {
+	movies := models.PlexMovieLibraryData{
+		Movies: []models.Movie{{Id: "m1"}},
+	}
+
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`DELETE FROM MovieMedia`).WillReturnResult(sqlmock.NewResult(0, 5))
+	s.mock.ExpectExec(`DELETE FROM Movies`).WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectCommit()
+
+	err := s.repo.PruneMissingMovies(context.Background(), movies)
+
+	s.NoError(err)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+// TestPruneMissingShows_EmptyChildLevelIsSkipped covers the vacuous-ALL footgun one level
+// down: shows exist but no seasons came back. `id <> ALL(ARRAY[]::text[])` is TRUE for
+// every row, so issuing that DELETE would empty Seasons/Episodes/EpisodeMedia entirely.
+// Only the Shows delete may run.
+func (s *RepoTestSuite) TestPruneMissingShows_EmptyChildLevelIsSkipped() {
+	lib := &models.PlexShowLibraryData{
+		Shows: []models.PlexShowData{{Id: "show1"}}, // no seasons, no episodes
+	}
+
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`DELETE FROM Shows`).
+		WithArgs(pq.Array([]string{"show1"})).WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectCommit()
+
+	err := s.repo.PruneMissingShows(context.Background(), lib)
+
+	s.NoError(err)
+	// sqlmock is ordered and strict: any EpisodeMedia/Episodes/Seasons delete would fail here.
+	s.NoError(s.mock.ExpectationsWereMet())
 }

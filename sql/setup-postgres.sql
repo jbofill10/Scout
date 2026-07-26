@@ -75,6 +75,10 @@ CREATE TABLE IF NOT EXISTS MovieMedia (
     file_path TEXT
 );
 
+-- The Plex sync replaces a movie's media rows on every run (DELETE ... WHERE parentId = ?),
+-- so this index keeps that from degrading into a sequential scan per movie.
+CREATE INDEX IF NOT EXISTS idx_moviemedia_parentid ON MovieMedia(parentId);
+
 CREATE TABLE IF NOT EXISTS Shows (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -118,6 +122,10 @@ CREATE TABLE IF NOT EXISTS EpisodeMedia (
     video_resolution TEXT,
     file_path TEXT
 );
+
+-- The Plex sync replaces an episode's media rows on every run (DELETE ... WHERE parentId = ?),
+-- so this index keeps that from degrading into a sequential scan per episode.
+CREATE INDEX IF NOT EXISTS idx_episodemedia_parentid ON EpisodeMedia(parentId);
 
 CREATE TABLE IF NOT EXISTS ShowDownloadHistory (
     id SERIAL PRIMARY KEY,

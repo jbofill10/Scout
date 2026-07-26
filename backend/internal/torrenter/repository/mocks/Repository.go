@@ -342,6 +342,42 @@ func (_m *Repository) UpsertShows(ctx context.Context, shows *models.PlexShowLib
 	_m.Called(ctx, shows)
 }
 
+// PruneMissingShows provides a mock function with given fields: ctx, shows
+func (_m *Repository) PruneMissingShows(ctx context.Context, shows *models.PlexShowLibraryData) error {
+	ret := _m.Called(ctx, shows)
+
+	if len(ret) == 0 {
+		panic("no return value specified for PruneMissingShows")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, *models.PlexShowLibraryData) error); ok {
+		r0 = rf(ctx, shows)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// PruneMissingMovies provides a mock function with given fields: ctx, movies
+func (_m *Repository) PruneMissingMovies(ctx context.Context, movies models.PlexMovieLibraryData) error {
+	ret := _m.Called(ctx, movies)
+
+	if len(ret) == 0 {
+		panic("no return value specified for PruneMissingMovies")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, models.PlexMovieLibraryData) error); ok {
+		r0 = rf(ctx, movies)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // CreateNotification provides a mock function with given fields: ctx, notification
 func (_m *Repository) CreateNotification(ctx context.Context, notification *notifications.Notification) error {
 	ret := _m.Called(ctx, notification)
