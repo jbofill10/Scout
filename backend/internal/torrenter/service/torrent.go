@@ -52,6 +52,21 @@ var (
 	ONE337x_ID = int64(2) // General
 )
 
+const (
+	// qbittLoginTimeout bounds a single login attempt. The client's own default is 60s,
+	// which is long enough that an unresponsive qBittorrent stalls startup badly.
+	qbittLoginTimeout = 10 * time.Second
+	// qbittLoginRetryInterval is how often the background reconnect loop retries after
+	// an initial login failure.
+	qbittLoginRetryInterval = 30 * time.Second
+)
+
+// NewQbittHandler builds the qBittorrent handler. A failed initial login is NOT fatal:
+// the handler is returned anyway and a background goroutine keeps retrying. Torrent
+// operations fail (and are reported as CodeTorrentClientError) until a login succeeds,
+// but the rest of the service — the HTTP API and the Plex library sync — still starts.
+// Blocking startup on qBittorrent previously meant an unresponsive torrent client took
+// the whole torrenter down in a crash loop, which also starved the Plex sync.
 func NewQbittHandler(qCfg *models.QbittCfg, pCfg *models.ProwlarrCfg, repo Repository, logger *slog.Logger) (*QbittHandler, error) {
 	logger.Debug("QBittorrent config", "host", qCfg.Host, "user", qCfg.User)
 
@@ -60,23 +75,55 @@ func NewQbittHandler(qCfg *models.QbittCfg, pCfg *models.ProwlarrCfg, repo Repos
 		Host:     qCfg.Host,
 		Username: qCfg.User,
 		Password: qCfg.Password,
+		Timeout:  int(qbittLoginTimeout.Seconds()),
 	})
 
-	// Authenticate with qBittorrent
-	if err := qb.Login(); err != nil {
-		return nil, fmt.Errorf("failed to login to qBittorrent: %w", err)
-	}
-
-	logger.Info("Connected to QBittorrent successfully")
-
 	p := prowlarr.New(starr.New(pCfg.Key, pCfg.Host, 60*time.Hour))
-	return &QbittHandler{
+	q := &QbittHandler{
 		c:      qb,
 		logger: logger,
 		p:      p,
 		repo:   repo,
 		parser: NewTorrentParser(),
-	}, nil
+	}
+
+	if err := loginWithTimeout(qb, qbittLoginTimeout); err != nil {
+		logger.Warn("Failed to login to qBittorrent, continuing without it and retrying in background",
+			"host", qCfg.Host, "error", err)
+		go q.retryLogin()
+		return q, nil
+	}
+
+	logger.Info("Connected to QBittorrent successfully")
+	return q, nil
+}
+
+// loginWithTimeout performs a single login attempt bounded by timeout.
+func loginWithTimeout(qb *qbittorrent.Client, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	if err := qb.LoginCtx(ctx); err != nil {
+		return fmt.Errorf("failed to login to qBittorrent: %w", err)
+	}
+	return nil
+}
+
+// retryLogin keeps attempting to authenticate until it succeeds. It runs for the life of
+// the process; there is nothing useful to do with a permanently unreachable client except
+// keep trying, and downloads report CodeTorrentClientError in the meantime.
+func (q *QbittHandler) retryLogin() {
+	for {
+		time.Sleep(qbittLoginRetryInterval)
+
+		if err := loginWithTimeout(q.c, qbittLoginTimeout); err != nil {
+			q.logger.Warn("qBittorrent login retry failed", "error", err)
+			continue
+		}
+
+		q.logger.Info("Connected to QBittorrent successfully after retry")
+		return
+	}
 }
 
 // prowlarrSearchBackoffs is the sleep applied BEFORE each retry attempt.
