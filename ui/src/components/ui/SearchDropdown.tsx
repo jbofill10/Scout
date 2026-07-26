@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import Box from "@mui/material/Box";
+import Container from "@mui/material/Container";
+import InputAdornment from "@mui/material/InputAdornment";
 import TextField from "@mui/material/TextField";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
@@ -8,9 +10,11 @@ import IconButton from "@mui/material/IconButton";
 import CircularProgress from "@mui/material/CircularProgress";
 import Slide from "@mui/material/Slide";
 import CloseIcon from "@mui/icons-material/Close";
+import SearchIcon from "@mui/icons-material/Search";
+import SearchOffOutlinedIcon from "@mui/icons-material/SearchOffOutlined";
 import Tv from "@mui/icons-material/Tv";
 import Movie from "@mui/icons-material/Movie";
-import { useTheme } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
 import InfiniteScroll from "react-infinite-scroll-component/dist/index.js";
 import MediaCard from "./MediaCard";
 import MediaStatusDialog from "./MediaStatusDialog";
@@ -214,6 +218,32 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
 
   if (!isOpen) return null;
 
+  const hasQuery = searchTerm.trim().length > 0;
+
+  // Centered message block reused by the three non-result states
+  const message = (icon: React.ReactNode, title: string, detail?: string) => (
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 1,
+        py: 10,
+        textAlign: "center",
+      }}
+    >
+      {icon}
+      <Typography variant="subtitle1" sx={{ color: theme.palette.text.primary }}>
+        {title}
+      </Typography>
+      {detail && (
+        <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
+          {detail}
+        </Typography>
+      )}
+    </Box>
+  );
+
   return (
     <>
       {/* Backdrop */}
@@ -221,11 +251,9 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
         onClick={onClose}
         sx={{
           position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: "rgba(0, 0, 0, 0.85)",
+          inset: 0,
+          backgroundColor: alpha("#020617", 0.7),
+          backdropFilter: "blur(8px)",
           zIndex: 1200,
         }}
       />
@@ -248,90 +276,87 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
             backgroundColor: theme.palette.background.default,
             zIndex: 1300,
             borderBottom: `1px solid ${theme.palette.divider}`,
+            borderBottomLeftRadius: 20,
+            borderBottomRightRadius: 20,
+            boxShadow: theme.shadows[16],
             overflowY: "auto",
           }}
         >
           {/* Search Header */}
-          <Box
-            sx={{ p: 3, borderBottom: `1px solid ${theme.palette.divider}` }}
-          >
-            <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 2 }}>
-              <TextField
-                inputRef={searchInputRef}
-                fullWidth
-                placeholder="Search for shows or movies..."
-                variant="outlined"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                autoFocus
-                sx={{
-                  "& .MuiOutlinedInput-root": {
-                    fontSize: "1.25rem",
-                  },
-                }}
-              />
-              <IconButton
-                onClick={onClose}
-                size="large"
-                aria-label="Close search"
-              >
-                <CloseIcon />
-              </IconButton>
-            </Box>
+          <Box sx={{ borderBottom: `1px solid ${theme.palette.divider}`, py: 2.5 }}>
+            <Container maxWidth="xl">
+              <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+                <TextField
+                  inputRef={searchInputRef}
+                  fullWidth
+                  placeholder="Search for shows or movies..."
+                  variant="outlined"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  autoFocus
+                  slotProps={{
+                    input: {
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchIcon sx={{ color: theme.palette.text.secondary }} />
+                        </InputAdornment>
+                      ),
+                      endAdornment: hasQuery ? (
+                        <InputAdornment position="end">
+                          <IconButton
+                            size="small"
+                            onClick={() => setSearchTerm("")}
+                            aria-label="Clear search"
+                          >
+                            <CloseIcon fontSize="small" />
+                          </IconButton>
+                        </InputAdornment>
+                      ) : undefined,
+                    },
+                  }}
+                  sx={{ "& .MuiOutlinedInput-root": { fontSize: "1.0625rem" } }}
+                />
 
-            {/* Media Type Toggle */}
-            <Box sx={{ display: "flex", justifyContent: "center" }}>
-              <ToggleButtonGroup
-                value={mediaType}
-                exclusive
-                onChange={(_, newValue) => newValue && setMediaType(newValue)}
-                aria-label="media type"
-              >
-                <ToggleButton value="series" aria-label="TV shows">
-                  <Tv sx={{ mr: 1 }} />
-                  TV Shows
-                </ToggleButton>
-                <ToggleButton value="movie" aria-label="Movies">
-                  <Movie sx={{ mr: 1 }} />
-                  Movies
-                </ToggleButton>
-              </ToggleButtonGroup>
-            </Box>
+                {/* Media Type Toggle */}
+                <ToggleButtonGroup
+                  value={mediaType}
+                  exclusive
+                  onChange={(_, newValue) => newValue && setMediaType(newValue)}
+                  aria-label="media type"
+                  sx={{ flexShrink: 0 }}
+                >
+                  <ToggleButton value="series" aria-label="TV shows">
+                    <Tv sx={{ mr: 1, fontSize: 20 }} />
+                    TV Shows
+                  </ToggleButton>
+                  <ToggleButton value="movie" aria-label="Movies">
+                    <Movie sx={{ mr: 1, fontSize: 20 }} />
+                    Movies
+                  </ToggleButton>
+                </ToggleButtonGroup>
+
+                <IconButton onClick={onClose} aria-label="Close search">
+                  <CloseIcon />
+                </IconButton>
+              </Box>
+            </Container>
           </Box>
 
           {/* Search Results */}
-          <Box sx={{ p: 3, minHeight: 200 }}>
+          <Container maxWidth="xl" sx={{ py: 3, minHeight: 240 }}>
             {isSearching && searchResults.length === 0 && (
-              <Box
-                sx={{
-                  display: "flex",
-                  justifyContent: "center",
-                  alignItems: "center",
-                  py: 8,
-                }}
-              >
-                <CircularProgress />
+              <Box sx={{ display: "flex", justifyContent: "center", py: 10 }}>
+                <CircularProgress size={28} />
               </Box>
             )}
 
             {!isSearching &&
-              searchTerm.trim().length > 0 &&
-              searchResults.length === 0 && (
-                <Box
-                  sx={{
-                    display: "flex",
-                    justifyContent: "center",
-                    alignItems: "center",
-                    py: 8,
-                  }}
-                >
-                  <Typography
-                    variant="body1"
-                    sx={{ color: theme.palette.text.secondary }}
-                  >
-                    No results found for "{searchTerm}"
-                  </Typography>
-                </Box>
+              hasQuery &&
+              searchResults.length === 0 &&
+              message(
+                <SearchOffOutlinedIcon sx={{ fontSize: 34, color: theme.palette.text.disabled }} />,
+                `No results for "${searchTerm}"`,
+                "Try a different spelling, or switch between TV Shows and Movies.",
               )}
 
             {searchResults.length > 0 && (
@@ -340,9 +365,7 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
                 next={fetchMoreData}
                 hasMore={hasMore}
                 loader={
-                  <Box
-                    sx={{ display: "flex", justifyContent: "center", py: 2 }}
-                  >
+                  <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
                     <CircularProgress size={24} />
                   </Box>
                 }
@@ -351,8 +374,7 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
                 <Box
                   sx={{
                     display: "grid",
-                    gridTemplateColumns:
-                      "repeat(auto-fill, minmax(180px, 1fr))",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
                     gap: 3,
                   }}
                 >
@@ -377,24 +399,13 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
               </InfiniteScroll>
             )}
 
-            {searchTerm.trim().length === 0 && (
-              <Box
-                sx={{
-                  display: "flex",
-                  justifyContent: "center",
-                  alignItems: "center",
-                  py: 8,
-                }}
-              >
-                <Typography
-                  variant="body1"
-                  sx={{ color: theme.palette.text.secondary }}
-                >
-                  Start typing to search for media
-                </Typography>
-              </Box>
-            )}
-          </Box>
+            {!hasQuery &&
+              message(
+                <SearchIcon sx={{ fontSize: 34, color: theme.palette.text.disabled }} />,
+                "Start typing to search",
+                "Scout looks across TVDB for anything you want to add to your library.",
+              )}
+          </Container>
         </Box>
       </Slide>
 
