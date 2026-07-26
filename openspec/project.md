@@ -218,7 +218,7 @@ Example flow: `DownloadHandler` → `DownloadInteractor` → `QbittHandler`/`Rep
    - Purpose: Media metadata, search, episode information
    - Authentication: API key + bearer token
    - Rate limits: Standard TVDB API limits
-   - Configuration: `TVDB_HOST`, `TVDB_API_KEY`, `TVDB_TOKEN`
+   - Configuration: `TVDB_HOST`, `TVDB_API_KEY`, `TVDB_PIN`
 
 2. **qBittorrent** (WebUI API)
    - Purpose: Torrent downloading and management
