@@ -5,6 +5,9 @@
  * All components follow Material-UI v7 patterns and warm dark theme.
  */
 
+export { default as ScoutLogo, ScoutMark } from './ScoutLogo';
+export type { ScoutLogoProps } from './ScoutLogo';
+
 export { default as MediaCard } from './MediaCard';
 export type { MediaCardProps } from './MediaCard';
 

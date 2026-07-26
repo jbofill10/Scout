@@ -2,14 +2,13 @@ import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import AppBar from '@mui/material/AppBar';
 import Toolbar from '@mui/material/Toolbar';
-import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
 import Box from '@mui/material/Box';
 import SearchIcon from '@mui/icons-material/Search';
-import LiveTvIcon from '@mui/icons-material/LiveTv';
 import { useTheme } from '@mui/material/styles';
 import NotificationDropdown from './NotificationDropdown';
+import ScoutLogo from './ScoutLogo';
 
 interface NavbarProps {
   onSearchClick: () => void;
@@ -37,24 +36,21 @@ const Navbar: React.FC<NavbarProps> = ({ onSearchClick }) => {
     <AppBar position="fixed" elevation={0}>
       <Toolbar sx={{ justifyContent: 'space-between', px: 4 }}>
         {/* Left: Logo/Branding */}
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <LiveTvIcon sx={{ fontSize: 32, color: theme.palette.primary.main }} />
-          <Typography
-            variant="h5"
-            component={Link}
-            to="/"
-            sx={{
-              fontWeight: 700,
-              color: theme.palette.text.primary,
-              textDecoration: 'none',
-              letterSpacing: '-0.02em',
-              '&:hover': {
-                color: theme.palette.primary.light,
-              },
-            }}
-          >
-            Scout
-          </Typography>
+        <Box
+          component={Link}
+          to="/"
+          aria-label="Scout home"
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            textDecoration: 'none',
+            transition: 'opacity 0.2s ease-in-out',
+            '&:hover': {
+              opacity: 0.82,
+            },
+          }}
+        >
+          <ScoutLogo size={30} />
         </Box>
 
         {/* Center: Navigation Links */}
