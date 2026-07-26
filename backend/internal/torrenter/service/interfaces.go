@@ -5,6 +5,7 @@ import (
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 	"github.com/jbofill10/scout/backend/pkg/dlstatus"
+	"github.com/jbofill10/scout/backend/pkg/library"
 	"github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/notifications"
 )
@@ -45,6 +46,13 @@ type Repository interface {
 	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
 	UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error
 	GetPreferredUploaders(ctx context.Context, mediaType string, isAnime bool) ([]string, error)
+
+	// Library browsing methods
+	GetAllShows(ctx context.Context) ([]library.LibraryShow, error)
+	GetAllMovies(ctx context.Context) ([]library.LibraryMovie, error)
+	GetShowEpisodesWithStatus(ctx context.Context, tvdbId string) ([]library.EpisodeWithStatus, error)
+	UpsertTvdbEpisodes(ctx context.Context, seriesTvdbId string, episodes []library.TvdbEpisode) error
+	GetTvdbMetadataStatus(ctx context.Context, tvdbId string) (tvdbCount int, plexCount int, err error)
 }
 
 // FileSystem defines file system operations

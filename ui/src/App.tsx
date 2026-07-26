@@ -10,6 +10,7 @@ import Home from './pages/Home';
 import Shows from './pages/Shows';
 import Movies from './pages/Movies';
 import Search from './pages/Search';
+import Library from './pages/Library';
 import theme from './theme/theme';
 import { queryClient } from './lib/queryClient';
 import { GenreProvider } from './contexts/GenreContext';
@@ -39,6 +40,7 @@ function App() {
                 <Route path="/shows" element={<ErrorBoundary><Shows /></ErrorBoundary>} />
                 <Route path="/movies" element={<ErrorBoundary><Movies /></ErrorBoundary>} />
                 <Route path="/search" element={<ErrorBoundary><Search /></ErrorBoundary>} />
+                <Route path="/library" element={<ErrorBoundary><Library /></ErrorBoundary>} />
               </Routes>
             </Router>
           </GenreProvider>

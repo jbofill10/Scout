@@ -11,11 +11,14 @@ import LinearProgress from "@mui/material/LinearProgress";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
 import CircularProgress from "@mui/material/CircularProgress";
+import Alert from "@mui/material/Alert";
+import AlertTitle from "@mui/material/AlertTitle";
 import CloseIcon from "@mui/icons-material/Close";
 import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
 import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import type { ShowStatus, EnrichedMedia } from "../../types/MediaStatus";
 import { alpha, useTheme } from "@mui/material/styles";
+import { useShowMetadataStatus } from "../../hooks/useLibrary";
 
 export interface MediaStatusDialogProps {
   open: boolean;
@@ -72,6 +75,11 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
 }) => {
   const theme = useTheme();
   const [selectedSeasonIndex, setSelectedSeasonIndex] = useState<number | null>(null);
+
+  // TVDB sync progress, used to surface missing-episode counts for shows
+  const { data: metadataStatus } = useShowMetadataStatus(
+    enrichedMedia?.status.type === "series" ? enrichedMedia?.media.id ?? null : null,
+  );
 
   // Merge TVDB episode metadata with Plex download status
   const enrichedSeasons = useMemo<EnrichedSeasonInfo[]>(() => {
@@ -348,6 +356,29 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
       </DialogTitle>
 
       <DialogContent sx={{ p: 0 }}>
+        {/* TVDB Metadata Status Banner */}
+        {enrichedMedia?.status.type === "series" && metadataStatus && (
+          <Box sx={{ p: 2, pb: 0 }}>
+            {!metadataStatus.hasTvdbData && metadataStatus.plexEpisodeCount > 0 ? (
+              <Alert severity="info">
+                <AlertTitle>TVDB Sync in Progress</AlertTitle>
+                Episode metadata is being synced from TVDB. Missing episode detection will be available shortly.
+                Refresh this page in a few minutes to see complete episode status.
+              </Alert>
+            ) : metadataStatus.hasTvdbData && metadataStatus.missingCount > 0 ? (
+              <Alert severity="warning">
+                <AlertTitle>Missing Episodes Detected</AlertTitle>
+                {metadataStatus.missingCount} episode{metadataStatus.missingCount !== 1 ? "s" : ""} not yet downloaded.
+              </Alert>
+            ) : metadataStatus.hasTvdbData && metadataStatus.plexEpisodeCount > 0 ? (
+              <Alert severity="success">
+                <AlertTitle>All Episodes Downloaded 🎉</AlertTitle>
+                You have all {metadataStatus.tvdbEpisodeCount} aired episodes in your library!
+              </Alert>
+            ) : null}
+          </Box>
+        )}
+
         {/* Season Tabs — each label carries that season's coverage */}
         <Box sx={{ borderBottom: `1px solid ${theme.palette.divider}` }}>
           <Tabs

@@ -19,6 +19,7 @@ const NAV_LINKS = [
   { label: 'Home', path: '/' },
   { label: 'Shows', path: '/shows' },
   { label: 'Movies', path: '/movies' },
+  { label: 'Library', path: '/library' },
 ];
 
 /**

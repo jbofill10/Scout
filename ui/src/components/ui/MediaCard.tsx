@@ -18,6 +18,7 @@ export interface MediaCardProps {
   onClick: (media: MediaCardProps["media"]) => void;
   statusBadge?: MediaStatusBadge;
   isLoadingStatus?: boolean;
+  onImageLoad?: () => void;
 }
 
 /** Tinted pill colors for a status badge — soft fill, bright text, hairline edge. */
@@ -56,6 +57,7 @@ const MediaCard: React.FC<MediaCardProps> = ({
   onClick,
   statusBadge,
   isLoadingStatus = false,
+  onImageLoad,
 }) => {
   const theme = useTheme();
   const [isHovered, setIsHovered] = useState(false);
@@ -153,7 +155,11 @@ const MediaCard: React.FC<MediaCardProps> = ({
         src={media.imageUrl}
         alt={media.name}
         loading="lazy"
-        onLoad={() => setImageLoaded(true)}
+        onLoad={() => {
+          setImageLoaded(true);
+          onImageLoad?.();
+        }}
+        onError={onImageLoad}
         sx={{
           width: "100%",
           height: "100%",

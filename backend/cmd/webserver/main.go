@@ -138,6 +138,8 @@ func main() {
 	notificationHandler := handlers.NewNotificationHandler(notificationRepo, logger)
 	statusHandler := handlers.NewStatusHandler(torrenterClient, logger)
 	mediaExtendedHandler := handlers.NewMediaExtendedHandler(tvdbClient, logger)
+	libraryHandler := handlers.NewLibraryHandler(torrenterClient, logger)
+	tvdbHandler := handlers.NewTVDBHandler(tvdbClient, logger)
 
 	// Setup routes
 	r := gin.Default()
@@ -167,6 +169,18 @@ func main() {
 	r.POST("/status/batch", statusHandler.GetBatchStatus)
 	r.POST("/media/batch-extended", mediaExtendedHandler.GetBatchExtended)
 	r.GET("/schedule/weekly", scheduleHandler.GetWeeklySchedule)
+
+	// TVDB routes
+	r.POST("/tvdb/batch/episodes", tvdbHandler.GetEpisodesBatch)
+
+	// Library routes
+	r.GET("/library/shows", libraryHandler.GetShows)
+	r.GET("/library/shows/:tvdbId", libraryHandler.GetShowDetails)
+	r.GET("/library/shows/:tvdbId/metadata-status", libraryHandler.GetShowMetadataStatus)
+	r.GET("/library/movies", libraryHandler.GetMovies)
+
+	// Plex proxy routes
+	r.GET("/plex/thumb", libraryHandler.ProxyPlexThumb)
 
 	// Notification routes
 	r.GET("/notifications", notificationHandler.GetNotifications)

@@ -2,9 +2,11 @@ package config
 
 import (
 	"fmt"
-	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 	"os"
 	"strconv"
+	"time"
+
+	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 )
 
 // Load loads the torrenter configuration from environment variables
@@ -66,6 +68,16 @@ func Load() (models.TorrenterConf, error) {
 
 	// Load UI config (default for docker-compose)
 	cfg.Ui.Endpoint = getEnv("UI_ENDPOINT", "ws://webserver:22920/status")
+
+	// Load Refresh config
+	cfg.Refresh.WebserverHost = getEnv("WEBSERVER_HOST", "http://localhost:22920")
+
+	refreshIntervalStr := getEnv("TVDB_REFRESH_INTERVAL", "6h")
+	refreshInterval, err := time.ParseDuration(refreshIntervalStr)
+	if err != nil {
+		return cfg, fmt.Errorf("invalid TVDB_REFRESH_INTERVAL value: %s", refreshIntervalStr)
+	}
+	cfg.Refresh.RefreshInterval = refreshInterval
 
 	return cfg, nil
 }
