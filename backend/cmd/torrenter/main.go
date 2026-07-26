@@ -162,6 +162,16 @@ func main() {
 		}
 	}()
 
+	// Resume monitors for torrents that were still downloading when this process
+	// last stopped. Anything that finished during the downtime is picked up on
+	// the first poll; without this a restart orphans in-flight downloads.
+	logger.Info("Resuming in-flight torrent monitors")
+	go func() {
+		if err := downloadInteractor.ResumeInFlightDownloads(context.Background()); err != nil {
+			logger.Error("Failed to resume in-flight torrent monitors", "error", err)
+		}
+	}()
+
 	// Initialize webserver client for TVDB refresh
 	webserverClient := clients.NewWebserverClient(cfg.Refresh.WebserverHost, logger)
 

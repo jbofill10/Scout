@@ -58,6 +58,31 @@ func (i *DownloadInteractor) InitiateDownload(ctx context.Context, req *tvdb.Med
 	return results, nil
 }
 
+// ResumeInFlightDownloads restarts completion monitors for torrents that were
+// still downloading when the process last stopped. Without this a restart
+// silently orphans them: qBittorrent finishes the download, but nothing is left
+// listening to link it into Plex, and the notification sits on "downloading"
+// forever. Torrents that finished during the downtime are caught on the resumed
+// monitor's first poll.
+func (i *DownloadInteractor) ResumeInFlightDownloads(ctx context.Context) error {
+	dlComplete := make(chan models.TorrentCompleteEvent, 10)
+
+	// Start the completion handler before resuming, so it's ready to receive.
+	// ResumeMonitors owns closing dlComplete, including when there is nothing
+	// to resume, so this goroutine always exits.
+	go i.handleDownloadCompletion(ctx, dlComplete)
+
+	resumed, err := i.qbitt.ResumeMonitors(ctx, dlComplete)
+	if err != nil {
+		return err
+	}
+
+	if resumed > 0 {
+		i.logger.InfoContext(ctx, "Resumed in-flight torrent monitors", "count", resumed)
+	}
+	return nil
+}
+
 // handleDownloadCompletion processes the completed torrents
 // This runs in a goroutine and handles multiple completion events until the channel is closed
 func (i *DownloadInteractor) handleDownloadCompletion(ctx context.Context, dlComplete <-chan models.TorrentCompleteEvent) {
@@ -76,6 +101,10 @@ func (i *DownloadInteractor) handleDownloadCompletion(ctx context.Context, dlCom
 			}
 			// Update notification to failed
 			i.updateNotificationFailed(eventCtx, &event, "Processing error: "+err.Error())
+			// The torrent is accounted for even though processing failed: the
+			// outcome is recorded, and retrying it on every restart would only
+			// replay the same failure.
+			i.clearActiveTorrent(eventCtx, event.Hash)
 			continue
 		}
 
@@ -86,6 +115,9 @@ func (i *DownloadInteractor) handleDownloadCompletion(ctx context.Context, dlCom
 		// Update notification to completed
 		i.updateNotificationCompleted(eventCtx, &event)
 
+		// The torrent is fully accounted for; stop tracking it as in-flight.
+		i.clearActiveTorrent(eventCtx, event.Hash)
+
 		// Remove UUID tracking tag to prevent tag bloat
 		if err := i.qbitt.RemoveUUIDTag(eventCtx, event.Hash, event.UUID); err != nil {
 			i.logger.WarnContext(eventCtx, "Failed to remove UUID tag (non-fatal)", "error", err, "hash", event.Hash, "uuid", event.UUID)
@@ -93,6 +125,15 @@ func (i *DownloadInteractor) handleDownloadCompletion(ctx context.Context, dlCom
 	}
 
 	i.logger.InfoContext(ctx, "Download completion handler exiting")
+}
+
+// clearActiveTorrent stops tracking a torrent as in-flight once its completion
+// event has been handled, either way. Best-effort: a leftover row only costs one
+// wasted resume attempt on the next boot.
+func (i *DownloadInteractor) clearActiveTorrent(ctx context.Context, hash string) {
+	if err := i.repo.DeleteActiveTorrent(ctx, hash); err != nil {
+		i.logger.ErrorContext(ctx, "Failed to clear in-flight torrent record", "error", err, "hash", hash)
+	}
 }
 
 // updateNotificationCompleted updates notification to completed stage (non-blocking)

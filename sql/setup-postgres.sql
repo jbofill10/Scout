@@ -193,6 +193,24 @@ CREATE TABLE IF NOT EXISTS UploaderPreferences (
     uploaderName TEXT NOT NULL
 );
 
+-- In-flight torrents, so completion monitors survive a torrenter restart.
+-- A row lives for exactly as long as a torrent is downloading and unaccounted
+-- for; it is removed once the completion event is processed or the monitor
+-- gives up. See sql/migrations/007_add_active_torrents_table.sql.
+CREATE TABLE IF NOT EXISTS ActiveTorrents (
+    id SERIAL PRIMARY KEY,
+    info_hash TEXT NOT NULL UNIQUE,
+    tracking_uuid TEXT NOT NULL,
+    torrent_title TEXT NOT NULL,
+    strategy JSONB NOT NULL,
+    started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    trace_id TEXT,
+    span_id TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_active_torrents_info_hash ON ActiveTorrents(info_hash);
+
 -- Notifications table for tracking download progress
 CREATE TABLE IF NOT EXISTS Notifications (
     id SERIAL PRIMARY KEY,
