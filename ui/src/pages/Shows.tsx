@@ -2,11 +2,10 @@ import React from 'react';
 import Box from '@mui/material/Box';
 import Container from '@mui/material/Container';
 import Typography from '@mui/material/Typography';
-import Skeleton from '@mui/material/Skeleton';
 import Alert from '@mui/material/Alert';
 import { useTheme } from '@mui/material/styles';
 import { useGenres } from '../contexts/GenreContext';
-import GenreRow from '../components/ui/GenreRow';
+import GenreRow, { MediaRowSkeleton } from '../components/ui/GenreRow';
 
 /**
  * Shows Page Component
@@ -55,25 +54,7 @@ const Shows: React.FC = () => {
         {isLoading && (
           <Box>
             {Array.from({ length: 6 }).map((_, index) => (
-              <Box key={index} sx={{ mb: 4 }}>
-                <Skeleton
-                  variant="text"
-                  width={200}
-                  height={40}
-                  sx={{ mb: 2 }}
-                />
-                <Box sx={{ display: 'flex', gap: 2 }}>
-                  {Array.from({ length: 7 }).map((_, cardIndex) => (
-                    <Skeleton
-                      key={cardIndex}
-                      variant="rectangular"
-                      width={180}
-                      height={270}
-                      sx={{ borderRadius: 2, flex: '0 0 180px' }}
-                    />
-                  ))}
-                </Box>
-              </Box>
+              <MediaRowSkeleton key={index} />
             ))}
           </Box>
         )}
