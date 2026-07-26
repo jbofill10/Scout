@@ -36,7 +36,9 @@ func (h *SearchHandler) HandleSearch(c *gin.Context) {
 		return
 	}
 
-	h.logger.InfoContext(ctx, "Is URL here?", "image_url", searchResults[0].ImageUrl)
+	if len(searchResults) > 0 {
+		h.logger.InfoContext(ctx, "Search preview", "image_url", searchResults[0].ImageUrl)
+	}
 
 	h.logger.InfoContext(ctx, "Returning search results", telemetry.WithTraceContext(ctx, "count", len(searchResults))...)
 	c.JSON(200, searchResults)
