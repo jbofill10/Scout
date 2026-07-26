@@ -3,7 +3,6 @@ import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { QueryClientProvider } from '@tanstack/react-query';
-import './App.css';
 import Navbar from './components/ui/Navbar';
 import SearchDropdown from './components/ui/SearchDropdown';
 import ErrorBoundary from './components/ErrorBoundary';
