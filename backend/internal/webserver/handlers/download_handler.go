@@ -34,7 +34,7 @@ func (h *DownloadHandler) DownloadShow(c *gin.Context) {
 	// Extract context for trace propagation and logging
 	ctx := c.Request.Context()
 
-	err := h.interactor.DownloadShow(ctx, req)
+	summary, err := h.interactor.DownloadShow(ctx, req)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "Failed to download show",
 			telemetry.WithTraceContext(ctx, "error", err, "show", req.Name)...)
@@ -43,8 +43,10 @@ func (h *DownloadHandler) DownloadShow(c *gin.Context) {
 	}
 
 	h.logger.InfoContext(ctx, "Successfully processed show",
-		telemetry.WithTraceContext(ctx, "show", req.Name)...)
-	c.JSON(200, gin.H{})
+		telemetry.WithTraceContext(ctx, "show", req.Name,
+			"queued_now", summary.QueuedNow, "scheduled", summary.Scheduled, "skipped", summary.Skipped)...)
+	// 202: the episodes are accepted and being searched for in the background.
+	c.JSON(202, summary)
 }
 
 func (h *DownloadHandler) DownloadMovie(c *gin.Context) {
@@ -67,7 +69,7 @@ func (h *DownloadHandler) DownloadMovie(c *gin.Context) {
 		return
 	}
 
-	err := h.interactor.DownloadMovie(ctx, req)
+	summary, err := h.interactor.DownloadMovie(ctx, req)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "Failed to download movie",
 			telemetry.WithTraceContext(ctx, "error", err, "movie", req.Name)...)
@@ -76,6 +78,8 @@ func (h *DownloadHandler) DownloadMovie(c *gin.Context) {
 	}
 
 	h.logger.InfoContext(ctx, "Successfully processed movie",
-		telemetry.WithTraceContext(ctx, "movie", req.Name)...)
-	c.JSON(200, gin.H{})
+		telemetry.WithTraceContext(ctx, "movie", req.Name,
+			"queued_now", summary.QueuedNow, "scheduled", summary.Scheduled, "skipped", summary.Skipped)...)
+	// 202: the movie is accepted and being searched for in the background.
+	c.JSON(202, summary)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,13 +20,44 @@ import (
 )
 
 // fakeDispatcher is a minimal DownloadDispatcher returning a canned response.
+// It records what it was asked to download so tests can assert on the payload
+// handed to the torrenter.
 type fakeDispatcher struct {
-	resp dlstatus.DownloadResponse
-	err  error
+	resp     dlstatus.DownloadResponse
+	err      error
+	mu       sync.Mutex
+	calls    int
+	lastReq  tvdb.Media
+	blockOn  chan struct{} // when set, Download blocks until it is closed
+	started  chan struct{} // when set, closed once Download is entered
+	startedO sync.Once
 }
 
-func (f *fakeDispatcher) Download(_ context.Context, _ tvdb.Media) (dlstatus.DownloadResponse, error) {
+func (f *fakeDispatcher) Download(_ context.Context, req tvdb.Media) (dlstatus.DownloadResponse, error) {
+	f.mu.Lock()
+	f.calls++
+	f.lastReq = req
+	f.mu.Unlock()
+
+	if f.started != nil {
+		f.startedO.Do(func() { close(f.started) })
+	}
+	if f.blockOn != nil {
+		<-f.blockOn
+	}
 	return f.resp, f.err
+}
+
+func (f *fakeDispatcher) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func (f *fakeDispatcher) payload() tvdb.Media {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastReq
 }
 
 // fakeSchedulerRepo records the terminal-status transitions made by the
@@ -41,12 +73,10 @@ type fakeSchedulerRepo struct {
 	permFailedCode   string
 	permFailedReason string
 	historyCount     int
+	scheduleCount    int
+	scheduleErr      error
 	pendingMeta      map[string]repository.ScheduleMeta
 	pendingMetaErr   error
-}
-
-func (f *fakeSchedulerRepo) GetPendingScheduleMeta(context.Context) (map[string]repository.ScheduleMeta, error) {
-	return f.pendingMeta, f.pendingMetaErr
 }
 
 func (f *fakeSchedulerRepo) MarkCompleted(_ context.Context, id int) error {
@@ -74,10 +104,12 @@ func (f *fakeSchedulerRepo) InsertDownloadHistory(_ string, _, _, _ int, _, _, _
 	return nil
 }
 
-// Unused-by-dispatch methods (present to satisfy the interface).
 func (f *fakeSchedulerRepo) Schedule(context.Context, tvdb.Media, time.Time, string, string) error {
-	return nil
+	f.scheduleCount++
+	return f.scheduleErr
 }
+
+// Unused-by-dispatch methods (present to satisfy the interface).
 func (f *fakeSchedulerRepo) ScheduleRetry(context.Context, tvdb.Media, time.Time, string, string, string, string) error {
 	return nil
 }
@@ -90,6 +122,9 @@ func (f *fakeSchedulerRepo) ResetStaleQueued(context.Context, time.Duration) (in
 }
 func (f *fakeSchedulerRepo) GetWeeklySchedule() ([]repository.ScheduledDownload, error) {
 	return nil, nil
+}
+func (f *fakeSchedulerRepo) GetPendingScheduleMeta(context.Context) (map[string]repository.ScheduleMeta, error) {
+	return f.pendingMeta, f.pendingMetaErr
 }
 
 func testLogger() *slog.Logger {
