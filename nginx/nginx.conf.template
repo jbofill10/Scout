@@ -20,18 +20,10 @@ http {
     gzip_min_length 1024;
     gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml+rss application/json;
 
-    # Upstream definitions
-    upstream webserver {
-        server webserver:22920;
-    }
-
-    upstream ui {
-        server ui:80;
-    }
-
-    upstream otel_collector {
-        server localhost:4318;
-    }
+    # Use Docker DNS for runtime service discovery so upstream IP changes
+    # (container recreate/restart) do not require nginx restarts.
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    resolver_timeout 5s;
 
     server {
         listen 80;
@@ -47,6 +39,7 @@ http {
         # Route /api/* to webserver with path rewriting
         # Example: /api/search?query=foo -> webserver:22920/search?query=foo
         location /api/ {
+            set $webserver_upstream webserver:22920;
             # CORS headers
             add_header Access-Control-Allow-Origin * always;
             add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
@@ -67,7 +60,7 @@ http {
             # Rewrite /api/foo to /foo
             rewrite ^/api/(.*) /$1 break;
 
-            proxy_pass http://webserver;
+            proxy_pass http://$webserver_upstream;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection "upgrade";
@@ -84,6 +77,7 @@ http {
 
         # Route /v1/traces to OpenTelemetry collector (for browser traces)
         location /v1/traces {
+            set $otel_upstream otel-collector:4318;
             # CORS headers
             add_header Access-Control-Allow-Origin * always;
             add_header Access-Control-Allow-Methods "POST, OPTIONS" always;
@@ -100,7 +94,7 @@ http {
                 return 204;
             }
 
-            proxy_pass http://otel_collector;
+            proxy_pass http://$otel_upstream;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -110,6 +104,7 @@ http {
 
         # Route /v1/logs to OpenTelemetry collector (for browser logs)
         location /v1/logs {
+            set $otel_upstream otel-collector:4318;
             # CORS headers
             add_header Access-Control-Allow-Origin * always;
             add_header Access-Control-Allow-Methods "POST, OPTIONS" always;
@@ -126,7 +121,7 @@ http {
                 return 204;
             }
 
-            proxy_pass http://otel_collector;
+            proxy_pass http://$otel_upstream;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -136,7 +131,8 @@ http {
 
         # Route everything else to UI
         location / {
-            proxy_pass http://ui;
+            set $ui_upstream ui:80;
+            proxy_pass http://$ui_upstream;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -150,7 +146,8 @@ http {
 
         # Fallback for React Router
         location @ui_fallback {
-            proxy_pass http://ui;
+            set $ui_upstream ui:80;
+            proxy_pass http://$ui_upstream;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;

@@ -29,7 +29,7 @@ services:
       BIND_ADDRESS: 0.0.0.0:22000
       TVDB_HOST: ${TVDB_HOST:-https://api4.thetvdb.com/v4}
       TVDB_API_KEY: ${TVDB_API_KEY}
-      TVDB_TOKEN: ${TVDB_TOKEN}
+      TVDB_PIN: ${TVDB_PIN}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-localhost:4317}
       OTEL_SERVICE_NAME: tvdb-proxy
     ports:
@@ -150,6 +150,8 @@ services:
     restart: unless-stopped
     networks:
       - scout-network
+      # Lets nginx reach the SigNoz OTLP collector for browser traces/logs
+      - signoz-net
 
 volumes:
   postgres_data:
@@ -158,3 +160,7 @@ volumes:
 networks:
   scout-network:
     driver: bridge
+  # Created outside this compose file by the SigNoz stack.
+  # If you do not run SigNoz, drop this network and nginx's reference to it.
+  signoz-net:
+    external: true
