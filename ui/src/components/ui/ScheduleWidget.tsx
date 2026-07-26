@@ -1,13 +1,12 @@
 import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
-import Paper from "@mui/material/Paper";
 import Card from "@mui/material/Card";
-import CardMedia from "@mui/material/CardMedia";
 import Typography from "@mui/material/Typography";
 import Skeleton from "@mui/material/Skeleton";
 import Button from "@mui/material/Button";
-import { useTheme } from "@mui/material/styles";
+import CalendarMonthOutlinedIcon from "@mui/icons-material/CalendarMonthOutlined";
+import { alpha, useTheme } from "@mui/material/styles";
 import MediaStatusDialog from "./MediaStatusDialog";
 import type { EnrichedMedia, ShowStatus } from "../../types/MediaStatus";
 import { logError } from "../../lib/logger";
@@ -181,208 +180,227 @@ const ScheduleWidget: React.FC = () => {
     return null;
   };
 
-  const getOrdinalSuffix = (day: number) => {
-    if (day > 3 && day < 21) return "th";
-    switch (day % 10) {
-      case 1:
-        return "st";
-      case 2:
-        return "nd";
-      case 3:
-        return "rd";
-      default:
-        return "th";
-    }
-  };
-
-  const formatDayOfWeek = (dateString: string) => {
+  // Short weekday + day of month, e.g. "SAT 26" — compact enough for a badge
+  const formatReleaseBadge = (dateString: string) => {
     const date = new Date(dateString);
     const weekday = new Intl.DateTimeFormat("en-US", {
-      weekday: "long",
+      weekday: "short",
+      timeZone: "UTC",
+    })
+      .format(date)
+      .toUpperCase();
+    const dayNum = new Intl.DateTimeFormat("en-US", {
+      day: "numeric",
       timeZone: "UTC",
     }).format(date);
-    const dayNum = parseInt(
-      new Intl.DateTimeFormat("en-US", {
-        day: "numeric",
-        timeZone: "UTC",
-      }).format(date),
-    );
-    return `${weekday} - ${dayNum}${getOrdinalSuffix(dayNum)}`;
+    return `${weekday} ${dayNum}`;
   };
+
+  // Section header shared by every state so the widget never shifts vertically
+  const header = (
+    <Box sx={{ display: "flex", alignItems: "baseline", gap: 1.5, mb: 1.75 }}>
+      <Typography variant="h5" sx={{ color: theme.palette.text.primary }}>
+        Scheduled This Week
+      </Typography>
+      {data && data.length > 0 && (
+        <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
+          {data.length} {data.length === 1 ? "item" : "items"}
+        </Typography>
+      )}
+    </Box>
+  );
 
   // Loading state
   if (isLoading) {
     return (
-      <Paper
-        elevation={2}
-        sx={{ p: 3, mb: 4, backgroundColor: theme.palette.background.paper }}
-      >
-        <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
-          Scheduled This Week
-        </Typography>
-        <Box sx={{ display: "flex", gap: 2, overflowX: "auto" }}>
-          {Array.from({ length: 6 }).map((_, index) => (
+      <Box sx={{ mb: 5 }}>
+        {header}
+        <Box sx={{ display: "flex", gap: 2, overflow: "hidden" }}>
+          {Array.from({ length: 7 }).map((_, index) => (
             <Skeleton
               key={index}
               variant="rectangular"
-              width={120}
-              height={200}
-              sx={{ borderRadius: 1 }}
+              sx={{ flex: "0 0 140px", height: 240, borderRadius: 3 }}
             />
           ))}
         </Box>
-      </Paper>
+      </Box>
     );
   }
 
   // Error state
   if (isError) {
     return (
-      <Paper
-        elevation={2}
-        sx={{ p: 3, mb: 4, backgroundColor: theme.palette.background.paper }}
-      >
-        <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
-          Scheduled This Week
-        </Typography>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <Typography variant="body2" sx={{ color: theme.palette.error.main }}>
-            Failed to load schedule
+      <Box sx={{ mb: 5 }}>
+        {header}
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 2,
+            px: 3,
+            py: 2.5,
+            backgroundColor: theme.palette.background.paper,
+            border: `1px solid ${theme.palette.divider}`,
+            borderRadius: 3,
+          }}
+        >
+          <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
+            Couldn't load the schedule.
           </Typography>
-          <Button
-            variant="outlined"
-            color="primary"
-            size="small"
-            onClick={() => refetch()}
-          >
+          <Button variant="outlined" color="primary" size="small" onClick={() => refetch()}>
             Retry
           </Button>
         </Box>
-      </Paper>
+      </Box>
     );
   }
 
   // Empty state
   if (!data || data.length === 0) {
     return (
-      <Paper
-        elevation={2}
-        sx={{ p: 3, mb: 4, backgroundColor: theme.palette.background.paper }}
-      >
-        <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
-          Scheduled This Week
-        </Typography>
-        <Typography
-          variant="body2"
-          sx={{ color: theme.palette.text.secondary }}
+      <Box sx={{ mb: 5 }}>
+        {header}
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 2,
+            px: 3,
+            py: 3.5,
+            border: `1px dashed ${theme.palette.divider}`,
+            borderRadius: 3,
+          }}
         >
-          No scheduled downloads this week
-        </Typography>
-      </Paper>
+          <CalendarMonthOutlinedIcon sx={{ color: theme.palette.text.disabled, fontSize: 28 }} />
+          <Box>
+            <Typography variant="subtitle1" sx={{ color: theme.palette.text.primary }}>
+              Nothing scheduled this week
+            </Typography>
+            <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
+              Queue a show or movie and upcoming releases will show up here.
+            </Typography>
+          </Box>
+        </Box>
+      </Box>
     );
   }
 
   return (
     <>
-      <Paper
-        elevation={2}
-        sx={{ p: 3, mb: 4, backgroundColor: theme.palette.background.paper }}
-      >
-        <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
-          Scheduled This Week
-        </Typography>
+      <Box sx={{ mb: 5 }}>
+        {header}
         <Box
           sx={{
             display: "flex",
             gap: 2,
             overflowX: "auto",
             overflowY: "hidden",
-            pb: 1,
-            "&::-webkit-scrollbar": {
-              height: 6,
-            },
-            "&::-webkit-scrollbar-thumb": {
-              backgroundColor: theme.palette.divider,
-              borderRadius: 3,
-            },
+            // Room for the hover lift so raised cards are not clipped
+            py: 1.5,
+            my: -1.5,
+            "&::-webkit-scrollbar": { display: "none" },
+            scrollbarWidth: "none",
           }}
         >
-          {data.map((item) => (
-            <Box
-              key={`${item.id}-${item.seasonNumber}-${item.episodeNumber}`}
-              sx={{
-                flex: "0 0 auto",
-                width: 120,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-              }}
-            >
+          {data.map((item) => {
+            const episode = formatEpisode(item.seasonNumber, item.episodeNumber);
+
+            return (
               <Card
+                key={`${item.id}-${item.seasonNumber}-${item.episodeNumber}`}
                 onClick={() => handleItemClick(item)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    handleItemClick(item);
+                  }
+                }}
+                tabIndex={0}
+                role="button"
+                aria-label={`View details for ${item.mediaName}`}
                 sx={{
-                  width: "100%",
+                  flex: "0 0 140px",
                   cursor: "pointer",
-                  transition: "transform 0.2s ease-in-out",
+                  overflow: "hidden",
+                  borderRadius: 3,
+                  transition: theme.transitions.create(
+                    ["transform", "box-shadow", "border-color"],
+                    { duration: 220, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+                  ),
                   "&:hover": {
-                    transform: "scale(1.05)",
+                    transform: "translateY(-4px)",
+                    boxShadow: theme.shadows[8],
+                    borderColor: alpha(theme.palette.primary.light, 0.5),
                   },
                 }}
               >
-                <CardMedia
-                  component="img"
-                  image={item.posterUrl}
-                  alt={item.mediaName}
-                  sx={{
-                    width: "100%",
-                    height: 160,
-                    objectFit: "cover",
-                  }}
-                />
-                <Box sx={{ p: 1 }}>
+                {/* overflow:hidden keeps a broken poster's alt text inside the card */}
+                <Box sx={{ position: "relative", height: 168, overflow: "hidden" }}>
+                  <Box
+                    component="img"
+                    src={item.posterUrl}
+                    alt={item.mediaName}
+                    loading="lazy"
+                    sx={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                  />
+                  {/* Release day rides on the poster so the card stays compact */}
+                  <Box
+                    sx={{
+                      position: "absolute",
+                      top: 8,
+                      left: 8,
+                      px: 0.875,
+                      py: "3px",
+                      borderRadius: 999,
+                      fontSize: "0.625rem",
+                      fontWeight: 700,
+                      letterSpacing: "0.06em",
+                      color: theme.palette.common.white,
+                      backgroundColor: alpha("#020617", 0.72),
+                      border: `1px solid ${alpha("#F8FAFC", 0.16)}`,
+                      backdropFilter: "blur(8px)",
+                    }}
+                  >
+                    {formatReleaseBadge(item.releaseTime)}
+                  </Box>
+                </Box>
+                <Box sx={{ p: 1.25 }}>
                   <Typography
                     variant="caption"
                     sx={{
-                      fontWeight: 600,
+                      fontWeight: 650,
                       display: "-webkit-box",
                       WebkitLineClamp: 2,
                       WebkitBoxOrient: "vertical",
                       overflow: "hidden",
-                      lineHeight: 1.3,
-                      mb: 0.5,
+                      lineHeight: 1.35,
+                      color: theme.palette.text.primary,
                     }}
                   >
                     {item.mediaName}
                   </Typography>
-                  {formatEpisode(item.seasonNumber, item.episodeNumber) && (
+                  {episode && (
                     <Typography
                       variant="caption"
                       sx={{
                         display: "block",
-                        color: theme.palette.primary.main,
-                        mb: 0.5,
+                        mt: 0.25,
+                        color: theme.palette.primary.light,
+                        fontWeight: 600,
+                        letterSpacing: "0.02em",
                       }}
                     >
-                      {formatEpisode(item.seasonNumber, item.episodeNumber)}
+                      {episode}
                     </Typography>
                   )}
                 </Box>
               </Card>
-              <Typography
-                variant="caption"
-                sx={{
-                  mt: 0.5,
-                  color: theme.palette.text.secondary,
-                  fontSize: "0.7rem",
-                  textAlign: "center",
-                }}
-              >
-                {formatDayOfWeek(item.releaseTime)}
-              </Typography>
-            </Box>
-          ))}
+            );
+          })}
         </Box>
-      </Paper>
+      </Box>
       {selectedShowInfo && (
         <MediaStatusDialog
           open={statusDialogOpen}
