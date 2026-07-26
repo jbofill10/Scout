@@ -90,6 +90,19 @@ func (p *PlexHandler) getLibraries(ctx context.Context) (models.PlexLibrariesRes
 	}
 	defer resp.Body.Close()
 
+	// A non-200 here (401 from a bad token, most often) still yields a body that
+	// unmarshals cleanly into an empty MediaContainer, so without this check the sync
+	// silently proceeds with zero libraries and the mirror goes quietly stale.
+	if resp.StatusCode != http.StatusOK {
+		err := fmt.Errorf("non-200 response: %d", resp.StatusCode)
+		httpSpan.RecordError(err)
+		httpSpan.SetStatus(codes.Error, "HTTP request failed")
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to fetch libraries")
+		p.logger.ErrorContext(ctx, "Failed to fetch Plex libraries", "error", err.Error(), "status", resp.StatusCode)
+		return models.PlexLibrariesResponse{}, fmt.Errorf("fetch plex libraries: %w", err)
+	}
+
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		httpSpan.RecordError(err)
@@ -136,12 +149,40 @@ func (p *PlexHandler) SyncPlexLibrary(ctx context.Context) error {
 	}
 	p.repo.UpsertLibraries(ctx, libraries)
 
-	movies := p.getMovies(ctx)
+	// Prune only against a complete fetch. The upserts are additive and safe on partial
+	// data, but a delete driven by a partial result would drop live rows, so a stale
+	// mirror is strictly preferable to a destroyed one. Movies and shows are handled
+	// independently so a show-side failure doesn't suppress a clean movie prune.
+	movies, moviesComplete := p.getMovies(ctx)
 	p.repo.UpsertMovies(ctx, movies)
+	span.SetAttributes(attribute.Bool("plex.movies_complete", moviesComplete))
 
-	shows := p.getShows(ctx)
-	if shows != nil {
-		p.repo.UpsertShows(ctx, shows)
+	if moviesComplete {
+		if err := p.repo.PruneMissingMovies(ctx, movies); err != nil {
+			span.RecordError(err)
+			p.logger.ErrorContext(ctx, "Failed to prune stale movies", "error", err)
+		}
+	} else {
+		p.logger.WarnContext(ctx, "Skipping movie prune, Plex fetch was incomplete")
+	}
+
+	shows, showsComplete := p.getShows(ctx)
+	if shows == nil {
+		// getShows already logged the cause. Report it so the caller's retry actually
+		// fires — previously this returned success and the stale mirror went unnoticed.
+		span.SetStatus(codes.Error, "Failed to get shows")
+		return fmt.Errorf("sync plex library: failed to fetch shows")
+	}
+	p.repo.UpsertShows(ctx, shows)
+	span.SetAttributes(attribute.Bool("plex.shows_complete", showsComplete))
+
+	if showsComplete {
+		if err := p.repo.PruneMissingShows(ctx, shows); err != nil {
+			span.RecordError(err)
+			p.logger.ErrorContext(ctx, "Failed to prune stale shows", "error", err)
+		}
+	} else {
+		p.logger.WarnContext(ctx, "Skipping show prune, Plex fetch was incomplete")
 	}
 
 	// Invalidate cache entries that now exist in the database
@@ -155,7 +196,9 @@ func (p *PlexHandler) SyncPlexLibrary(ctx context.Context) error {
 	return nil
 }
 
-func (p *PlexHandler) getMovies(ctx context.Context) models.PlexMovieLibraryData {
+// getMovies returns the movie library plus a flag reporting whether the fetch was
+// COMPLETE. A partial result must never be used to prune.
+func (p *PlexHandler) getMovies(ctx context.Context) (models.PlexMovieLibraryData, bool) {
 	ctx, span := tracer.Start(ctx, "getMovies")
 	defer span.End()
 
@@ -167,7 +210,7 @@ func (p *PlexHandler) getMovies(ctx context.Context) models.PlexMovieLibraryData
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to get movie library")
 		p.logger.ErrorContext(ctx, "Error getting movie library", "error", err)
-		return movies
+		return movies, false
 	}
 
 	url := fmt.Sprintf("%s%s/%d/all?includeGuids=1", p.cfg.Host, mediaSectionBase, movieLibrary.Section)
@@ -178,7 +221,7 @@ func (p *PlexHandler) getMovies(ctx context.Context) models.PlexMovieLibraryData
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to fetch movies")
 		p.logger.ErrorContext(ctx, "Error fetching movies", "error", err)
-		return movies
+		return movies, false
 	}
 
 	// Extract TVDB IDs and base directories from movie data
@@ -202,7 +245,7 @@ func (p *PlexHandler) getMovies(ctx context.Context) models.PlexMovieLibraryData
 	span.SetStatus(codes.Ok, "Movies fetched successfully")
 	p.logger.InfoContext(ctx, "Fetched movies", "count", len(movies.Movies))
 
-	return movies
+	return movies, true
 }
 
 func (p *PlexHandler) fetchAndUnmarshal(ctx context.Context, url string, v any) error {
@@ -251,7 +294,10 @@ func (p *PlexHandler) fetchAndUnmarshal(ctx context.Context, url string, v any) 
 	return nil
 }
 
-func (p *PlexHandler) getShows(ctx context.Context) *models.PlexShowLibraryData {
+// getShows returns the show library plus a flag reporting whether every show and season
+// was fetched successfully. Any per-show or per-season failure drops shows from the
+// result, so pruning against it would delete live rows.
+func (p *PlexHandler) getShows(ctx context.Context) (*models.PlexShowLibraryData, bool) {
 	ctx, span := tracer.Start(ctx, "getShows")
 	defer span.End()
 
@@ -260,7 +306,7 @@ func (p *PlexHandler) getShows(ctx context.Context) *models.PlexShowLibraryData 
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to get show library")
 		p.logger.ErrorContext(ctx, "Error getting show library", "error", err)
-		return nil
+		return nil, false
 	}
 
 	url := fmt.Sprintf("%s/library/sections/%d/all?includeGuids=1", p.cfg.Host, showLibrary.Section)
@@ -272,12 +318,14 @@ func (p *PlexHandler) getShows(ctx context.Context) *models.PlexShowLibraryData 
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to fetch shows")
 		p.logger.ErrorContext(ctx, "Error fetching shows", "error", err)
-		return nil
+		return nil, false
 	}
 
 	libraryData := &models.PlexShowLibraryData{
 		Shows: make([]models.PlexShowData, 0, len(showsResp.Shows)),
 	}
+	// Cleared by any per-show or per-season fetch failure; gates pruning.
+	complete := true
 
 	_, processShowsSpan := tracer.Start(ctx, "processShows")
 	processShowsSpan.SetAttributes(attribute.Int("show_count", len(showsResp.Shows)))
@@ -304,6 +352,7 @@ func (p *PlexHandler) getShows(ctx context.Context) *models.PlexShowLibraryData 
 		err = p.fetchAndUnmarshal(showCtx, seasonsURL, &seasonsResp)
 		if err != nil {
 			p.logger.ErrorContext(showCtx, "Error fetching seasons for show", "show", show.Title, "error", err)
+			complete = false
 			showSpan.RecordError(err)
 			showSpan.SetStatus(codes.Error, "Failed to fetch seasons")
 			showSpan.End()
@@ -313,6 +362,13 @@ func (p *PlexHandler) getShows(ctx context.Context) *models.PlexShowLibraryData 
 		seasonCount := 0
 		episodeCount := 0
 		for _, season := range seasonsResp.Seasons {
+			// Plex prepends a synthetic "All episodes" Directory that carries no ratingKey.
+			// It aggregates every episode in the show, so processing it stored a bogus
+			// season keyed on "" and fetched each show's episodes a second time.
+			if season.SeasonKey == "" {
+				continue
+			}
+
 			seasonCtx, seasonSpan := tracer.Start(showCtx, "processSeason")
 			seasonSpan.SetAttributes(attribute.Int("season_number", season.Index))
 
@@ -334,6 +390,7 @@ func (p *PlexHandler) getShows(ctx context.Context) *models.PlexShowLibraryData 
 			err = p.fetchAndUnmarshal(seasonCtx, episodesURL, &episodesResp)
 			if err != nil {
 				p.logger.ErrorContext(seasonCtx, "Error fetching episodes for season", "season", season.Title, "error", err)
+				complete = false
 				seasonSpan.RecordError(err)
 				seasonSpan.SetStatus(codes.Error, "Failed to fetch episodes")
 				seasonSpan.End()
@@ -405,7 +462,7 @@ func (p *PlexHandler) getShows(ctx context.Context) *models.PlexShowLibraryData 
 	span.SetStatus(codes.Ok, "Shows fetched successfully")
 	p.logger.InfoContext(ctx, "Fetched shows", "count", len(libraryData.Shows))
 
-	return libraryData
+	return libraryData, complete
 }
 
 // extractShowBaseDirectory extracts the show's base directory by combining the library path
