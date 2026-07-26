@@ -727,7 +727,7 @@ func (q *QbittHandler) updateNotificationStatus(ctx context.Context, tvdbId, rea
 		return
 	}
 
-	// Build log attributes
+	// Build log attributes and emit the success log
 	logAttrs := []any{
 		"notification_id", notification.ID,
 		"status", string(status),
@@ -735,6 +735,7 @@ func (q *QbittHandler) updateNotificationStatus(ctx context.Context, tvdbId, rea
 	if reason != "" {
 		logAttrs = append(logAttrs, "reason", reason)
 	}
+	q.logger.InfoContext(ctx, "Updated notification status", telemetry.WithTraceContext(ctx, logAttrs...)...)
 }
 
 const (
