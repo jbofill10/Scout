@@ -24,14 +24,17 @@ import {
   Notifications as NotificationsIcon,
   Close as CloseIcon,
   ExpandMore as ExpandMoreIcon,
-  CheckCircle as CompletedIcon,
-  Download as DownloadingIcon,
-  Search as SearchingIcon,
-  Schedule as ScheduledIcon,
-  Error as FailedIcon,
   Clear as DismissIcon,
   NotificationsNoneOutlined as NoNotificationsIcon,
 } from "@mui/icons-material";
+import StageChip from "./StageChip";
+import { getStageIcon } from "./stageIcon";
+import {
+  formatEpisodeLabel,
+  formatRelativeTime,
+  getStageColor,
+  getStageLabel,
+} from "../../utils/downloadStage";
 import {
   useUnreadCount,
   useGroupedNotifications,
@@ -39,79 +42,6 @@ import {
   useDismissNotification,
   type NotificationGroup,
 } from "../../hooks/useNotifications";
-
-// ==================== Helper Functions ====================
-
-function getStatusIcon(status: string | undefined) {
-  if (!status) return <SearchingIcon sx={{ fontSize: 18 }} />;
-  switch (status) {
-    case "completed":
-      return <CompletedIcon sx={{ fontSize: 18 }} />;
-    case "downloading":
-      return <DownloadingIcon sx={{ fontSize: 18 }} />;
-    case "searching":
-      return <SearchingIcon sx={{ fontSize: 18 }} />;
-    case "scheduled":
-      return <ScheduledIcon sx={{ fontSize: 18 }} />;
-    case "failed":
-      return <FailedIcon sx={{ fontSize: 18 }} />;
-    default:
-      return <SearchingIcon sx={{ fontSize: 18 }} />;
-  }
-}
-
-function getStatusColor(status: string | undefined) {
-  if (!status) return "#9CA3AF"; // gray
-  switch (status) {
-    case "completed":
-      return "#10B981"; // green
-    case "downloading":
-      return "#8B5CF6"; // purple
-    case "searching":
-      return "#FFA500"; // yellow/orange
-    case "scheduled":
-      return "#4F46E5"; // indigo/blue
-    case "failed":
-      return "#EF4444"; // red
-    default:
-      return "#9CA3AF"; // gray
-  }
-}
-
-function getStatusLabel(status: string | undefined) {
-  if (!status) return "Unknown";
-  return status.charAt(0).toUpperCase() + status.slice(1);
-}
-
-function formatEpisode(
-  season?: number,
-  episode?: number,
-  absoluteEpisode?: number,
-  isAnime?: boolean,
-): string {
-  if (isAnime && absoluteEpisode) {
-    return `Episode ${absoluteEpisode}`;
-  }
-  if (season !== undefined && episode !== undefined) {
-    return `Season ${season.toString().padStart(2, "0")} Episode ${episode.toString().padStart(2, "0")}`;
-  }
-  return "Episode";
-}
-
-function formatTimestamp(timestamp: string): string {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  if (diffMins < 1) return "Just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
-}
 
 // ==================== NotificationCard Component ====================
 
@@ -212,22 +142,9 @@ function NotificationCard({
             </Box>
 
             {/* Status Chip */}
-            <Chip
-              icon={getStatusIcon(group.latest_status)}
-              label={getStatusLabel(group.latest_status)}
-              size="small"
-              sx={{
-                backgroundColor: alpha(getStatusColor(group.latest_status), 0.16),
-                color: getStatusColor(group.latest_status),
-                fontWeight: 600,
-                fontSize: "0.75rem",
-                height: 24,
-                mb: 0.5,
-                "& .MuiChip-icon": {
-                  color: getStatusColor(group.latest_status),
-                },
-              }}
-            />
+            <Box sx={{ mb: 0.5 }}>
+              <StageChip stage={group.latest_status} />
+            </Box>
 
             {/* Latest Episode Info (for series) */}
             {group.category === "series" &&
@@ -236,7 +153,7 @@ function NotificationCard({
                   variant="body2"
                   sx={{ color: theme.palette.text.secondary, mb: 0.5 }}
                 >
-                  {formatEpisode(
+                  {formatEpisodeLabel(
                     latestNotification.season,
                     latestNotification.episode,
                     latestNotification.absolute_episode,
@@ -269,7 +186,7 @@ function NotificationCard({
                 variant="caption"
                 sx={{ color: theme.palette.text.secondary }}
               >
-                {formatTimestamp(group.latest_timestamp)}
+                {formatRelativeTime(group.latest_timestamp)}
               </Typography>
               {hasMultiple && (
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
@@ -322,17 +239,17 @@ function NotificationCard({
                       gap: 1,
                     }}
                   >
-                    <Box sx={{ color: getStatusColor(notification.status) }}>
-                      {getStatusIcon(notification.status)}
+                    <Box sx={{ color: getStageColor(notification.status) }}>
+                      {getStageIcon(notification.status)}
                     </Box>
                     <ListItemText
-                      primary={formatEpisode(
+                      primary={formatEpisodeLabel(
                         notification.season,
                         notification.episode,
                         notification.absolute_episode,
                         group.is_anime,
                       )}
-                      secondary={getStatusLabel(notification.status)}
+                      secondary={getStageLabel(notification.status)}
                       primaryTypographyProps={{
                         variant: "body2",
                         sx: { color: theme.palette.text.primary, fontSize: "0.875rem" },
