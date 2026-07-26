@@ -9,7 +9,7 @@ import CalendarMonthOutlinedIcon from "@mui/icons-material/CalendarMonthOutlined
 import { alpha, useTheme } from "@mui/material/styles";
 import MediaStatusDialog from "./MediaStatusDialog";
 import type { EnrichedMedia, ShowStatus } from "../../types/MediaStatus";
-import { logError } from "../../lib/logger";
+import { useDownloadRequest } from "../../hooks/useDownloadRequest";
 
 interface ScheduledItem {
   id: string;
@@ -48,6 +48,7 @@ const ScheduleWidget: React.FC = () => {
   const [selectedMediaType, setSelectedMediaType] = useState<
     "series" | "movie"
   >("series");
+  const { requestDownload, isPending: isDownloading } = useDownloadRequest();
 
   // Fetch weekly schedule with auto-refresh
   const { data, isLoading, isError, refetch } = useQuery<ScheduledItem[]>({
@@ -130,9 +131,6 @@ const ScheduleWidget: React.FC = () => {
   const handleDownload = () => {
     if (!selectedEnrichedMedia && !selectedShowInfo) return;
 
-    const endpoint =
-      selectedMediaType === "movie" ? "/api/movies" : "/api/shows";
-
     const mediaData = selectedEnrichedMedia
       ? selectedEnrichedMedia.media
       : {
@@ -141,36 +139,15 @@ const ScheduleWidget: React.FC = () => {
           image_url: selectedShowInfo!.posterUrl,
         };
 
-    fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+    requestDownload(
+      {
+        media: mediaData,
+        mediaType: selectedMediaType,
+        title: selectedEnrichedMedia?.media.mediaName ?? selectedShowInfo?.name,
+        component: "ScheduleWidget",
       },
-      body: JSON.stringify(mediaData),
-    })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error("Network response was not ok");
-        }
-        return response.json();
-      })
-      .then(() => {
-        // Download initiated successfully
-        handleCloseStatusDialog();
-      })
-      .catch((error) => {
-        console.error("Error initiating download:", error);
-        logError(
-          "Download initiation failed in ScheduleWidget",
-          error as Error,
-          {
-            component: "ScheduleWidget",
-            endpoint: endpoint,
-            mediaType: selectedMediaType,
-            resultId: selectedEnrichedMedia?.media.id || selectedShowInfo?.tvdbId || "unknown",
-          },
-        );
-      });
+      { onSuccess: () => handleCloseStatusDialog() },
+    );
   };
 
   const formatEpisode = (seasonNumber?: number, episodeNumber?: number) => {
@@ -411,6 +388,7 @@ const ScheduleWidget: React.FC = () => {
           enrichedMedia={selectedEnrichedMedia}
           onDownload={handleDownload}
           showDownloadButton={true}
+          isDownloading={isDownloading}
           mediaType={selectedMediaType === "movie" ? "movie" : "series"}
         />
       )}
