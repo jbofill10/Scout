@@ -99,6 +99,10 @@ type TVDBSearchItem struct {
 	Translations Translations `json:"translations"`
 	// Translations to the show description
 	Overviews Overview `json:"overviews"`
+	// Alternative names; TVDB returns these for series hits
+	Aliases []string `json:"aliases"`
+	// Genre names; TVDB returns these for movie hits only
+	Genres []string `json:"genres"`
 }
 
 type Episode struct {

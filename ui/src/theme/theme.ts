@@ -216,8 +216,9 @@ const theme = createTheme({
     MuiBackdrop: {
       styleOverrides: {
         root: {
-          backgroundColor: 'rgba(2, 6, 23, 0.7)',
-          backdropFilter: 'blur(6px)',
+          // No backdrop blur: it re-blurs every poster on the page for the whole
+          // open/close fade, which made dialogs feel sluggish to open.
+          backgroundColor: 'rgba(2, 6, 23, 0.78)',
         },
       },
     },

@@ -14,6 +14,9 @@ interface HorizontalCarouselProps<T> {
   subtitle?: string;
 }
 
+/** Class on the row root; nav buttons reveal themselves via a CSS hover on it. */
+const ROW_CLASS = 'scout-carousel';
+
 /**
  * HorizontalCarousel Component
  *
@@ -24,13 +27,15 @@ interface HorizontalCarouselProps<T> {
  * - Keyboard navigation (arrow keys)
  * - Hidden scrollbar for clean appearance
  * - Desktop-optimized for ~6.5 items per row at 1920x1080
+ *
+ * Hover reveal is CSS-only so moving the pointer across rows does not
+ * re-render every poster in them.
  */
 function HorizontalCarousel<T>({ items, renderItem, title, subtitle }: HorizontalCarouselProps<T>) {
   const theme = useTheme();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [showLeftButton, setShowLeftButton] = useState(false);
   const [showRightButton, setShowRightButton] = useState(true);
-  const [isHovered, setIsHovered] = useState(false);
 
   // Check scroll position to show/hide navigation buttons
   const checkScroll = () => {
@@ -45,7 +50,7 @@ function HorizontalCarousel<T>({ items, renderItem, title, subtitle }: Horizonta
     checkScroll();
     const container = scrollContainerRef.current;
     if (container) {
-      container.addEventListener('scroll', checkScroll);
+      container.addEventListener('scroll', checkScroll, { passive: true });
       return () => container.removeEventListener('scroll', checkScroll);
     }
   }, [items]);
@@ -85,12 +90,14 @@ function HorizontalCarousel<T>({ items, renderItem, title, subtitle }: Horizonta
     width: 44,
     height: 44,
     color: theme.palette.text.primary,
-    backgroundColor: alpha('#020617', 0.68),
+    backgroundColor: alpha('#020617', 0.82),
     border: `1px solid ${alpha('#F8FAFC', 0.14)}`,
-    backdropFilter: 'blur(10px)',
     boxShadow: theme.shadows[6],
-    opacity: isHovered ? 1 : 0,
+    opacity: 0,
     transition: 'opacity .24s ease, background-color .24s ease, transform .24s ease',
+    [`.${ROW_CLASS}:hover &, &:focus-visible`]: {
+      opacity: 1,
+    },
     '&:hover': {
       backgroundColor: alpha(theme.palette.primary.main, 0.9),
       transform: 'translateY(-50%) scale(1.06)',
@@ -113,8 +120,7 @@ function HorizontalCarousel<T>({ items, renderItem, title, subtitle }: Horizonta
 
   return (
     <Box
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      className={ROW_CLASS}
       onKeyDown={handleKeyDown}
       role="region"
       aria-label={title ? `${title} carousel` : 'Media carousel'}

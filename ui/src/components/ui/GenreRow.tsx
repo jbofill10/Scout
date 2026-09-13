@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
@@ -7,9 +7,10 @@ import Skeleton from "@mui/material/Skeleton";
 import { useTheme } from "@mui/material/styles";
 import HorizontalCarousel from "./HorizontalCarousel";
 import MediaCard, { MediaCardSkeleton } from "./MediaCard";
+import type { MediaCardProps } from "./MediaCard";
 import MediaStatusDialog from "./MediaStatusDialog";
 import type { SearchResult } from "../SearchResultsList";
-import type { ShowStatus, EnrichedMedia } from "../../types/MediaStatus";
+import type { ShowStatus, EnrichedMedia, MediaStatusBadge } from "../../types/MediaStatus";
 import { useMediaStatus } from "../../hooks/useMediaStatus";
 import { useEnrichedPopular } from "../../hooks/useProgressiveEnrichment";
 import { getStatusBadgeForMediaWithEnriched } from "../../utils/statusHelpers";
@@ -18,6 +19,12 @@ import { useDownloadRequest } from "../../hooks/useDownloadRequest";
 interface GenreRowProps {
   genre: string;
   mediaType: "series" | "movie";
+}
+
+/** Everything a poster card needs, computed once per data change. */
+interface CardModel {
+  media: MediaCardProps["media"];
+  statusBadge?: MediaStatusBadge;
 }
 
 /**
@@ -58,9 +65,11 @@ export const MediaRowSkeleton: React.FC<{ title?: string }> = ({ title }) => (
  * - Displays status badges on media cards (episode counts for shows, library status for movies)
  * - Shows loading skeletons during fetch
  * - Error handling with retry button
- * - Opens MediaStatusDialog for TV shows (shows episode breakdown)
- * - Opens SearchResultDialog for movies (triggers download)
+ * - Opens MediaStatusDialog for both shows and movies
  * - Integrates MediaCard, HorizontalCarousel, and status system
+ *
+ * Card props and handlers are memoised so opening a dialog or a query
+ * resolving re-renders only what changed, not every poster in the row.
  */
 const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
   const theme = useTheme();
@@ -76,16 +85,16 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
   const [selectedEnrichedMedia, setSelectedEnrichedMedia] = useState<EnrichedMedia | null>(null);
   const { requestDownload, isPending: isDownloading } = useDownloadRequest();
 
+  // "Popular TV Shows" / "Popular Movies" are UI labels, not real genres
+  const isPopularOnly = genre === "Popular TV Shows" || genre === "Popular Movies";
+  const statusMediaType = mediaType === "series" ? ("show" as const) : ("movie" as const);
+
   // Fetch popular content for this genre
   const { data, isLoading, isError, refetch } = useQuery<SearchResult[]>({
     queryKey: ["popular", mediaType, genre],
     queryFn: async () => {
       const endpoint =
         mediaType === "series" ? "/api/popular/shows" : "/api/popular/movies";
-
-      // Don't send genre parameter for "Popular TV Shows" or "Popular Movies" - these are UI labels, not real genres
-      const isPopularOnly =
-        genre === "Popular TV Shows" || genre === "Popular Movies";
       const params = new URLSearchParams(isPopularOnly ? {} : { genre });
 
       const response = await fetch(`${endpoint}?${params}`);
@@ -99,54 +108,79 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
   });
 
   // Build status requests from media data
-  const statusRequests =
-    data?.map((item) => ({
-      tvdbId: item.id,
-      mediaType: mediaType === "series" ? ("show" as const) : ("movie" as const),
-    })) || [];
+  const statusRequests = useMemo(
+    () => data?.map((item) => ({ tvdbId: item.id, mediaType: statusMediaType })) ?? [],
+    [data, statusMediaType],
+  );
 
   // Fetch status data (only when we have media data)
   const { data: statusData } = useMediaStatus(statusRequests, !!data && data.length > 0);
 
   // Progressive enrichment: Fetch enriched data asynchronously (with episode metadata, extended info)
-  // Determine if genre should be sent (skip for "Popular TV Shows" / "Popular Movies")
-  const isPopularOnly =
-    genre === "Popular TV Shows" || genre === "Popular Movies";
-  const enrichedGenre = isPopularOnly ? "" : genre;
-
   const { data: enrichedData } = useEnrichedPopular(
-    enrichedGenre,
+    isPopularOnly ? "" : genre,
     20,
     mediaType,
     !!data && data.length > 0  // Only fetch after initial data loads
   );
 
-  const handleMediaClick = (media: {
-    id: string;
-    name: string;
-    imageUrl: string;
-  }) => {
-    // Use MediaStatusDialog for both TV shows and movies
-    const status = statusData?.shows?.find((s) => s.tvdbId === media.id) ||
-                   statusData?.movies?.find((m) => m.tvdbId === media.id);
-    // Find enriched media data if available
-    const enriched = enrichedData?.find((e) => e.media.id === media.id);
+  const enrichedById = useMemo(
+    () => new Map((enrichedData ?? []).map((entry) => [entry.media.id, entry])),
+    [enrichedData],
+  );
 
-    setSelectedShowInfo({
-      name: media.name,
-      posterUrl: media.imageUrl,
-      tvdbId: media.id,
-    });
+  const cards = useMemo<CardModel[]>(
+    () =>
+      (data ?? []).map((item) => ({
+        media: {
+          id: item.id,
+          name: item.mediaName,
+          imageUrl: item.image_url,
+        },
+        statusBadge: getStatusBadgeForMediaWithEnriched(
+          item.id,
+          statusData,
+          statusMediaType,
+          enrichedById.get(item.id),
+        ),
+      })),
+    [data, statusData, statusMediaType, enrichedById],
+  );
 
-    // Convert status to ShowStatus format for series, null for movies
-    const showStatus: ShowStatus | null = mediaType === "series" && status && "seasons" in status
-      ? { tvdbId: media.id, seasons: status.seasons }
-      : null;
+  const handleMediaClick = useCallback(
+    (media: MediaCardProps["media"]) => {
+      // Use MediaStatusDialog for both TV shows and movies
+      const status =
+        statusData?.shows?.find((s) => s.tvdbId === media.id) ||
+        statusData?.movies?.find((m) => m.tvdbId === media.id);
+      // Find enriched media data if available
+      const enriched = enrichedById.get(media.id);
 
-    setSelectedShowStatus(showStatus);
-    setSelectedEnrichedMedia(enriched || null);
-    setStatusDialogOpen(true);
-  };
+      setSelectedShowInfo({
+        name: media.name,
+        posterUrl: media.imageUrl,
+        tvdbId: media.id,
+      });
+
+      // Convert status to ShowStatus format for series, null for movies
+      const showStatus: ShowStatus | null =
+        mediaType === "series" && status && "seasons" in status
+          ? { tvdbId: media.id, seasons: status.seasons }
+          : null;
+
+      setSelectedShowStatus(showStatus);
+      setSelectedEnrichedMedia(enriched ?? null);
+      setStatusDialogOpen(true);
+    },
+    [statusData, enrichedById, mediaType],
+  );
+
+  const renderCard = useCallback(
+    (card: CardModel) => (
+      <MediaCard media={card.media} onClick={handleMediaClick} statusBadge={card.statusBadge} />
+    ),
+    [handleMediaClick],
+  );
 
   const handleCloseStatusDialog = () => {
     setStatusDialogOpen(false);
@@ -214,32 +248,13 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
   }
 
   // No data state
-  if (!data || data.length === 0) {
+  if (cards.length === 0) {
     return null;
   }
 
   return (
     <>
-      <HorizontalCarousel
-        title={genre}
-        items={data}
-        renderItem={(item) => (
-          <MediaCard
-            media={{
-              id: item.id,
-              name: item.mediaName,
-              imageUrl: item.image_url,
-            }}
-            onClick={handleMediaClick}
-            statusBadge={getStatusBadgeForMediaWithEnriched(
-              item.id,
-              statusData,
-              mediaType === "series" ? "show" : "movie",
-              enrichedData?.find((e) => e.media.id === item.id)
-            )}
-          />
-        )}
-      />
+      <HorizontalCarousel title={genre} items={cards} renderItem={renderCard} />
       {selectedShowInfo && (
         <MediaStatusDialog
           open={statusDialogOpen}
