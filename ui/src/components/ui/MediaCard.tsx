@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { memo, useEffect, useRef, useState } from "react";
 import Card from "@mui/material/Card";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
@@ -7,6 +7,7 @@ import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import { alpha, useTheme } from "@mui/material/styles";
 import type { Theme } from "@mui/material/styles";
 import type { MediaStatusBadge } from "../../types/MediaStatus";
+import { toThumbnailUrl } from "../../utils/images";
 
 export interface MediaCardProps {
   media: {
@@ -21,24 +22,30 @@ export interface MediaCardProps {
   onImageLoad?: () => void;
 }
 
-/** Tinted pill colors for a status badge — soft fill, bright text, hairline edge. */
+/**
+ * Pill colors for a status badge. The pill sits on a dark base so it stays
+ * legible over bright artwork without a backdrop blur, which is expensive
+ * when a page shows a hundred posters at once.
+ */
 interface BadgeTone {
-  fill: string;
+  tint: string | null;
   text: string;
   border: string;
 }
 
 const toneFrom = (color: string): BadgeTone => ({
-  fill: alpha(color, 0.22),
+  tint: alpha(color, 0.3),
   text: color,
   border: alpha(color, 0.45),
 });
 
 const neutralTone = (theme: Theme): BadgeTone => ({
-  fill: alpha(theme.palette.common.black, 0.55),
+  tint: null,
   text: theme.palette.text.primary,
   border: alpha(theme.palette.common.white, 0.18),
 });
+
+const HOVER_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
 
 /**
  * MediaCard Component
@@ -47,10 +54,14 @@ const neutralTone = (theme: Theme): BadgeTone => ({
  * raises the card, rings it in the brand color, and lifts a gradient scrim
  * carrying the title and an add-to-library affordance.
  *
+ * Hover styling is pure CSS and the component is memoised, so a page of
+ * posters does not re-render as the pointer moves across it or when a parent
+ * re-renders for unrelated state (typing in the search box, a dialog opening).
+ *
  * Features:
- * - 2:3 aspect ratio poster with lazy loading and a fade-in once decoded
+ * - 2:3 aspect ratio poster, served as a TVDB thumbnail with a fade-in once decoded
  * - Optional status badge (episode progress for shows, library state for movies)
- * - Keyboard accessible (Enter / Space)
+ * - Keyboard accessible (Enter / Space, hover treatment on focus)
  */
 const MediaCard: React.FC<MediaCardProps> = ({
   media,
@@ -60,25 +71,37 @@ const MediaCard: React.FC<MediaCardProps> = ({
   onImageLoad,
 }) => {
   const theme = useTheme();
-  const [isHovered, setIsHovered] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
+  // The thumbnail URL that 404'd, if any, so we can fall back to the full poster
+  const [failedThumbnail, setFailedThumbnail] = useState<string | null>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+
+  const thumbnailUrl = toThumbnailUrl(media.imageUrl);
+  const src = failedThumbnail === thumbnailUrl ? media.imageUrl : thumbnailUrl;
 
   // A cached poster can finish loading before React attaches onLoad, which would
   // otherwise leave the image stuck at opacity 0.
   useEffect(() => {
     setImageLoaded(imageRef.current?.complete ?? false);
-  }, [media.imageUrl]);
+  }, [src]);
+
+  const handleImageError = () => {
+    if (src === thumbnailUrl && thumbnailUrl !== media.imageUrl) {
+      setFailedThumbnail(thumbnailUrl);
+      return;
+    }
+    onImageLoad?.();
+  };
 
   // Determine badge label based on status type
   const getBadgeLabel = (): string | null => {
     if (!statusBadge) return null;
 
-    if (statusBadge.type === 'movie' && statusBadge.inLibrary) {
-      return 'In Library';
+    if (statusBadge.type === "movie" && statusBadge.inLibrary) {
+      return "In Library";
     }
 
-    if (statusBadge.type === 'show' && statusBadge.episodeCount) {
+    if (statusBadge.type === "show" && statusBadge.episodeCount) {
       const { downloaded, total } = statusBadge.episodeCount;
       return `${downloaded}/${total}`;
     }
@@ -92,11 +115,11 @@ const MediaCard: React.FC<MediaCardProps> = ({
   const getBadgeTone = (): BadgeTone => {
     if (!statusBadge) return neutralTone(theme);
 
-    if (statusBadge.type === 'movie' && statusBadge.inLibrary) {
+    if (statusBadge.type === "movie" && statusBadge.inLibrary) {
       return toneFrom(theme.palette.success.main);
     }
 
-    if (statusBadge.type === 'show' && statusBadge.episodeCount) {
+    if (statusBadge.type === "show" && statusBadge.episodeCount) {
       const { downloaded, total } = statusBadge.episodeCount;
       if (downloaded === 0) {
         return neutralTone(theme);
@@ -125,14 +148,12 @@ const MediaCard: React.FC<MediaCardProps> = ({
 
   return (
     <Card
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       tabIndex={0}
       role="button"
       aria-label={`View details for ${media.name}`}
-      elevation={isHovered ? 10 : 1}
+      elevation={1}
       sx={{
         position: "relative",
         width: "100%",
@@ -141,25 +162,36 @@ const MediaCard: React.FC<MediaCardProps> = ({
         borderRadius: 3,
         overflow: "hidden",
         backgroundColor: "rgba(148, 163, 184, 0.06)",
-        border: `1px solid ${isHovered ? alpha(theme.palette.primary.light, 0.55) : theme.palette.divider}`,
-        transform: isHovered ? "translateY(-6px) scale(1.03)" : "none",
-        transition: theme.transitions.create(
-          ["transform", "box-shadow", "border-color"],
-          { duration: 260, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
-        ),
+        border: `1px solid ${theme.palette.divider}`,
+        transition: theme.transitions.create(["transform", "box-shadow", "border-color"], {
+          duration: 260,
+          easing: HOVER_EASING,
+        }),
+        "&:hover, &:focus-visible": {
+          borderColor: alpha(theme.palette.primary.light, 0.55),
+          transform: "translateY(-6px) scale(1.03)",
+          boxShadow: theme.shadows[10],
+        },
+        "&:hover .media-card-overlay, &:focus-visible .media-card-overlay": {
+          opacity: 1,
+        },
+        "&:hover .media-card-action, &:focus-visible .media-card-action": {
+          transform: "translateY(0)",
+        },
       }}
     >
       <Box
         component="img"
         ref={imageRef}
-        src={media.imageUrl}
+        src={src}
         alt={media.name}
         loading="lazy"
+        decoding="async"
         onLoad={() => {
           setImageLoaded(true);
           onImageLoad?.();
         }}
-        onError={onImageLoad}
+        onError={handleImageError}
         sx={{
           width: "100%",
           height: "100%",
@@ -207,9 +239,11 @@ const MediaCard: React.FC<MediaCardProps> = ({
               letterSpacing: "0.01em",
               lineHeight: 1.3,
               color: badgeTone.text,
-              backgroundColor: badgeTone.fill,
+              backgroundColor: alpha("#020617", 0.78),
+              backgroundImage: badgeTone.tint
+                ? `linear-gradient(${badgeTone.tint}, ${badgeTone.tint})`
+                : "none",
               border: `1px solid ${badgeTone.border}`,
-              backdropFilter: "blur(8px)",
             }}
           >
             {badgeLabel}
@@ -219,6 +253,7 @@ const MediaCard: React.FC<MediaCardProps> = ({
 
       {/* Hover Overlay */}
       <Box
+        className="media-card-overlay"
         sx={{
           position: "absolute",
           inset: 0,
@@ -230,12 +265,13 @@ const MediaCard: React.FC<MediaCardProps> = ({
           p: 2,
           background:
             "linear-gradient(180deg, rgba(2,6,23,0.15) 0%, rgba(2,6,23,0.72) 55%, rgba(2,6,23,0.94) 100%)",
-          opacity: isHovered ? 1 : 0,
+          opacity: 0,
           transition: "opacity .26s ease",
           pointerEvents: "none",
         }}
       >
         <Box
+          className="media-card-action"
           sx={{
             width: 44,
             height: 44,
@@ -247,8 +283,8 @@ const MediaCard: React.FC<MediaCardProps> = ({
             color: "#fff",
             backgroundColor: alpha(theme.palette.primary.main, 0.92),
             boxShadow: `0 6px 18px ${alpha(theme.palette.primary.main, 0.45)}`,
-            transform: isHovered ? "translateY(0)" : "translateY(8px)",
-            transition: "transform .3s cubic-bezier(0.22, 1, 0.36, 1)",
+            transform: "translateY(8px)",
+            transition: `transform .3s ${HOVER_EASING}`,
           }}
         >
           <AddRoundedIcon />
@@ -290,4 +326,4 @@ export const MediaCardSkeleton: React.FC = () => (
   />
 );
 
-export default MediaCard;
+export default memo(MediaCard);

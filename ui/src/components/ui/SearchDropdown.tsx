@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import Box from "@mui/material/Box";
 import Container from "@mui/material/Container";
 import InputAdornment from "@mui/material/InputAdornment";
+import LinearProgress from "@mui/material/LinearProgress";
 import TextField from "@mui/material/TextField";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
@@ -10,46 +11,43 @@ import IconButton from "@mui/material/IconButton";
 import CircularProgress from "@mui/material/CircularProgress";
 import Slide from "@mui/material/Slide";
 import CloseIcon from "@mui/icons-material/Close";
+import ErrorOutlineRoundedIcon from "@mui/icons-material/ErrorOutlineRounded";
 import SearchIcon from "@mui/icons-material/Search";
 import SearchOffOutlinedIcon from "@mui/icons-material/SearchOffOutlined";
 import Tv from "@mui/icons-material/Tv";
 import Movie from "@mui/icons-material/Movie";
 import { alpha, useTheme } from "@mui/material/styles";
-import InfiniteScroll from "react-infinite-scroll-component/dist/index.js";
-import MediaCard from "./MediaCard";
 import MediaStatusDialog from "./MediaStatusDialog";
+import SearchResultsGrid from "./SearchResultsGrid";
 import type { EnrichedMedia, ShowStatus } from "../../types/MediaStatus";
-import { buildStatusBadgeFromEnriched } from "../../utils/statusHelpers";
 import { logError } from "../../lib/logger";
 import { useDownloadRequest } from "../../hooks/useDownloadRequest";
+import { useEnrichedSearch } from "../../hooks/useEnrichedSearch";
 
 interface SearchDropdownProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
+const SEARCH_DEBOUNCE_MS = 300;
+
 /**
  * SearchDropdown Component
  *
  * Full-width search overlay that appears from the top of the screen.
  * Features:
- * - Semi-transparent backdrop (opacity 0.85)
+ * - Semi-transparent backdrop
  * - Search input with auto-focus
  * - Media type toggle (TV Shows / Movies)
- * - Debounced search (300ms)
- * - Infinite scroll for results
- * - Opens SearchResultDialog on result click
+ * - Debounced search backed by TanStack Query (cached, cancellable, race-free)
+ * - Previous results stay visible while a refined term loads
+ * - Opens MediaStatusDialog on result click
  * - Closes on backdrop click or ESC key
- * - Reuses existing search logic from Search.tsx
  */
 const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
   const theme = useTheme();
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
-  const [searchResults, setSearchResults] = useState<EnrichedMedia[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [hasMore, setHasMore] = useState(false);
-  const [page, setPage] = useState(1);
   const [mediaType, setMediaType] = useState<"series" | "movie">("series");
   const [statusDialogOpen, setStatusDialogOpen] = useState(false);
   const [selectedShowStatus, setSelectedShowStatus] = useState<ShowStatus | null>(null);
@@ -62,11 +60,18 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
   const { requestDownload, isPending: isDownloading } = useDownloadRequest();
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Debounce search term (500ms)
+  const {
+    results: searchResults,
+    isFetching,
+    isPlaceholderData,
+    error: searchError,
+  } = useEnrichedSearch(isOpen ? debouncedSearchTerm : "", mediaType);
+
+  // Debounce the typed term so we search once the user pauses
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearchTerm(searchTerm);
-    }, 500);
+    }, SEARCH_DEBOUNCE_MS);
 
     return () => clearTimeout(timer);
   }, [searchTerm]);
@@ -83,67 +88,20 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
     if (!isOpen) {
       setSearchTerm("");
       setDebouncedSearchTerm("");
-      setSearchResults([]);
-      setPage(1);
-      setHasMore(false);
     }
   }, [isOpen]);
 
-  // Fetch results when debounced search term changes
   useEffect(() => {
-    if (debouncedSearchTerm.trim().length > 0) {
-      performSearch(debouncedSearchTerm, 1);
-    } else {
-      setSearchResults([]);
-      setHasMore(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearchTerm, mediaType]);
-
-  const performSearch = async (query: string, pageNum: number) => {
-    setIsSearching(true);
-    try {
-      const params = new URLSearchParams({
-        query,
-        media_type: mediaType,
-        page: pageNum.toString(),
-      });
-      const res = await fetch(`/api/search/enriched?${params}`);
-      const data = await res.json();
-
-      if (pageNum === 1) {
-        setSearchResults(data);
-        setPage(1);
-      } else {
-        setSearchResults((prev) => [...prev, ...data]);
-      }
-
-      setHasMore(data.length > 0);
-    } catch (error) {
-      console.error("Search error:", error);
-      logError("Search request failed in SearchDropdown", error as Error, {
+    if (searchError) {
+      logError("Search request failed in SearchDropdown", searchError, {
         component: "SearchDropdown",
-        query: query,
-        pageNum: pageNum,
+        query: debouncedSearchTerm,
         mediaType: mediaType,
       });
-      setSearchResults([]);
-      setHasMore(false);
-    } finally {
-      setIsSearching(false);
     }
-  };
+  }, [searchError, debouncedSearchTerm, mediaType]);
 
-  const fetchMoreData = useCallback(() => {
-    if (!isSearching && hasMore) {
-      const nextPage = page + 1;
-      performSearch(debouncedSearchTerm, nextPage);
-      setPage(nextPage);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, hasMore, isSearching, debouncedSearchTerm]);
-
-  const handleMediaClick = (enrichedMedia: EnrichedMedia) => {
+  const handleMediaClick = useCallback((enrichedMedia: EnrichedMedia) => {
     setSelectedShowInfo({
       name: enrichedMedia.media.mediaName,
       posterUrl: enrichedMedia.media.image_url,
@@ -160,7 +118,7 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
     setSelectedShowStatus(showStatus);
     setSelectedEnrichedMedia(enrichedMedia);
     setStatusDialogOpen(true);
-  };
+  }, []);
 
   const handleCloseStatusDialog = () => {
     setStatusDialogOpen(false);
@@ -198,8 +156,13 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
   if (!isOpen) return null;
 
   const hasQuery = searchTerm.trim().length > 0;
+  // The typed term has not reached the query yet: treat it as loading so the
+  // "no results" message does not flash before the request even starts.
+  const isDebouncing = searchTerm.trim() !== debouncedSearchTerm.trim();
+  const isBusy = isFetching || isDebouncing;
+  const hasResults = searchResults.length > 0;
 
-  // Centered message block reused by the three non-result states
+  // Centered message block reused by the non-result states
   const message = (icon: React.ReactNode, title: string, detail?: string) => (
     <Box
       sx={{
@@ -322,60 +285,51 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
           </Box>
 
           {/* Search Results */}
-          <Container maxWidth="xl" sx={{ py: 3, minHeight: 240 }}>
-            {isSearching && searchResults.length === 0 && (
+          <Container maxWidth="xl" sx={{ position: "relative", py: 3, minHeight: 240 }}>
+            {/* Refining an existing result set: keep the grid, show a thin bar */}
+            {isBusy && hasResults && (
+              <LinearProgress
+                aria-label="Updating results"
+                sx={{ position: "absolute", top: 0, left: 0, right: 0, height: 2 }}
+              />
+            )}
+
+            {isBusy && hasQuery && !hasResults && (
               <Box sx={{ display: "flex", justifyContent: "center", py: 10 }}>
                 <CircularProgress size={28} />
               </Box>
             )}
 
-            {!isSearching &&
+            {!isBusy &&
               hasQuery &&
-              searchResults.length === 0 &&
+              !hasResults &&
+              !searchError &&
               message(
                 <SearchOffOutlinedIcon sx={{ fontSize: 34, color: theme.palette.text.disabled }} />,
                 `No results for "${searchTerm}"`,
                 "Try a different spelling, or switch between TV Shows and Movies.",
               )}
 
-            {searchResults.length > 0 && (
-              <InfiniteScroll
-                dataLength={searchResults.length}
-                next={fetchMoreData}
-                hasMore={hasMore}
-                loader={
-                  <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
-                    <CircularProgress size={24} />
-                  </Box>
-                }
-                style={{ overflow: "visible" }}
-              >
-                <Box
-                  sx={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
-                    gap: 3,
-                  }}
-                >
-                  {searchResults.map((enrichedMedia) => {
-                    const statusBadge = buildStatusBadgeFromEnriched(enrichedMedia.status);
+            {!isBusy &&
+              hasQuery &&
+              !hasResults &&
+              searchError &&
+              message(
+                <ErrorOutlineRoundedIcon sx={{ fontSize: 34, color: theme.palette.error.main }} />,
+                "Search didn't go through",
+                "Scout couldn't reach the search service. Try again in a moment.",
+              )}
 
-                    return (
-                      <MediaCard
-                        key={enrichedMedia.media.id}
-                        media={{
-                          id: enrichedMedia.media.id,
-                          name: enrichedMedia.media.mediaName,
-                          imageUrl: enrichedMedia.media.image_url,
-                        }}
-                        onClick={() => handleMediaClick(enrichedMedia)}
-                        statusBadge={statusBadge}
-                        isLoadingStatus={false}
-                      />
-                    );
-                  })}
-                </Box>
-              </InfiniteScroll>
+            {hasResults && (
+              <SearchResultsGrid
+                results={searchResults}
+                onSelect={handleMediaClick}
+                minCardWidth={190}
+                sx={{
+                  opacity: isPlaceholderData ? 0.55 : 1,
+                  transition: "opacity .2s ease",
+                }}
+              />
             )}
 
             {!hasQuery &&

@@ -1,9 +1,7 @@
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import MediaStatusDialog from "./ui/MediaStatusDialog";
-import Box from "@mui/material/Box";
-import { buildStatusBadgeFromEnriched } from "../utils/statusHelpers";
+import SearchResultsGrid from "./ui/SearchResultsGrid";
 import { useDownloadRequest } from "../hooks/useDownloadRequest";
-import MediaCard from "./ui/MediaCard";
 import type { EnrichedMedia, ShowStatus } from "../types/MediaStatus";
 
 export interface SearchResult {
@@ -42,7 +40,8 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({
   const [selectedEnrichedMedia, setSelectedEnrichedMedia] = useState<EnrichedMedia | null>(null);
   const { requestDownload, isPending: isDownloading } = useDownloadRequest();
 
-  const handleCardClick = (enrichedMedia: EnrichedMedia) => {
+  // Stable so the memoised grid does not re-render when the dialog opens
+  const handleCardClick = useCallback((enrichedMedia: EnrichedMedia) => {
     // Use MediaStatusDialog for both TV shows and movies
     setSelectedShowInfo({
       name: enrichedMedia.media.mediaName,
@@ -61,7 +60,7 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({
     setSelectedShowStatus(showStatus);
     setSelectedEnrichedMedia(enrichedMedia);
     setStatusDialogOpen(true);
-  };
+  }, []);
 
   const handleCloseStatusDialog = () => {
     setStatusDialogOpen(false);
@@ -87,35 +86,13 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({
 
   return (
     <>
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-          gap: 3,
-          width: "100%",
-          padding: 2,
-        }}
-      >
-        {results.map((enrichedMedia) => {
-          // Build status badge from enriched response (no async loading needed)
-          const statusBadge = buildStatusBadgeFromEnriched(enrichedMedia.status);
-
-          return (
-            <MediaCard
-              key={enrichedMedia.media.id}
-              media={{
-                id: enrichedMedia.media.id,
-                name: enrichedMedia.media.mediaName,
-                imageUrl: enrichedMedia.media.image_url,
-                category: mediaType,
-              }}
-              onClick={() => handleCardClick(enrichedMedia)}
-              statusBadge={statusBadge}
-              isLoadingStatus={false}
-            />
-          );
-        })}
-      </Box>
+      <SearchResultsGrid
+        results={results}
+        onSelect={handleCardClick}
+        minCardWidth={180}
+        cardCategory={mediaType}
+        sx={{ width: "100%", padding: 2 }}
+      />
       {selectedShowInfo && (
         <MediaStatusDialog
           open={statusDialogOpen}
@@ -127,6 +104,8 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({
           onDownload={handleDownload}
           showDownloadButton={true}
           isDownloading={isDownloading}
+          mediaType={mediaType}
+          inLibrary={selectedEnrichedMedia?.status.inLibrary}
         />
       )}
     </>

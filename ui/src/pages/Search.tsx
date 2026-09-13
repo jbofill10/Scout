@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import InfiniteScroll from 'react-infinite-scroll-component/dist/index.js';
 import SearchResultsList from '../components/SearchResultsList';
-import type { EnrichedMedia } from '../types/MediaStatus';
+import { useEnrichedSearch } from '../hooks/useEnrichedSearch';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
 import Paper from '@mui/material/Paper';
@@ -12,40 +11,26 @@ import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Tv from '@mui/icons-material/Tv';
 import Movie from '@mui/icons-material/Movie';
 
+/**
+ * Search Page
+ *
+ * Submit-driven search backed by the same cached query as the overlay. The
+ * enriched search endpoint returns the full result set in one response, so
+ * there is no paging here.
+ */
 const Search: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [formSubmitted, setFormSubmitted] = useState(false);
-  const [searchResults, setSearchResults] = useState<EnrichedMedia[]>([]);
-  const [hasMore, setHasMore] = useState(true);
-  const [page, setPage] = useState(1);
+  const [submittedTerm, setSubmittedTerm] = useState('');
   const [mediaType, setMediaType] = useState<'series' | 'movie'>('series');
 
-  const fetchResults = async (query: string, pageNum: number) => {
-    const params = new URLSearchParams({ query, media_type: mediaType, page: pageNum.toString() });
-    const res = await fetch(`/api/search/enriched?${params}`);
-    const data = await res.json();
-    return data;
-  };
+  const { results, isFetching, error } = useEnrichedSearch(submittedTerm, mediaType);
 
-  const onSearch = async (e: React.FormEvent) => {
+  const onSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    setFormSubmitted(true);
-    setPage(1);
-    const data = await fetchResults(searchTerm, 1);
-    setSearchResults(data);
-    setHasMore(data.length > 0);
+    setSubmittedTerm(searchTerm);
   };
 
-  const fetchMoreData = async () => {
-    const nextPage = page + 1;
-    const data = await fetchResults(searchTerm, nextPage);
-    if (data.length === 0) {
-      setHasMore(false);
-      return;
-    }
-    setSearchResults(prev => [...prev, ...data]);
-    setPage(nextPage);
-  };
+  const hasSearched = submittedTerm.trim().length > 0;
 
   return (
     <Box sx={{ mt: 10, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -83,20 +68,25 @@ const Search: React.FC = () => {
         </form>
       </Paper>
       <Box sx={{ width: '100%', maxWidth: 900, mt: 2 }}>
-        {searchResults.length > 0 && (
+        {results.length > 0 && (
           <Typography variant="h6" sx={{ mb: 2 }}>
             Results
           </Typography>
         )}
-        <InfiniteScroll
-          dataLength={searchResults.length}
-          next={fetchMoreData}
-          hasMore={hasMore}
-          loader={formSubmitted ? <Typography sx={{ mt: 2 }}>Loading...</Typography> : null}
-          style={{ overflow: 'visible' }}
-        >
-          <SearchResultsList results={searchResults} mediaType={mediaType} />
-        </InfiniteScroll>
+        {isFetching && results.length === 0 && (
+          <Typography sx={{ mt: 2 }}>Loading...</Typography>
+        )}
+        {error && (
+          <Typography color="error" sx={{ mt: 2 }}>
+            Search failed. Please try again.
+          </Typography>
+        )}
+        {hasSearched && !isFetching && !error && results.length === 0 && (
+          <Typography sx={{ mt: 2 }} color="text.secondary">
+            No results for "{submittedTerm}".
+          </Typography>
+        )}
+        <SearchResultsList results={results} mediaType={mediaType} />
       </Box>
     </Box>
   );

@@ -143,9 +143,59 @@ func getSeries(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintln("Internal Server Error: Unable to query show", mediaName)})
 		return
 	}
-	logger.InfoContext(ctx, "response", telemetry.WithTraceContext(ctx, "value", response)...)
+	logger.InfoContext(ctx, "Search response", telemetry.WithTraceContext(ctx, "count", len(response))...)
 	c.JSON(http.StatusOK, response)
 
+}
+
+// searchItemToMedia maps one TVDB search hit onto the Media shape the rest of
+// Scout consumes. It reports false when the hit's id is not in the expected
+// "<type>-<id>" form.
+//
+// Search hits already carry aliases (series) and genres (movies), the two
+// things the extended record used to be fetched for on every search result,
+// so both are mapped here.
+func searchItemToMedia(item tvdb.TVDBSearchItem) (tvdb.Media, bool) {
+	parts := strings.SplitN(item.Id, "-", 2)
+	if len(parts) != 2 {
+		return tvdb.Media{}, false
+	}
+
+	// Normalize image URL - prepend domain if relative path
+	imageUrl := item.ImageUrl
+	if imageUrl != "" && !strings.Contains(imageUrl, "https") {
+		imageUrl = "https://artworks.thetvdb.com" + imageUrl
+	}
+
+	aliases := item.Aliases
+	if aliases == nil {
+		aliases = []string{}
+	}
+
+	return tvdb.Media{
+		Id:           parts[1],
+		Name:         item.Translations.Eng,
+		Category:     item.Category,
+		ImageUrl:     imageUrl,
+		OriginalName: item.OriginalName,
+		Slug:         item.Slug,
+		Status:       item.Status,
+		Overview:     item.Overviews.Eng,
+		Year:         item.Year,
+		Aliases:      aliases,
+		Anime:        isAnimeGenre(item.Genres, item.Category),
+	}, true
+}
+
+// isAnimeGenre applies Scout's anime rule to a list of genre names: "Anime"
+// marks anything, and "Animation" additionally marks movies (Ghibli, Shinkai).
+func isAnimeGenre(genres []string, mediaType string) bool {
+	for _, genre := range genres {
+		if genre == "Anime" || (mediaType == "movie" && genre == "Animation") {
+			return true
+		}
+	}
+	return false
 }
 
 // Queries TVDB for media
@@ -163,8 +213,6 @@ func queryShow(ctx context.Context, showName, mediaType string) ([]tvdb.Media, e
 		logger.InfoContext(ctx, "Unable to get show information", telemetry.WithTraceContext(ctx, "value", err)...)
 	}
 
-	logger.InfoContext(ctx, "TVDB response", telemetry.WithTraceContext(ctx, "data", string(result))...)
-
 	// Attempt to marshal response
 	if err := json.Unmarshal(result, &searchResponse); err != nil {
 		logger.InfoContext(ctx, "Unable to unmarshal json response", "value", err)
@@ -173,36 +221,16 @@ func queryShow(ctx context.Context, showName, mediaType string) ([]tvdb.Media, e
 
 	ch := make(chan struct{}, 20)
 	var wg sync.WaitGroup
-	logger.InfoContext(ctx, "Search results count", "count", len(searchResponse.Data))
+	logger.InfoContext(ctx, "Search results count", "count", len(searchResponse.Data), "bytes", len(result))
 	for _, item := range searchResponse.Data {
-		wg.Add(1)
-		// Normalize image URL - prepend domain if relative path
-		var imageUrl string
-		if item.ImageUrl != "" && !strings.Contains(item.ImageUrl, "https") {
-			imageUrl = "https://artworks.thetvdb.com" + item.ImageUrl
-		} else {
-			imageUrl = item.ImageUrl
-		}
-
-		parts := strings.SplitN(item.Id, "-", 2)
-		if len(parts) != 2 {
+		mediaData, ok := searchItemToMedia(item)
+		if !ok {
 			logger.WarnContext(ctx, "Skipping invalid TVDB item id format", "raw_id", item.Id)
-			wg.Done()
 			continue
 		}
-		mediaData := tvdb.Media{
-			Id:           parts[1],
-			Name:         item.Translations.Eng,
-			Category:     item.Category,
-			ImageUrl:     imageUrl,
-			OriginalName: item.OriginalName,
-			Slug:         item.Slug,
-			Status:       item.Status,
-			Overview:     item.Overviews.Eng,
-			Year:         item.Year,
-		}
+
+		wg.Add(1)
 		ch <- struct{}{}
-		logger.InfoContext(ctx, "Processing media data...")
 
 		go func(ctx context.Context, mediaData tvdb.Media) {
 			defer wg.Done()
