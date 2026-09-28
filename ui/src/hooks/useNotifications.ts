@@ -103,6 +103,15 @@ async function dismissNotification(id: number): Promise<void> {
   }
 }
 
+async function dismissAllNotifications(): Promise<void> {
+  const response = await fetch(API_BASE, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to clear notifications: ${response.statusText}`);
+  }
+}
+
 // ==================== Query Hooks ====================
 
 /**
@@ -185,9 +194,9 @@ export function useMarkAsRead() {
         return updated;
       });
 
-      queryClient.setQueryData<number>(['notifications', 'unread', 'count'], (old) => {
+      queryClient.setQueryData<UnreadCountResponse>(['notifications', 'unread', 'count'], (old) => {
         if (!old) return old;
-        return Math.max(0, old - 1);
+        return { count: Math.max(0, old.count - 1) };
       });
 
       return { previousNotifications, previousGrouped, previousCount };
@@ -200,7 +209,7 @@ export function useMarkAsRead() {
       if (context?.previousGrouped) {
         queryClient.setQueryData(['notifications', 'grouped'], context.previousGrouped);
       }
-      if (context?.previousCount) {
+      if (context?.previousCount !== undefined) {
         queryClient.setQueryData(['notifications', 'unread', 'count'], context.previousCount);
       }
     },
@@ -253,9 +262,9 @@ export function useDismissNotification() {
       queryClient.setQueryData<Notification[]>(['notifications'], (old) => {
         const notification = old?.find((n) => n.id === notificationId);
         if (notification && !notification.is_read) {
-          queryClient.setQueryData<number>(['notifications', 'unread', 'count'], (count) => {
-            if (!count) return count;
-            return Math.max(0, count - 1);
+          queryClient.setQueryData<UnreadCountResponse>(['notifications', 'unread', 'count'], (old) => {
+            if (!old) return old;
+            return { count: Math.max(0, old.count - 1) };
           });
         }
         return old;
@@ -270,7 +279,7 @@ export function useDismissNotification() {
       if (context?.previousGrouped) {
         queryClient.setQueryData(['notifications', 'grouped'], context.previousGrouped);
       }
-      if (context?.previousCount) {
+      if (context?.previousCount !== undefined) {
         queryClient.setQueryData(['notifications', 'unread', 'count'], context.previousCount);
       }
     },
@@ -291,6 +300,49 @@ export function useDismissGroup() {
       await Promise.all(notificationIds.map((id) => dismissNotification(id)));
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    },
+  });
+}
+
+/**
+ * Dismiss every visible notification in one request (the bell's "Clear all").
+ * Optimistically empties the list and badge, and restores them if the request fails.
+ */
+export function useDismissAll() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: dismissAllNotifications,
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ['notifications'] });
+
+      const previousNotifications = queryClient.getQueryData(['notifications']);
+      const previousGrouped = queryClient.getQueryData(['notifications', 'grouped']);
+      const previousCount = queryClient.getQueryData(['notifications', 'unread', 'count']);
+
+      queryClient.setQueryData<Notification[]>(['notifications'], (old) => (old ? [] : old));
+      queryClient.setQueryData<GroupedNotifications>(['notifications', 'grouped'], (old) =>
+        old ? {} : old,
+      );
+      queryClient.setQueryData<UnreadCountResponse>(['notifications', 'unread', 'count'], (old) =>
+        old ? { count: 0 } : old,
+      );
+
+      return { previousNotifications, previousGrouped, previousCount };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previousNotifications) {
+        queryClient.setQueryData(['notifications'], context.previousNotifications);
+      }
+      if (context?.previousGrouped) {
+        queryClient.setQueryData(['notifications', 'grouped'], context.previousGrouped);
+      }
+      if (context?.previousCount !== undefined) {
+        queryClient.setQueryData(['notifications', 'unread', 'count'], context.previousCount);
+      }
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
     },
   });

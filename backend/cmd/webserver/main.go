@@ -206,6 +206,7 @@ func main() {
 	r.GET("/notifications/unread/count", notificationHandler.GetUnreadCount)
 	r.PATCH("/notifications/:id/read", notificationHandler.MarkAsRead)
 	r.DELETE("/notifications/:id", notificationHandler.DismissNotification)
+	r.DELETE("/notifications", notificationHandler.DismissAllNotifications)
 
 	// Start server
 	srv := &http.Server{Addr: cfg.BindAddress, Handler: r}
