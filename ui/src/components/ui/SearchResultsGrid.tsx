@@ -9,7 +9,10 @@ import { buildStatusBadgeFromEnriched } from "../../utils/statusHelpers";
 interface SearchResultsGridProps {
   results: EnrichedMedia[];
   onSelect: (result: EnrichedMedia) => void;
-  /** Minimum poster width; the grid auto-fills columns from it. */
+  /**
+   * Minimum poster width from the `sm` breakpoint up; the grid auto-fills
+   * columns from it. Phones ignore it and always fit two columns.
+   */
   minCardWidth?: number;
   /** Optional label shown under the title in the hover overlay. */
   cardCategory?: string;
@@ -67,8 +70,11 @@ const SearchResultsGrid: React.FC<SearchResultsGridProps> = ({
       sx={[
         {
           display: "grid",
-          gridTemplateColumns: `repeat(auto-fill, minmax(${minCardWidth}px, 1fr))`,
-          gap: 3,
+          gridTemplateColumns: {
+            xs: "repeat(auto-fill, minmax(130px, 1fr))",
+            sm: `repeat(auto-fill, minmax(${minCardWidth}px, 1fr))`,
+          },
+          gap: { xs: 1.5, sm: 3 },
         },
         ...(Array.isArray(sx) ? sx : [sx]),
       ]}

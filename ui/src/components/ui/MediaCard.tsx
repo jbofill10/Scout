@@ -146,6 +146,17 @@ const MediaCard: React.FC<MediaCardProps> = ({
     }
   };
 
+  // Raised, ringed, overlay revealed. Applied on hover only where a pointer
+  // can hover: on touch screens :hover sticks after a tap and would leave the
+  // last poster tapped floating above its row.
+  const liftSx = {
+    borderColor: alpha(theme.palette.primary.light, 0.55),
+    transform: "translateY(-6px) scale(1.03)",
+    boxShadow: theme.shadows[10],
+    "& .media-card-overlay": { opacity: 1 },
+    "& .media-card-action": { transform: "translateY(0)" },
+  };
+
   return (
     <Card
       onClick={handleClick}
@@ -167,17 +178,8 @@ const MediaCard: React.FC<MediaCardProps> = ({
           duration: 260,
           easing: HOVER_EASING,
         }),
-        "&:hover, &:focus-visible": {
-          borderColor: alpha(theme.palette.primary.light, 0.55),
-          transform: "translateY(-6px) scale(1.03)",
-          boxShadow: theme.shadows[10],
-        },
-        "&:hover .media-card-overlay, &:focus-visible .media-card-overlay": {
-          opacity: 1,
-        },
-        "&:hover .media-card-action, &:focus-visible .media-card-action": {
-          transform: "translateY(0)",
-        },
+        "@media (hover: hover)": { "&:hover": liftSx },
+        "&:focus-visible": liftSx,
       }}
     >
       <Box

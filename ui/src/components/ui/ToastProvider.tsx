@@ -5,6 +5,7 @@ import type { AlertColor } from "@mui/material/Alert";
 import Button from "@mui/material/Button";
 import { useNavigate } from "react-router-dom";
 import { ToastContext, type ShowToast } from "../../contexts/ToastContext";
+import { BOTTOM_NAV_HEIGHT } from "./BottomNav";
 
 interface ToastState {
   key: number;
@@ -48,6 +49,13 @@ const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         autoHideDuration={toast?.duration ?? null}
         onClose={handleClose}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+        // Clear the phone tab bar instead of landing on top of it
+        sx={{
+          bottom: {
+            xs: `calc(${BOTTOM_NAV_HEIGHT + 8}px + env(safe-area-inset-bottom, 0px))`,
+            md: 24,
+          },
+        }}
       >
         <Alert
           onClose={handleClose}

@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
+import Box from '@mui/material/Box';
 import { QueryClientProvider } from '@tanstack/react-query';
 import Navbar from './components/ui/Navbar';
+import BottomNav, { BOTTOM_NAV_HEIGHT } from './components/ui/BottomNav';
 import SearchDropdown from './components/ui/SearchDropdown';
 import ErrorBoundary from './components/ErrorBoundary';
 import ToastProvider from './components/ui/ToastProvider';
@@ -39,14 +41,26 @@ function App() {
               <ToastProvider>
                 <Navbar onSearchClick={handleOpenSearch} />
                 <SearchDropdown isOpen={searchDropdownOpen} onClose={handleCloseSearch} />
-                <Routes>
-                  <Route path="/" element={<ErrorBoundary><Home /></ErrorBoundary>} />
-                  <Route path="/shows" element={<ErrorBoundary><Shows /></ErrorBoundary>} />
-                  <Route path="/movies" element={<ErrorBoundary><Movies /></ErrorBoundary>} />
-                  <Route path="/activity" element={<ErrorBoundary><Activity /></ErrorBoundary>} />
-                  <Route path="/search" element={<ErrorBoundary><Search /></ErrorBoundary>} />
-                  <Route path="/library" element={<ErrorBoundary><Library /></ErrorBoundary>} />
-                </Routes>
+                {/* Below md the bottom tab bar is fixed over the page, so leave room for it */}
+                <Box
+                  component="main"
+                  sx={{
+                    pb: {
+                      xs: `calc(${BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom, 0px))`,
+                      md: 0,
+                    },
+                  }}
+                >
+                  <Routes>
+                    <Route path="/" element={<ErrorBoundary><Home /></ErrorBoundary>} />
+                    <Route path="/shows" element={<ErrorBoundary><Shows /></ErrorBoundary>} />
+                    <Route path="/movies" element={<ErrorBoundary><Movies /></ErrorBoundary>} />
+                    <Route path="/activity" element={<ErrorBoundary><Activity /></ErrorBoundary>} />
+                    <Route path="/search" element={<ErrorBoundary><Search /></ErrorBoundary>} />
+                    <Route path="/library" element={<ErrorBoundary><Library /></ErrorBoundary>} />
+                  </Routes>
+                </Box>
+                <BottomNav />
               </ToastProvider>
             </Router>
           </GenreProvider>

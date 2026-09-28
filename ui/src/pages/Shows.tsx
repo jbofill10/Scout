@@ -34,7 +34,7 @@ const Shows: React.FC = () => {
       sx={{
         minHeight: '100vh',
         backgroundColor: theme.palette.background.default,
-        pt: 13,
+        pt: { xs: 11, md: 13 },
         pb: 8,
       }}
     >

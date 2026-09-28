@@ -33,8 +33,20 @@ const Search: React.FC = () => {
   const hasSearched = submittedTerm.trim().length > 0;
 
   return (
-    <Box sx={{ mt: 10, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-      <Paper elevation={3} sx={{ p: 4, borderRadius: 3, mb: 4, width: '100%', maxWidth: 600 }}>
+    <Box
+      sx={{
+        pt: { xs: 11, md: 13 },
+        pb: 8,
+        px: 2,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+      }}
+    >
+      <Paper
+        elevation={3}
+        sx={{ p: { xs: 2.5, sm: 4 }, borderRadius: 3, mb: 4, width: '100%', maxWidth: 600 }}
+      >
         <Box sx={{ mb: 3, display: 'flex', justifyContent: 'center' }}>
           <ToggleButtonGroup
             value={mediaType}
@@ -53,7 +65,12 @@ const Search: React.FC = () => {
             </ToggleButton>
           </ToggleButtonGroup>
         </Box>
-        <form onSubmit={onSearch} style={{ display: 'flex', gap: 16 }}>
+        {/* The button drops under the field on phones rather than squeezing it */}
+        <Box
+          component="form"
+          onSubmit={onSearch}
+          sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 2 }}
+        >
           <TextField
             fullWidth
             label="Search for media"
@@ -65,7 +82,7 @@ const Search: React.FC = () => {
           <Button type="submit" variant="contained" color="primary" sx={{ minWidth: 120 }}>
             Search
           </Button>
-        </form>
+        </Box>
       </Paper>
       <Box sx={{ width: '100%', maxWidth: 900, mt: 2 }}>
         {results.length > 0 && (

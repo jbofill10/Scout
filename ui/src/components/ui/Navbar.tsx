@@ -11,19 +11,12 @@ import SearchIcon from '@mui/icons-material/Search';
 import { alpha, useTheme } from '@mui/material/styles';
 import NotificationDropdown from './NotificationDropdown';
 import ScoutLogo from './ScoutLogo';
+import { NAV_LINKS } from './navLinks';
 import { useActiveDownloadCount } from '../../hooks/useActivity';
 
 interface NavbarProps {
   onSearchClick: () => void;
 }
-
-const NAV_LINKS = [
-  { label: 'Home', path: '/' },
-  { label: 'Shows', path: '/shows' },
-  { label: 'Movies', path: '/movies' },
-  { label: 'Library', path: '/library' },
-  { label: 'Activity', path: '/activity' },
-];
 
 /**
  * Navbar Component
@@ -34,6 +27,8 @@ const NAV_LINKS = [
  * - Transparent over the page at rest, frosted once scrolled so poster rows
  *   pass cleanly underneath
  * - Active route marked with a filled pill rather than an underline
+ * - Below the `md` breakpoint the pills give way to BottomNav; only the logo
+ *   and the action icons stay up here
  */
 const Navbar: React.FC<NavbarProps> = ({ onSearchClick }) => {
   const theme = useTheme();
@@ -78,12 +73,12 @@ const Navbar: React.FC<NavbarProps> = ({ onSearchClick }) => {
           <ScoutLogo size={30} />
         </Box>
 
-        {/* Center: Navigation Links */}
+        {/* Center: Navigation Links (desktop only; BottomNav covers phones) */}
         <Box
           component="nav"
           aria-label="Main navigation"
           sx={{
-            display: 'flex',
+            display: { xs: 'none', md: 'flex' },
             gap: 0.5,
             p: 0.5,
             borderRadius: 999,

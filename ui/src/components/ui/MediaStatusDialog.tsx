@@ -18,6 +18,7 @@ import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
 import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import type { ShowStatus, EnrichedMedia } from "../../types/MediaStatus";
 import { alpha, useTheme } from "@mui/material/styles";
+import useMediaQuery from "@mui/material/useMediaQuery";
 import { useShowMetadataStatus } from "../../hooks/useLibrary";
 
 export interface MediaStatusDialogProps {
@@ -59,6 +60,7 @@ interface EnrichedSeasonInfo {
  * - Show poster and name header
  * - Keyboard accessible (ESC to close)
  * - Material-UI theme integration
+ * - Fills the screen on phones so the episode list gets the full height
  */
 export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
   open,
@@ -74,6 +76,11 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
   inLibrary,
 }) => {
   const theme = useTheme();
+  // A centred card on a phone leaves the episode list a few rows tall, and a
+  // phone held sideways is short enough that the same applies.
+  const isPhoneWidth = useMediaQuery(theme.breakpoints.down("sm"));
+  const isShort = useMediaQuery("(max-height: 520px)");
+  const fullScreen = isPhoneWidth || isShort;
   const [selectedSeasonIndex, setSelectedSeasonIndex] = useState<number | null>(null);
 
   // TVDB sync progress, used to surface missing-episode counts for shows
@@ -189,7 +196,15 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
   const downloadLabel = isMovie ? "Download" : "Download missing";
 
   const actions = (
-    <DialogActions sx={{ px: 3, py: 2, borderTop: `1px solid ${theme.palette.divider}` }}>
+    <DialogActions
+      sx={{
+        px: { xs: 2, sm: 3 },
+        py: 2,
+        // Keep the buttons above the home indicator when the dialog fills the screen
+        pb: fullScreen ? "calc(16px + env(safe-area-inset-bottom, 0px))" : 2,
+        borderTop: `1px solid ${theme.palette.divider}`,
+      }}
+    >
       <Button onClick={onClose} variant="text" color="inherit">
         Close
       </Button>
@@ -225,15 +240,15 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
         <DialogTitle
           id="media-status-dialog-title"
           component="div"
-          sx={{ display: "flex", alignItems: "flex-start", gap: 2.5, p: 3 }}
+          sx={{ display: "flex", alignItems: "flex-start", gap: { xs: 2, sm: 2.5 }, p: { xs: 2, sm: 3 } }}
         >
           <Box
             component="img"
             src={posterUrl}
             alt={mediaName}
             sx={{
-              width: 96,
-              height: 144,
+              width: { xs: 72, sm: 96 },
+              height: { xs: 108, sm: 144 },
               flexShrink: 0,
               objectFit: "cover",
               borderRadius: 2,
@@ -306,13 +321,20 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
       onClose={onClose}
       maxWidth="md"
       fullWidth
+      fullScreen={fullScreen}
       aria-labelledby="media-status-dialog-title"
     >
       {/* Header with poster, title and overall coverage */}
       <DialogTitle
         id="media-status-dialog-title"
         component="div"
-        sx={{ display: "flex", alignItems: "flex-start", gap: 2.5, p: 3, pb: 2.5 }}
+        sx={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: { xs: 2, sm: 2.5 },
+          p: { xs: 2, sm: 3 },
+          pb: { xs: 2, sm: 2.5 },
+        }}
       >
         <Box
           component="img"
@@ -355,10 +377,12 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
         </IconButton>
       </DialogTitle>
 
-      <DialogContent sx={{ p: 0 }}>
+      {/* A flex column so that, full screen, the episode list alone scrolls and
+          the season tabs stay put above it */}
+      <DialogContent sx={{ p: 0, display: "flex", flexDirection: "column", minHeight: 0 }}>
         {/* TVDB Metadata Status Banner */}
         {enrichedMedia?.status.type === "series" && metadataStatus && (
-          <Box sx={{ p: 2, pb: 0 }}>
+          <Box sx={{ p: 2, pb: 0, flexShrink: 0 }}>
             {!metadataStatus.hasTvdbData && metadataStatus.plexEpisodeCount > 0 ? (
               <Alert severity="info">
                 <AlertTitle>TVDB Sync in Progress</AlertTitle>
@@ -380,7 +404,7 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
         )}
 
         {/* Season Tabs — each label carries that season's coverage */}
-        <Box sx={{ borderBottom: `1px solid ${theme.palette.divider}` }}>
+        <Box sx={{ borderBottom: `1px solid ${theme.palette.divider}`, flexShrink: 0 }}>
           <Tabs
             value={activeSeasonIndex}
             onChange={handleSeasonChange}
@@ -388,7 +412,7 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
             scrollButtons="auto"
             aria-label="season tabs"
             sx={{
-              px: 3,
+              px: { xs: 2, sm: 3 },
               minHeight: 48,
               "& .MuiTab-root": {
                 minHeight: 48,
@@ -419,7 +443,14 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
           role="tabpanel"
           id={`season-panel-${currentSeason.seasonNum}`}
           aria-labelledby={`season-tab-${currentSeason.seasonNum}`}
-          sx={{ px: 3, py: 2, maxHeight: "48vh", overflowY: "auto" }}
+          sx={{
+            px: { xs: 2, sm: 3 },
+            py: 2,
+            flex: fullScreen ? 1 : "none",
+            minHeight: 0,
+            maxHeight: fullScreen ? "none" : "48vh",
+            overflowY: "auto",
+          }}
         >
           {currentSeason.episodes.length === 0 ? (
             <Typography variant="body2" color="text.secondary" align="center" sx={{ py: 6 }}>
