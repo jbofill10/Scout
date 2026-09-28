@@ -143,20 +143,3 @@ func (h *NotificationHandler) DismissNotification(c *gin.Context) {
 	h.logger.InfoContext(ctx, "Dismissed notification", telemetry.WithTraceContext(ctx, "id", id)...)
 	c.JSON(200, gin.H{"message": "Notification dismissed"})
 }
-
-// DismissAllNotifications soft-deletes every visible notification (the bell's "Clear all")
-func (h *NotificationHandler) DismissAllNotifications(c *gin.Context) {
-	ctx := c.Request.Context()
-
-	h.logger.InfoContext(ctx, "Dismissing all notifications", telemetry.WithTraceContext(ctx)...)
-
-	count, err := h.repo.DismissAll(ctx)
-	if err != nil {
-		h.logger.ErrorContext(ctx, "Failed to dismiss all notifications", telemetry.WithTraceContext(ctx, "error", err)...)
-		c.JSON(500, gin.H{"error": "Failed to dismiss notifications"})
-		return
-	}
-
-	h.logger.InfoContext(ctx, "Dismissed all notifications", telemetry.WithTraceContext(ctx, "count", count)...)
-	c.JSON(200, gin.H{"message": "Notifications dismissed", "count": count})
-}

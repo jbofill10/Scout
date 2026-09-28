@@ -40,7 +40,7 @@ import {
   useGroupedNotifications,
   useMarkAsRead,
   useDismissNotification,
-  useDismissAll,
+  useClearFinished,
   type NotificationGroup,
 } from "../../hooks/useNotifications";
 
@@ -302,7 +302,7 @@ export default function NotificationDropdown() {
   const groupedNotifications = useGroupedNotifications(isOpen);
   const markAsReadMutation = useMarkAsRead();
   const dismissMutation = useDismissNotification();
-  const dismissAllMutation = useDismissAll();
+  const clearFinishedMutation = useClearFinished();
 
   // Handle ESC key
   useEffect(() => {
@@ -338,14 +338,17 @@ export default function NotificationDropdown() {
     dismissMutation.mutate(id);
   };
 
-  const handleDismissAll = () => {
-    dismissAllMutation.mutate();
+  const handleClearFinished = () => {
+    clearFinishedMutation.mutate();
   };
 
   const notificationGroups = groupedNotifications.data
     ? Object.values(groupedNotifications.data)
     : [];
-  const hasNotifications = notificationGroups.length > 0;
+  // Only completed and failed items can be cleared; in-flight work always stays
+  const hasFinished = notificationGroups.some((group) =>
+    group.notifications.some((n) => n.status === "completed" || n.status === "failed"),
+  );
 
   return (
     <>
@@ -443,17 +446,17 @@ export default function NotificationDropdown() {
               )}
             </Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexShrink: 0 }}>
-              {/* One request clears everything; the list empties immediately and comes
-                  back only if the server refuses */}
+              {/* Clears completed and given-up items in one request. Anything still
+                  scheduled, searching, downloading or waiting on a retry stays. */}
               <Button
                 size="small"
                 variant="text"
                 color="inherit"
-                onClick={handleDismissAll}
-                disabled={!hasNotifications || dismissAllMutation.isPending}
+                onClick={handleClearFinished}
+                disabled={!hasFinished || clearFinishedMutation.isPending}
                 sx={{ px: 1, color: theme.palette.text.secondary, whiteSpace: "nowrap" }}
               >
-                Clear all
+                Clear finished
               </Button>
               <IconButton onClick={handleClose} size="small" aria-label="Close notifications">
                 <CloseIcon />

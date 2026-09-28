@@ -103,7 +103,7 @@ async function dismissNotification(id: number): Promise<void> {
   }
 }
 
-async function dismissAllNotifications(): Promise<void> {
+async function clearFinishedNotifications(): Promise<void> {
   const response = await fetch(API_BASE, {
     method: 'DELETE',
   });
@@ -306,27 +306,47 @@ export function useDismissGroup() {
 }
 
 /**
- * Dismiss every visible notification in one request (the bell's "Clear all").
- * Optimistically empties the list and badge, and restores them if the request fails.
+ * Clear finished notifications in one request (the bell's "Clear finished").
+ *
+ * The server drops completed items and failures it has given up on, and keeps
+ * anything in flight or waiting for a retry. Only completed items are removed
+ * optimistically: the client cannot tell a given-up failure from one that is
+ * about to be retried, and briefly hiding a live item reads as a glitch.
  */
-export function useDismissAll() {
+export function useClearFinished() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: dismissAllNotifications,
+    mutationFn: clearFinishedNotifications,
     onMutate: async () => {
       await queryClient.cancelQueries({ queryKey: ['notifications'] });
 
-      const previousNotifications = queryClient.getQueryData(['notifications']);
-      const previousGrouped = queryClient.getQueryData(['notifications', 'grouped']);
-      const previousCount = queryClient.getQueryData(['notifications', 'unread', 'count']);
+      const previousNotifications = queryClient.getQueryData<Notification[]>(['notifications']);
+      const previousGrouped = queryClient.getQueryData<GroupedNotifications>(['notifications', 'grouped']);
+      const previousCount = queryClient.getQueryData<UnreadCountResponse>(['notifications', 'unread', 'count']);
 
-      queryClient.setQueryData<Notification[]>(['notifications'], (old) => (old ? [] : old));
-      queryClient.setQueryData<GroupedNotifications>(['notifications', 'grouped'], (old) =>
-        old ? {} : old,
+      const isDone = (n: Notification) => n.status === 'completed';
+
+      queryClient.setQueryData<Notification[]>(['notifications'], (old) =>
+        old ? old.filter((n) => !isDone(n)) : old,
       );
+
+      let removedUnread = 0;
+      queryClient.setQueryData<GroupedNotifications>(['notifications', 'grouped'], (old) => {
+        if (!old) return old;
+        const updated: GroupedNotifications = {};
+        Object.entries(old).forEach(([tvdbId, group]) => {
+          removedUnread += group.notifications.filter((n) => isDone(n) && !n.is_read).length;
+          const remaining = group.notifications.filter((n) => !isDone(n));
+          if (remaining.length > 0) {
+            updated[tvdbId] = { ...group, notifications: remaining };
+          }
+        });
+        return updated;
+      });
+
       queryClient.setQueryData<UnreadCountResponse>(['notifications', 'unread', 'count'], (old) =>
-        old ? { count: 0 } : old,
+        old ? { count: Math.max(0, old.count - removedUnread) } : old,
       );
 
       return { previousNotifications, previousGrouped, previousCount };

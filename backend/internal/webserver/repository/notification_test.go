@@ -11,6 +11,7 @@ import (
 	"github.com/jbofill10/scout/backend/pkg/notifications"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -352,36 +353,36 @@ func (s *NotificationRepoTestSuite) TestDismiss_NotFound() {
 	s.NoError(s.mock.ExpectationsWereMet())
 }
 
-func (s *NotificationRepoTestSuite) TestDismissAll_Success() {
-	s.mock.ExpectExec(`UPDATE Notifications SET auto_dismissed = true, updated_at = \$1 WHERE auto_dismissed = false`).
-		WithArgs(sqlmock.AnyArg()).
+func (s *NotificationRepoTestSuite) TestDismissFinished_Success() {
+	s.mock.ExpectExec(`UPDATE Notifications SET auto_dismissed = true, updated_at = \$1`).
+		WithArgs(sqlmock.AnyArg(), "completed", "failed", pq.Array([]string{"42", "43"})).
 		WillReturnResult(sqlmock.NewResult(0, 7))
 
-	count, err := s.repo.DismissAll(context.Background())
+	count, err := s.repo.DismissFinished(context.Background(), []string{"42", "43"})
 
 	s.NoError(err)
 	s.Equal(int64(7), count)
 	s.NoError(s.mock.ExpectationsWereMet())
 }
 
-func (s *NotificationRepoTestSuite) TestDismissAll_NothingToDismiss() {
+func (s *NotificationRepoTestSuite) TestDismissFinished_NilKeepListDismissesEveryFailure() {
 	s.mock.ExpectExec(`UPDATE Notifications SET auto_dismissed = true`).
-		WithArgs(sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), "completed", "failed", pq.Array([]string{})).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	count, err := s.repo.DismissAll(context.Background())
+	count, err := s.repo.DismissFinished(context.Background(), nil)
 
 	s.NoError(err)
 	s.Equal(int64(0), count)
 	s.NoError(s.mock.ExpectationsWereMet())
 }
 
-func (s *NotificationRepoTestSuite) TestDismissAll_DBError() {
+func (s *NotificationRepoTestSuite) TestDismissFinished_DBError() {
 	s.mock.ExpectExec(`UPDATE Notifications SET auto_dismissed = true`).
-		WithArgs(sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), "completed", "failed", sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
 
-	count, err := s.repo.DismissAll(context.Background())
+	count, err := s.repo.DismissFinished(context.Background(), []string{"1"})
 
 	s.Error(err)
 	s.Equal(int64(0), count)
