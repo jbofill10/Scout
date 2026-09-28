@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/jbofill10/scout/backend/pkg/notifications"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 // NotificationRepo implements NotificationRepository using PostgreSQL
@@ -227,17 +227,27 @@ func (r *NotificationRepo) Dismiss(ctx context.Context, id int) error {
 	return nil
 }
 
-// DismissAll soft-deletes every notification that is still visible.
-// Dismissing an already-empty list is not an error; the caller gets a zero count.
-func (r *NotificationRepo) DismissAll(ctx context.Context) (int64, error) {
+// DismissFinished soft-deletes completed notifications and failed ones the
+// scheduler has given up on. Scheduled, searching and downloading rows are left
+// alone, and so is a failed row whose tvdb id is in keepTvdbIDs: a retry is
+// still pending for it, and the retry needs a visible row to update.
+// Nothing to dismiss is not an error; the caller gets a zero count.
+func (r *NotificationRepo) DismissFinished(ctx context.Context, keepTvdbIDs []string) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	stmt := `UPDATE Notifications SET auto_dismissed = true, updated_at = $1 WHERE auto_dismissed = false`
-	result, err := r.db.ExecContext(ctx, stmt, time.Now())
+	if keepTvdbIDs == nil {
+		keepTvdbIDs = []string{}
+	}
+
+	stmt := `UPDATE Notifications SET auto_dismissed = true, updated_at = $1
+		WHERE auto_dismissed = false
+		AND (status = $2 OR (status = $3 AND NOT (tvdb_id = ANY($4))))`
+	result, err := r.db.ExecContext(ctx, stmt, time.Now(),
+		string(notifications.StatusCompleted), string(notifications.StatusFailed), pq.Array(keepTvdbIDs))
 	if err != nil {
-		r.logger.ErrorContext(ctx, "Failed to dismiss all notifications", "error", err)
-		return 0, fmt.Errorf("failed to dismiss all notifications: %w", err)
+		r.logger.ErrorContext(ctx, "Failed to dismiss finished notifications", "error", err)
+		return 0, fmt.Errorf("failed to dismiss finished notifications: %w", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
@@ -245,7 +255,7 @@ func (r *NotificationRepo) DismissAll(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("failed to get rows affected: %w", err)
 	}
 
-	r.logger.InfoContext(ctx, "Dismissed all notifications", "count", rowsAffected)
+	r.logger.InfoContext(ctx, "Dismissed finished notifications", "count", rowsAffected, "kept", len(keepTvdbIDs))
 	return rowsAffected, nil
 }
 

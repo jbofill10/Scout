@@ -206,7 +206,8 @@ func main() {
 	r.GET("/notifications/unread/count", notificationHandler.GetUnreadCount)
 	r.PATCH("/notifications/:id/read", notificationHandler.MarkAsRead)
 	r.DELETE("/notifications/:id", notificationHandler.DismissNotification)
-	r.DELETE("/notifications", notificationHandler.DismissAllNotifications)
+	// "Clear finished" in the bell: completed and given-up items only, never in-flight work
+	r.DELETE("/notifications", activityHandler.ClearFinishedNotifications)
 
 	// Start server
 	srv := &http.Server{Addr: cfg.BindAddress, Handler: r}

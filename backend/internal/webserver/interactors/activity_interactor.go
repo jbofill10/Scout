@@ -2,6 +2,7 @@ package interactors
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sort"
 	"time"
@@ -113,4 +114,24 @@ func sortByUpdatedDesc(items []ActivityItem) {
 	sort.SliceStable(items, func(x, y int) bool {
 		return items[x].UpdatedAt.After(items[y].UpdatedAt)
 	})
+}
+
+// ClearFinished dismisses every notification the activity view would list as
+// finished: completed ones, and failed ones the scheduler has given up on.
+// Anything still in flight, or failed but waiting for a retry, stays visible so
+// its next status update has a row to land on. Unlike GetActivity, a failure to
+// read the schedule aborts the call: guessing would risk hiding a pending retry.
+func (a *ActivityInteractor) ClearFinished(ctx context.Context) (int64, error) {
+	meta, err := a.schedulerRepo.GetPendingScheduleMeta(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to load pending schedule metadata: %w", err)
+	}
+
+	retrying := make([]string, 0, len(meta))
+	for tvdbID := range meta {
+		retrying = append(retrying, tvdbID)
+	}
+	sort.Strings(retrying)
+
+	return a.notificationRepo.DismissFinished(ctx, retrying)
 }

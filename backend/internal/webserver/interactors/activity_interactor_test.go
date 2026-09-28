@@ -127,3 +127,41 @@ func TestGetActivity_PropagatesNotificationFailure(t *testing.T) {
 	_, err := a.GetActivity(context.Background(), 10)
 	assert.Error(t, err)
 }
+
+func TestClearFinished_KeepsFailuresWithPendingRetries(t *testing.T) {
+	notifRepo := repoMocks.NewNotificationRepository(t)
+	// The retrying ids reach the repository sorted, so the query is deterministic.
+	notifRepo.On("DismissFinished", mock.Anything, []string{"1", "2"}).Return(int64(4), nil)
+	sched := &fakeSchedulerRepo{pendingMeta: map[string]repository.ScheduleMeta{
+		"2": {ScheduleStatus: repository.StatusPending},
+		"1": {ScheduleStatus: repository.StatusPending},
+	}}
+
+	a := NewActivityInteractor(notifRepo, sched, testLogger())
+
+	count, err := a.ClearFinished(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), count)
+}
+
+func TestClearFinished_NoPendingRetries(t *testing.T) {
+	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("DismissFinished", mock.Anything, []string{}).Return(int64(2), nil)
+
+	a := NewActivityInteractor(notifRepo, &fakeSchedulerRepo{}, testLogger())
+
+	count, err := a.ClearFinished(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), count)
+}
+
+func TestClearFinished_AbortsWhenScheduleLookupFails(t *testing.T) {
+	// No DismissFinished expectation: the mock fails the test if it is called.
+	notifRepo := repoMocks.NewNotificationRepository(t)
+	sched := &fakeSchedulerRepo{pendingMetaErr: errors.New("db down")}
+
+	a := NewActivityInteractor(notifRepo, sched, testLogger())
+
+	_, err := a.ClearFinished(context.Background())
+	require.Error(t, err)
+}
