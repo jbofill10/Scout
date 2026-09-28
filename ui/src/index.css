@@ -19,6 +19,9 @@ body {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Phones: no grey flash on tap, and no double-tap-to-zoom delay on buttons. */
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
 /* Slim, self-effacing scrollbars that match the dark surface palette. */

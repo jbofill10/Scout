@@ -5,6 +5,7 @@ import Typography from '@mui/material/Typography';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { alpha, useTheme } from '@mui/material/styles';
+import { CAROUSEL_ITEM_SX } from './carouselItem';
 
 interface HorizontalCarouselProps<T> {
   items: T[];
@@ -26,7 +27,9 @@ const ROW_CLASS = 'scout-carousel';
  * - Edge fades that hint at off-screen content without a hard clip
  * - Keyboard navigation (arrow keys)
  * - Hidden scrollbar for clean appearance
- * - Desktop-optimized for ~6.5 items per row at 1920x1080
+ * - ~2.6 posters per row on phones up to ~6.5 at 1920x1080
+ * - On phones the row bleeds to the screen edges and scrolls by touch; the
+ *   nav buttons are pointer-only so they never sit invisibly over a poster
  *
  * Hover reveal is CSS-only so moving the pointer across rows does not
  * re-render every poster in them.
@@ -102,6 +105,11 @@ function HorizontalCarousel<T>({ items, renderItem, title, subtitle }: Horizonta
       backgroundColor: alpha(theme.palette.primary.main, 0.9),
       transform: 'translateY(-50%) scale(1.06)',
     },
+    // Touch screens can't hover them into view, so an invisible button would
+    // only steal taps meant for the poster underneath.
+    '@media (hover: none)': {
+      display: 'none',
+    },
   };
 
   // Fade the row edges so cut-off posters read as "more to come"
@@ -110,7 +118,7 @@ function HorizontalCarousel<T>({ items, renderItem, title, subtitle }: Horizonta
     top: 0,
     bottom: 0,
     [side]: 0,
-    width: 56,
+    width: { xs: 24, sm: 56 },
     zIndex: 2,
     pointerEvents: 'none' as const,
     background: `linear-gradient(to ${side === 'left' ? 'right' : 'left'}, ${
@@ -140,8 +148,9 @@ function HorizontalCarousel<T>({ items, renderItem, title, subtitle }: Horizonta
       )}
 
       {/* Row viewport — nav buttons and edge fades are positioned against this,
-          not the title, so they stay centered on the posters. */}
-      <Box sx={{ position: 'relative' }}>
+          not the title, so they stay centered on the posters. On phones it
+          extends through the page gutter so posters scroll off the screen edge. */}
+      <Box sx={{ position: 'relative', mx: { xs: -2, sm: 0 } }}>
         {showLeftButton && <Box aria-hidden sx={edgeFadeSx('left')} />}
         {showRightButton && <Box aria-hidden sx={edgeFadeSx('right')} />}
 
@@ -160,6 +169,9 @@ function HorizontalCarousel<T>({ items, renderItem, title, subtitle }: Horizonta
             // Room for the hover lift so raised cards are not clipped
             py: 1.5,
             my: -1.5,
+            // Restore the page gutter inside the bleed so the first poster lines up
+            px: { xs: 2, sm: 0 },
+            scrollPaddingLeft: { xs: 16, sm: 0 },
             overflowX: 'auto',
             overflowY: 'hidden',
             scrollSnapType: 'x proximity',
@@ -170,12 +182,9 @@ function HorizontalCarousel<T>({ items, renderItem, title, subtitle }: Horizonta
             },
             scrollbarWidth: 'none',
             msOverflowStyle: 'none',
-            // Each item gets approximately 1/7 of container width (shows ~6.5 items)
             '& > *': {
-              flex: '0 0 calc((100% - 96px) / 7)',
+              ...CAROUSEL_ITEM_SX,
               scrollSnapAlign: 'start',
-              minWidth: '150px',
-              maxWidth: '230px',
             },
           }}
         >

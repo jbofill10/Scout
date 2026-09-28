@@ -277,6 +277,9 @@ const ScheduleWidget: React.FC = () => {
             // Room for the hover lift so raised cards are not clipped
             py: 1.5,
             my: -1.5,
+            // On phones the row runs through the page gutter to the screen edge
+            mx: { xs: -2, sm: 0 },
+            px: { xs: 2, sm: 0 },
             "&::-webkit-scrollbar": { display: "none" },
             scrollbarWidth: "none",
           }}
@@ -306,10 +309,12 @@ const ScheduleWidget: React.FC = () => {
                     ["transform", "box-shadow", "border-color"],
                     { duration: 220, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
                   ),
-                  "&:hover": {
-                    transform: "translateY(-4px)",
-                    boxShadow: theme.shadows[8],
-                    borderColor: alpha(theme.palette.primary.light, 0.5),
+                  "@media (hover: hover)": {
+                    "&:hover": {
+                      transform: "translateY(-4px)",
+                      boxShadow: theme.shadows[8],
+                      borderColor: alpha(theme.palette.primary.light, 0.5),
+                    },
                   },
                 }}
               >

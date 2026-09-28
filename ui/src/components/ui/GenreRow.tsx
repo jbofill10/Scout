@@ -6,6 +6,7 @@ import Button from "@mui/material/Button";
 import Skeleton from "@mui/material/Skeleton";
 import { useTheme } from "@mui/material/styles";
 import HorizontalCarousel from "./HorizontalCarousel";
+import { CAROUSEL_ITEM_SX } from "./carouselItem";
 import MediaCard, { MediaCardSkeleton } from "./MediaCard";
 import type { MediaCardProps } from "./MediaCard";
 import MediaStatusDialog from "./MediaStatusDialog";
@@ -44,10 +45,7 @@ export const MediaRowSkeleton: React.FC<{ title?: string }> = ({ title }) => (
     )}
     <Box sx={{ display: "flex", gap: 2, overflow: "hidden" }}>
       {Array.from({ length: 7 }).map((_, index) => (
-        <Box
-          key={index}
-          sx={{ flex: "0 0 calc((100% - 96px) / 7)", minWidth: 150, maxWidth: 230 }}
-        >
+        <Box key={index} sx={CAROUSEL_ITEM_SX}>
           <MediaCardSkeleton />
         </Box>
       ))}

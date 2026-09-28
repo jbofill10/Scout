@@ -15,6 +15,7 @@ export { default as MediaCard } from './MediaCard';
 export type { MediaCardProps } from './MediaCard';
 
 export { default as HorizontalCarousel } from './HorizontalCarousel';
+export { CAROUSEL_ITEM_SX } from './carouselItem';
 
 export { default as GenreRow } from './GenreRow';
 
@@ -33,3 +34,7 @@ export { default as StageChip } from './StageChip';
 export type { StageChipProps } from './StageChip';
 
 export { default as ToastProvider } from './ToastProvider';
+
+export { default as BottomNav, BOTTOM_NAV_HEIGHT } from './BottomNav';
+export { NAV_LINKS } from './navLinks';
+export type { NavLink } from './navLinks';

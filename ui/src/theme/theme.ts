@@ -210,6 +210,21 @@ const theme = createTheme({
           backgroundColor: SURFACE_RAISED,
           borderRadius: 16,
           border: `1px solid ${HAIRLINE_STRONG}`,
+          // Phones: MUI's 32px gutter on each side wastes a fifth of the screen.
+          // Scoped so it cannot outrank MUI's own full-screen sizing, which is
+          // emitted earlier in the stylesheet than this media block.
+          '@media (max-width: 599.95px)': {
+            '&:not(.MuiDialog-paperFullScreen)': {
+              margin: 16,
+              width: 'calc(100% - 32px)',
+              maxWidth: 'calc(100% - 32px)',
+              maxHeight: 'calc(100% - 32px)',
+            },
+          },
+        },
+        paperFullScreen: {
+          borderRadius: 0,
+          border: 0,
         },
       },
     },

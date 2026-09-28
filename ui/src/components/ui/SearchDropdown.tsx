@@ -43,6 +43,7 @@ const SEARCH_DEBOUNCE_MS = 300;
  * - Previous results stay visible while a refined term loads
  * - Opens MediaStatusDialog on result click
  * - Closes on backdrop click or ESC key
+ * - Fills the screen on phones, with the media type toggle on its own row
  */
 const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
   const theme = useTheme();
@@ -214,12 +215,15 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
             top: 0,
             left: 0,
             right: 0,
-            maxHeight: "90vh",
+            // Phones: take the whole screen rather than a panel with a strip below it
+            bottom: { xs: 0, sm: "auto" },
+            maxHeight: { xs: "none", sm: "90vh" },
+            pb: { xs: "env(safe-area-inset-bottom, 0px)", sm: 0 },
             backgroundColor: theme.palette.background.default,
             zIndex: 1300,
-            borderBottom: `1px solid ${theme.palette.divider}`,
-            borderBottomLeftRadius: 20,
-            borderBottomRightRadius: 20,
+            borderBottom: { xs: 0, sm: `1px solid ${theme.palette.divider}` },
+            borderBottomLeftRadius: { xs: 0, sm: 20 },
+            borderBottomRightRadius: { xs: 0, sm: 20 },
             boxShadow: theme.shadows[16],
             overflowY: "auto",
           }}
@@ -227,7 +231,15 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
           {/* Search Header */}
           <Box sx={{ borderBottom: `1px solid ${theme.palette.divider}`, py: 2.5 }}>
             <Container maxWidth="xl">
-              <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+              {/* Phones: field and close button on one row, the toggle full width below */}
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  flexWrap: { xs: "wrap", sm: "nowrap" },
+                  gap: { xs: 1.5, sm: 2 },
+                }}
+              >
                 <TextField
                   inputRef={searchInputRef}
                   fullWidth
@@ -256,7 +268,11 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
                       ) : undefined,
                     },
                   }}
-                  sx={{ "& .MuiOutlinedInput-root": { fontSize: "1.0625rem" } }}
+                  sx={{
+                    flex: "1 1 200px",
+                    minWidth: 0,
+                    "& .MuiOutlinedInput-root": { fontSize: "1.0625rem" },
+                  }}
                 />
 
                 {/* Media Type Toggle */}
@@ -265,7 +281,12 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
                   exclusive
                   onChange={(_, newValue) => newValue && setMediaType(newValue)}
                   aria-label="media type"
-                  sx={{ flexShrink: 0 }}
+                  sx={{
+                    flexShrink: 0,
+                    order: { xs: 3, sm: 0 },
+                    width: { xs: "100%", sm: "auto" },
+                    "& .MuiToggleButton-root": { flex: { xs: 1, sm: "0 0 auto" } },
+                  }}
                 >
                   <ToggleButton value="series" aria-label="TV shows">
                     <Tv sx={{ mr: 1, fontSize: 20 }} />
@@ -277,7 +298,7 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
                   </ToggleButton>
                 </ToggleButtonGroup>
 
-                <IconButton onClick={onClose} aria-label="Close search">
+                <IconButton onClick={onClose} aria-label="Close search" sx={{ order: { xs: 2, sm: 0 } }}>
                   <CloseIcon />
                 </IconButton>
               </Box>
@@ -285,7 +306,7 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
           </Box>
 
           {/* Search Results */}
-          <Container maxWidth="xl" sx={{ position: "relative", py: 3, minHeight: 240 }}>
+          <Container maxWidth="xl" sx={{ position: "relative", py: { xs: 2, sm: 3 }, minHeight: 240 }}>
             {/* Refining an existing result set: keep the grid, show a thin bar */}
             {isBusy && hasResults && (
               <LinearProgress

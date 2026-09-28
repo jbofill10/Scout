@@ -18,7 +18,8 @@ export interface PageHeaderProps {
  *
  * Consistent page-level heading: an optional eyebrow, the title, a supporting
  * line, and an optional action slot. Keeps every route's masthead on the same
- * rhythm instead of each page hand-rolling a bare Typography.
+ * rhythm instead of each page hand-rolling a bare Typography. On phones the
+ * action drops below the text instead of squeezing the title.
  */
 const PageHeader: React.FC<PageHeaderProps> = ({ eyebrow, title, description, action }) => {
   const theme = useTheme();
@@ -27,19 +28,24 @@ const PageHeader: React.FC<PageHeaderProps> = ({ eyebrow, title, description, ac
     <Box
       sx={{
         display: 'flex',
-        alignItems: 'flex-end',
+        flexDirection: { xs: 'column', sm: 'row' },
+        alignItems: { xs: 'flex-start', sm: 'flex-end' },
         justifyContent: 'space-between',
-        gap: 3,
-        mb: 4,
+        gap: { xs: 2, sm: 3 },
+        mb: { xs: 3, md: 4 },
       }}
     >
-      <Box>
+      <Box sx={{ minWidth: 0 }}>
         {eyebrow && (
           <Typography variant="overline" sx={{ display: 'block', color: theme.palette.primary.light, mb: 0.5 }}>
             {eyebrow}
           </Typography>
         )}
-        <Typography variant="h3" component="h1" sx={{ color: theme.palette.text.primary }}>
+        <Typography
+          variant="h3"
+          component="h1"
+          sx={{ color: theme.palette.text.primary, fontSize: { xs: '1.5rem', sm: '1.75rem' } }}
+        >
           {title}
         </Typography>
         {description && (

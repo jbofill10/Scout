@@ -93,7 +93,7 @@ const ActivityRow: React.FC<{ item: ActivityItem }> = ({ item }) => {
       sx={{
         display: "flex",
         gap: 2,
-        px: 2.5,
+        px: { xs: 2, sm: 2.5 },
         py: 2,
         borderBottom: `1px solid ${theme.palette.divider}`,
         "&:last-of-type": { borderBottom: 0 },
@@ -135,7 +135,7 @@ const ActivityRow: React.FC<{ item: ActivityItem }> = ({ item }) => {
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
-              maxWidth: 420,
+              maxWidth: { xs: "100%", sm: 420 },
             }}
           >
             {item.media_title}
@@ -143,6 +143,13 @@ const ActivityRow: React.FC<{ item: ActivityItem }> = ({ item }) => {
           <StageChip stage={item.status} />
           <Typography variant="caption" sx={{ color: theme.palette.text.disabled }}>
             {detail}
+          </Typography>
+          {/* Phones drop the right-hand column, so the time moves in here */}
+          <Typography
+            variant="caption"
+            sx={{ display: { xs: "inline", sm: "none" }, color: theme.palette.text.disabled }}
+          >
+            {formatRelativeTime(item.updated_at)}
           </Typography>
         </Box>
 
@@ -159,7 +166,7 @@ const ActivityRow: React.FC<{ item: ActivityItem }> = ({ item }) => {
         <StageTrack stage={item.status} />
       </Box>
 
-      <Box sx={{ flexShrink: 0, textAlign: "right" }}>
+      <Box sx={{ flexShrink: 0, textAlign: "right", display: { xs: "none", sm: "block" } }}>
         <Typography variant="caption" sx={{ display: "block", color: theme.palette.text.secondary }}>
           {formatRelativeTime(item.updated_at)}
         </Typography>
@@ -236,7 +243,7 @@ const Activity: React.FC = () => {
       sx={{
         minHeight: "100vh",
         backgroundColor: theme.palette.background.default,
-        pt: 13,
+        pt: { xs: 11, md: 13 },
         pb: 8,
       }}
     >
@@ -262,7 +269,7 @@ const Activity: React.FC = () => {
         <Box
           sx={{
             display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
+            gridTemplateColumns: { xs: "repeat(2, 1fr)", md: "repeat(4, 1fr)" },
             gap: 2,
             mb: 5,
           }}
@@ -271,7 +278,7 @@ const Activity: React.FC = () => {
             <Box
               key={stage}
               sx={{
-                px: 2.5,
+                px: { xs: 2, md: 2.5 },
                 py: 2,
                 borderRadius: 3,
                 backgroundColor: theme.palette.background.paper,
