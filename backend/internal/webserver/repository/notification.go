@@ -227,6 +227,28 @@ func (r *NotificationRepo) Dismiss(ctx context.Context, id int) error {
 	return nil
 }
 
+// DismissAll soft-deletes every notification that is still visible.
+// Dismissing an already-empty list is not an error; the caller gets a zero count.
+func (r *NotificationRepo) DismissAll(ctx context.Context) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	stmt := `UPDATE Notifications SET auto_dismissed = true, updated_at = $1 WHERE auto_dismissed = false`
+	result, err := r.db.ExecContext(ctx, stmt, time.Now())
+	if err != nil {
+		r.logger.ErrorContext(ctx, "Failed to dismiss all notifications", "error", err)
+		return 0, fmt.Errorf("failed to dismiss all notifications: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	r.logger.InfoContext(ctx, "Dismissed all notifications", "count", rowsAffected)
+	return rowsAffected, nil
+}
+
 // GetUnreadCount returns the count of unread notifications
 func (r *NotificationRepo) GetUnreadCount(ctx context.Context) (int, error) {
 	r.mu.Lock()

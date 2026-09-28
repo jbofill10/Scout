@@ -22,6 +22,9 @@ type NotificationRepository interface {
 	// MarkAsRead marks a notification as read
 	MarkAsRead(ctx context.Context, id int) error
 
+	// DismissAll soft-deletes every visible notification and reports how many it dismissed
+	DismissAll(ctx context.Context) (int64, error)
+
 	// Dismiss soft-deletes a notification (sets auto_dismissed = true)
 	Dismiss(ctx context.Context, id int) error
 

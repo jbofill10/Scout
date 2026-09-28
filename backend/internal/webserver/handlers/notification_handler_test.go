@@ -286,3 +286,39 @@ func TestDismissNotification_NotFound(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
+
+func TestDismissAllNotifications_Success(t *testing.T) {
+	handler, mockRepo := setupNotificationHandler(t)
+
+	mockRepo.On("DismissAll", mock.Anything).Return(int64(3), nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("DELETE", "/notifications", nil)
+
+	handler.DismissAllNotifications(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var response struct {
+		Message string `json:"message"`
+		Count   int64  `json:"count"`
+	}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.Equal(t, "Notifications dismissed", response.Message)
+	assert.Equal(t, int64(3), response.Count)
+}
+
+func TestDismissAllNotifications_Error(t *testing.T) {
+	handler, mockRepo := setupNotificationHandler(t)
+
+	mockRepo.On("DismissAll", mock.Anything).Return(int64(0), errors.New("db down"))
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("DELETE", "/notifications", nil)
+
+	handler.DismissAllNotifications(c)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}

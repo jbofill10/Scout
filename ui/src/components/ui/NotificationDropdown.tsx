@@ -40,6 +40,7 @@ import {
   useGroupedNotifications,
   useMarkAsRead,
   useDismissNotification,
+  useDismissAll,
   type NotificationGroup,
 } from "../../hooks/useNotifications";
 
@@ -301,6 +302,7 @@ export default function NotificationDropdown() {
   const groupedNotifications = useGroupedNotifications(isOpen);
   const markAsReadMutation = useMarkAsRead();
   const dismissMutation = useDismissNotification();
+  const dismissAllMutation = useDismissAll();
 
   // Handle ESC key
   useEffect(() => {
@@ -336,9 +338,14 @@ export default function NotificationDropdown() {
     dismissMutation.mutate(id);
   };
 
+  const handleDismissAll = () => {
+    dismissAllMutation.mutate();
+  };
+
   const notificationGroups = groupedNotifications.data
     ? Object.values(groupedNotifications.data)
     : [];
+  const hasNotifications = notificationGroups.length > 0;
 
   return (
     <>
@@ -425,7 +432,7 @@ export default function NotificationDropdown() {
               borderBottom: `1px solid ${theme.palette.divider}`,
             }}
           >
-            <Box sx={{ display: "flex", alignItems: "baseline", gap: 1.25 }}>
+            <Box sx={{ display: "flex", alignItems: "baseline", gap: 1.25, minWidth: 0 }}>
               <Typography variant="h6" sx={{ color: theme.palette.text.primary }}>
                 Notifications
               </Typography>
@@ -435,9 +442,23 @@ export default function NotificationDropdown() {
                 </Typography>
               )}
             </Box>
-            <IconButton onClick={handleClose} size="small">
-              <CloseIcon />
-            </IconButton>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexShrink: 0 }}>
+              {/* One request clears everything; the list empties immediately and comes
+                  back only if the server refuses */}
+              <Button
+                size="small"
+                variant="text"
+                color="inherit"
+                onClick={handleDismissAll}
+                disabled={!hasNotifications || dismissAllMutation.isPending}
+                sx={{ px: 1, color: theme.palette.text.secondary, whiteSpace: "nowrap" }}
+              >
+                Clear all
+              </Button>
+              <IconButton onClick={handleClose} size="small" aria-label="Close notifications">
+                <CloseIcon />
+              </IconButton>
+            </Box>
           </Box>
 
           {/* Body */}

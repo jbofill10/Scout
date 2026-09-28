@@ -352,6 +352,42 @@ func (s *NotificationRepoTestSuite) TestDismiss_NotFound() {
 	s.NoError(s.mock.ExpectationsWereMet())
 }
 
+func (s *NotificationRepoTestSuite) TestDismissAll_Success() {
+	s.mock.ExpectExec(`UPDATE Notifications SET auto_dismissed = true, updated_at = \$1 WHERE auto_dismissed = false`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 7))
+
+	count, err := s.repo.DismissAll(context.Background())
+
+	s.NoError(err)
+	s.Equal(int64(7), count)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *NotificationRepoTestSuite) TestDismissAll_NothingToDismiss() {
+	s.mock.ExpectExec(`UPDATE Notifications SET auto_dismissed = true`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	count, err := s.repo.DismissAll(context.Background())
+
+	s.NoError(err)
+	s.Equal(int64(0), count)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *NotificationRepoTestSuite) TestDismissAll_DBError() {
+	s.mock.ExpectExec(`UPDATE Notifications SET auto_dismissed = true`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnError(sql.ErrConnDone)
+
+	count, err := s.repo.DismissAll(context.Background())
+
+	s.Error(err)
+	s.Equal(int64(0), count)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
 func (s *NotificationRepoTestSuite) TestGetUnreadCount_Success() {
 	s.mock.ExpectQuery(`SELECT COUNT\(\*\) FROM Notifications WHERE is_read = false AND auto_dismissed = false`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(5))
