@@ -80,26 +80,53 @@ export interface MediaStatusInfo {
 }
 
 /**
+ * A media record as returned by the backend (tvdb.Media).
+ * Detail fields are optional because the popular/search list endpoints only
+ * populate a subset; the details endpoint fills in the rest.
+ */
+export interface MediaRecord {
+  id: string;
+  image_url: string;
+  mediaName: string;
+  anime?: boolean;
+  type?: string;
+  overview?: string;
+  tagline?: string;
+  year?: string;
+  status?: { name?: string };
+  genres?: string[];
+  runtime?: number;
+  contentRating?: string;
+  originalCountry?: string;
+  originalLanguage?: string;
+  score?: number;
+  metadata?: {
+    firstAired?: string;
+    lastAired?: string;
+    episodes?: Array<{
+      aired: string;
+      id: number;
+      image: string;
+      name: string;
+      number: number;
+      seasonNumber: number;
+      absoluteNumber?: number;
+      overview?: string;
+      runtime?: number;
+    }>;
+  };
+}
+
+/**
+ * Full detail record from GET /api/media/:id/details
+ */
+export type MediaDetails = MediaRecord;
+
+/**
  * Enriched media object with status already merged
  * From backend GET /api/search/enriched endpoint
  */
 export interface EnrichedMedia {
-  media: {
-    id: string;
-    image_url: string;
-    mediaName: string;
-    anime?: boolean;
-    metadata?: {
-      episodes?: Array<{
-        aired: string;
-        id: number;
-        image: string;
-        name: string;
-        number: number;
-        seasonNumber: number;
-        absoluteNumber?: number;
-      }>;
-    };
-  };
+  media: MediaRecord;
   status: MediaStatusInfo;
 }

@@ -209,3 +209,117 @@ func (s *TVDBProxyClientTestSuite) TestGetExtendedInfo_DifferentMediaIDs() {
 		})
 	}
 }
+
+func (s *TVDBProxyClientTestSuite) TestExtendedToMedia_Series() {
+	data := tvdb.TVDBSeriesExtendedData{
+		Id:               121361,
+		Name:             "Game of Thrones",
+		Slug:             "game-of-thrones",
+		Image:            "https://example.com/poster.jpg",
+		Overview:         "Seven noble families fight for control.",
+		Year:             "2011",
+		Status:           tvdb.Status{Name: "Ended"},
+		Genres:           []tvdb.Genres{{Name: "Drama"}, {Name: "Fantasy"}},
+		Aliases:          []tvdb.Alias{{Language: "eng", Name: "GoT"}},
+		FirstAired:       "2011-04-17",
+		LastAired:        "2019-05-19",
+		AverageRuntime:   60,
+		Runtime:          0,
+		OriginalCountry:  "usa",
+		OriginalLanguage: "eng",
+		ContentRatings: []tvdb.ContentRating{
+			{Country: "aus", Name: "MA15+"},
+			{Country: "usa", Name: "TV-MA"},
+		},
+		Episodes: []tvdb.Episode{{Id: 1, Number: 1, SeasonNumber: 1}},
+	}
+
+	media := ExtendedToMedia(data, "series")
+
+	s.Equal("121361", media.Id)
+	s.Equal("Game of Thrones", media.Name)
+	s.Equal("series", media.Category)
+	s.False(media.Anime)
+	s.Equal("Seven noble families fight for control.", media.Overview)
+	s.Equal([]string{"Drama", "Fantasy"}, media.Genres)
+	s.Equal([]string{"GoT"}, media.Aliases)
+	s.Equal(60, media.Runtime) // series use the average episode runtime
+	s.Equal("TV-MA", media.ContentRating)
+	s.Equal("usa", media.OriginalCountry)
+	s.Equal("2011-04-17", media.Metadata.FirstAired)
+	s.Equal("2019-05-19", media.Metadata.LastAired)
+	s.Len(media.Metadata.Episodes, 1)
+}
+
+func (s *TVDBProxyClientTestSuite) TestExtendedToMedia_MovieUsesOwnRuntime() {
+	data := tvdb.TVDBSeriesExtendedData{
+		Id:             12345,
+		Name:           "Spirited Away",
+		Genres:         []tvdb.Genres{{Name: "Animation"}, {Name: "Fantasy"}},
+		FirstAired:     "2001-07-20",
+		Runtime:        125,
+		AverageRuntime: 0,
+	}
+
+	media := ExtendedToMedia(data, "movie")
+
+	s.Equal(125, media.Runtime)
+	s.True(media.Anime, "Animation genre marks a movie as anime")
+	s.Equal("2001-07-20", media.Metadata.FirstAired)
+	s.Empty(media.ContentRating)
+}
+
+func (s *TVDBProxyClientTestSuite) TestExtendedToMedia_ContentRatingFallsBackToFirst() {
+	data := tvdb.TVDBSeriesExtendedData{
+		Id: 1,
+		ContentRatings: []tvdb.ContentRating{
+			{Country: "gbr", Name: "15"},
+			{Country: "aus", Name: "MA15+"},
+		},
+	}
+
+	s.Equal("15", ExtendedToMedia(data, "series").ContentRating)
+}
+
+func (s *TVDBProxyClientTestSuite) TestGetMediaDetails_Success() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.Equal("/series/999/extended", r.URL.Path)
+		s.Equal("movie", r.URL.Query().Get("mediaType"))
+
+		_ = json.NewEncoder(w).Encode(tvdb.TVDBSeriesExtendedResponse{
+			Data: tvdb.TVDBSeriesExtendedData{
+				Id:       999,
+				Name:     "Arrival",
+				Overview: "A linguist works with the military.",
+				Runtime:  116,
+				Genres:   []tvdb.Genres{{Name: "Science Fiction"}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewTVDBProxyClient(server.URL[7:])
+
+	media, err := client.GetMediaDetails(context.Background(), "999", "movie")
+
+	s.NoError(err)
+	s.Equal("999", media.Id)
+	s.Equal("A linguist works with the military.", media.Overview)
+	s.Equal(116, media.Runtime)
+	s.Equal([]string{"Science Fiction"}, media.Genres)
+}
+
+// An empty payload means tvdb-proxy had nothing for the id; surfacing that as an
+// error keeps the handler from returning a hollow record to the UI.
+func (s *TVDBProxyClientTestSuite) TestGetMediaDetails_EmptyPayloadErrors() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(tvdb.TVDBSeriesExtendedResponse{})
+	}))
+	defer server.Close()
+
+	client := NewTVDBProxyClient(server.URL[7:])
+
+	_, err := client.GetMediaDetails(context.Background(), "404", "series")
+
+	s.Error(err)
+}

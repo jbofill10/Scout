@@ -189,42 +189,90 @@ func (c *TVDBProxyClient) GetExtendedBatch(
 			continue
 		}
 
-		// Convert aliases from []Alias to []string
-		aliases := make([]string, 0, len(batchResp.Data.Data.Aliases))
-		for _, alias := range batchResp.Data.Data.Aliases {
-			aliases = append(aliases, alias.Name)
-		}
-
-		// Convert extended response to Media
-		media := tvdb.Media{
-			Id:           fmt.Sprintf("%d", batchResp.Data.Data.Id),
-			Name:         batchResp.Data.Data.Name,
-			OriginalName: batchResp.Data.Data.Name,
-			Category:     batchResp.Request.MediaType,
-			ImageUrl:     batchResp.Data.Data.Image,
-			Slug:         batchResp.Data.Data.Slug,
-			Status:       batchResp.Data.Data.Status,
-			Overview:     batchResp.Data.Data.Overview,
-			Year:         batchResp.Data.Data.Year,
-			Aliases:      aliases,
-			Score:        batchResp.Data.Data.Score,
-			Metadata: tvdb.TVDBSeriesMetadata{
-				Episodes: batchResp.Data.Data.Episodes,
-			},
-		}
-
-		// Detect anime from genres
-		for _, genre := range batchResp.Data.Data.Genres {
-			if genre.Name == "Anime" || (batchResp.Request.MediaType == "movie" && genre.Name == "Animation") {
-				media.Anime = true
-				break
-			}
-		}
-
-		results = append(results, media)
+		results = append(results, ExtendedToMedia(batchResp.Data.Data, batchResp.Request.MediaType))
 	}
 
 	return results, nil
+}
+
+// GetMediaDetails fetches the extended record for a single media item and maps
+// it to the Media shape the UI consumes for its detail view.
+func (c *TVDBProxyClient) GetMediaDetails(ctx context.Context, mediaId, mediaType string) (tvdb.Media, error) {
+	info, err := c.GetExtendedInfo(ctx, mediaId, mediaType)
+	if err != nil {
+		return tvdb.Media{}, err
+	}
+
+	if info.Data.Id == 0 {
+		return tvdb.Media{}, fmt.Errorf("no extended data for media %s", mediaId)
+	}
+
+	return ExtendedToMedia(info.Data, mediaType), nil
+}
+
+// ExtendedToMedia converts a TVDB extended record into a Media object. Movie and
+// series extended responses share the struct, so runtime is taken from whichever
+// field the media type populates.
+func ExtendedToMedia(data tvdb.TVDBSeriesExtendedData, mediaType string) tvdb.Media {
+	aliases := make([]string, 0, len(data.Aliases))
+	for _, alias := range data.Aliases {
+		aliases = append(aliases, alias.Name)
+	}
+
+	genres := make([]string, 0, len(data.Genres))
+	anime := false
+	for _, genre := range data.Genres {
+		genres = append(genres, genre.Name)
+		if genre.Name == "Anime" || (mediaType == "movie" && genre.Name == "Animation") {
+			anime = true
+		}
+	}
+
+	runtime := data.AverageRuntime
+	if mediaType == "movie" {
+		runtime = data.Runtime
+	}
+
+	return tvdb.Media{
+		Id:               fmt.Sprintf("%d", data.Id),
+		Name:             data.Name,
+		OriginalName:     data.Name,
+		Category:         mediaType,
+		Anime:            anime,
+		ImageUrl:         data.Image,
+		Slug:             data.Slug,
+		Status:           data.Status,
+		Overview:         data.Overview,
+		Tagline:          data.Tagline,
+		Year:             data.Year,
+		Aliases:          aliases,
+		Genres:           genres,
+		Runtime:          runtime,
+		ContentRating:    pickContentRating(data.ContentRatings),
+		OriginalCountry:  data.OriginalCountry,
+		OriginalLanguage: data.OriginalLanguage,
+		Score:            data.Score,
+		Metadata: tvdb.TVDBSeriesMetadata{
+			FirstAired: data.FirstAired,
+			LastAired:  data.LastAired,
+			Episodes:   data.Episodes,
+			Score:      data.Score,
+		},
+	}
+}
+
+// pickContentRating prefers the US rating, which is the one the UI's audience
+// recognises, and otherwise falls back to the first rating TVDB returned.
+func pickContentRating(ratings []tvdb.ContentRating) string {
+	if len(ratings) == 0 {
+		return ""
+	}
+	for _, rating := range ratings {
+		if rating.Country == "usa" {
+			return rating.Name
+		}
+	}
+	return ratings[0].Name
 }
 
 type EpisodesRequest struct {

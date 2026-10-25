@@ -100,6 +100,7 @@ const SearchResultsList: React.FC<SearchResultsListProps> = ({
           status={selectedShowStatus}
           mediaName={selectedShowInfo.name}
           posterUrl={selectedShowInfo.posterUrl}
+          tvdbId={selectedShowInfo.tvdbId}
           enrichedMedia={selectedEnrichedMedia}
           onDownload={handleDownload}
           showDownloadButton={true}

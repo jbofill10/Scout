@@ -56,10 +56,22 @@ type Media struct {
 	Status Status `json:"status"`
 	// Show description
 	Overview string `json:"overview"`
+	// Short marketing line, mostly present for movies
+	Tagline string `json:"tagline,omitempty"`
 	// Year show was made
 	Year string `json:"year"`
 	// Alternative names/aliases for the show
 	Aliases []string `json:"aliases"`
+	// Genre names, for display on the media detail view
+	Genres []string `json:"genres,omitempty"`
+	// Runtime in minutes: the movie's own runtime, or a series' average episode runtime
+	Runtime int `json:"runtime,omitempty"`
+	// Parental rating for display, e.g. "TV-MA" or "PG-13"
+	ContentRating string `json:"contentRating,omitempty"`
+	// Country of origin, e.g. "usa"
+	OriginalCountry string `json:"originalCountry,omitempty"`
+	// Original language, e.g. "eng"
+	OriginalLanguage string `json:"originalLanguage,omitempty"`
 	// Information about series, such as episodes, date aired, etc.
 	Metadata TVDBSeriesMetadata `json:"metadata"`
 }
@@ -163,6 +175,21 @@ type TVDBSeriesExtendedData struct {
 	Episodes         []Episode `json:"episodes"`         // Episodes now included in extended response
 	AverageRuntime   int       `json:"averageRuntime"`   // Average episode runtime
 	Score            float64   `json:"score"`            // Popularity score
+	// Movie extended responses are decoded into this same struct, so movie-only
+	// fields live here too. Movies carry no firstAired: their release dates come
+	// from first_release/releases instead.
+	Runtime        int             `json:"runtime"`        // Movie runtime in minutes
+	ContentRatings []ContentRating `json:"contentRatings"` // Parental ratings by country
+	FirstRelease   Release         `json:"first_release"`  // Earliest release, usually country "global"
+	Releases       []Release       `json:"releases"`       // Per-country release dates
+	Tagline        string          `json:"tagline"`        // Filled from translations, not returned inline
+}
+
+// Release is a dated release of a movie in one country.
+type Release struct {
+	Country string `json:"country"`
+	Date    string `json:"date"`
+	Detail  string `json:"detail"`
 }
 
 // MovieExtendedData represents movie-specific extended data from TVDB API v4
@@ -204,6 +231,7 @@ type TVDBTranslationResponse struct {
 type TVDBTranslationData struct {
 	Name     string   `json:"name"`
 	Overview string   `json:"overview"`
+	Tagline  string   `json:"tagline"`
 	Language string   `json:"language"`
 	Aliases  []string `json:"aliases"`
 }

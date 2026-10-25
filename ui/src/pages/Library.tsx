@@ -274,12 +274,13 @@ export const Library = () => {
             status={mediaStatus}
             mediaName={selectedMediaName}
             posterUrl={selectedPosterUrl}
+            tvdbId={selectedTvdbId}
             enrichedMedia={enrichedMedia}
             showDownloadButton={false} // Read-only mode for library
           />
         )}
 
-        {/* Movie Dialog - for future enhancement */}
+        {/* Movie Dialog — details only, everything here is already in the library */}
         {selectedTvdbId && activeTab === "movies" && (
           <MediaStatusDialog
             open={!!selectedTvdbId}
@@ -287,6 +288,9 @@ export const Library = () => {
             status={null} // Movies don't have episode status
             mediaName={selectedMediaName}
             posterUrl={selectedPosterUrl}
+            tvdbId={selectedTvdbId}
+            mediaType="movie"
+            inLibrary={true}
             showDownloadButton={false}
           />
         )}
