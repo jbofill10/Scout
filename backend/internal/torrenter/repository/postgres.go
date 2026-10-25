@@ -479,19 +479,26 @@ func (r *Repo) InsertActiveTorrent(ctx context.Context, at *models.ActiveTorrent
 	if err != nil {
 		return fmt.Errorf("failed to marshal search strategy: %w", err)
 	}
+	var request []byte
+	if at.Request != nil {
+		if request, err = json.Marshal(at.Request); err != nil {
+			return fmt.Errorf("failed to marshal search request: %w", err)
+		}
+	}
 
 	traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
 
 	_, err = r.db.ExecContext(ctx, `
-		INSERT INTO ActiveTorrents (info_hash, tracking_uuid, torrent_title, strategy, started_at, trace_id, span_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO ActiveTorrents (info_hash, tracking_uuid, torrent_title, strategy, started_at, trace_id, span_id, request)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (info_hash) DO UPDATE SET
 			tracking_uuid = EXCLUDED.tracking_uuid,
 			torrent_title = EXCLUDED.torrent_title,
 			strategy = EXCLUDED.strategy,
 			trace_id = EXCLUDED.trace_id,
-			span_id = EXCLUDED.span_id
-	`, at.InfoHash, at.TrackingUUID, at.TorrentTitle, strategy, at.StartedAt, traceID, spanID)
+			span_id = EXCLUDED.span_id,
+			request = EXCLUDED.request
+	`, at.InfoHash, at.TrackingUUID, at.TorrentTitle, strategy, at.StartedAt, traceID, spanID, nullableJSON(request))
 	if err != nil {
 		return fmt.Errorf("failed to insert active torrent: %w", err)
 	}
@@ -512,7 +519,7 @@ func (r *Repo) DeleteActiveTorrent(ctx context.Context, infoHash string) error {
 // monitors on startup.
 func (r *Repo) GetActiveTorrents(ctx context.Context) ([]*models.ActiveTorrent, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT info_hash, tracking_uuid, torrent_title, strategy, started_at
+		SELECT info_hash, tracking_uuid, torrent_title, strategy, started_at, request
 		FROM ActiveTorrents ORDER BY started_at
 	`)
 	if err != nil {
@@ -523,10 +530,19 @@ func (r *Repo) GetActiveTorrents(ctx context.Context) ([]*models.ActiveTorrent, 
 	active := []*models.ActiveTorrent{}
 	for rows.Next() {
 		var at models.ActiveTorrent
-		var strategy []byte
-		if err := rows.Scan(&at.InfoHash, &at.TrackingUUID, &at.TorrentTitle, &strategy, &at.StartedAt); err != nil {
+		var strategy, request []byte
+		if err := rows.Scan(&at.InfoHash, &at.TrackingUUID, &at.TorrentTitle, &strategy, &at.StartedAt, &request); err != nil {
 			r.logger.ErrorContext(ctx, "Error scanning active torrent", "error", err)
 			continue
+		}
+		if len(request) > 0 {
+			// A request that cannot be read only costs the ability to replace
+			// this torrent; the monitor itself still resumes.
+			if err := json.Unmarshal(request, &at.Request); err != nil {
+				r.logger.WarnContext(ctx, "Ignoring unreadable search request on active torrent",
+					"error", err, "info_hash", at.InfoHash)
+				at.Request = nil
+			}
 		}
 		// A row we cannot unmarshal can never be resumed; drop it rather than
 		// letting it wedge the startup sweep on every boot.
@@ -546,6 +562,53 @@ func (r *Repo) GetActiveTorrents(ctx context.Context) ([]*models.ActiveTorrent, 
 	}
 
 	return active, nil
+}
+
+// nullableJSON turns an empty payload into SQL NULL so a JSONB column is not
+// handed an empty string.
+func nullableJSON(b []byte) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
+}
+
+// InsertFailedTorrent remembers a torrent that was tried for an item and given
+// up on, so the next search for that item skips it.
+func (r *Repo) InsertFailedTorrent(ctx context.Context, ft *models.FailedTorrent) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO FailedTorrents (tvdb_id, season, episode, info_hash, torrent_title, reason)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, ft.TvdbID, ft.Season, ft.Episode, ft.InfoHash, ft.Title, ft.Reason)
+	if err != nil {
+		return fmt.Errorf("failed to insert failed torrent: %w", err)
+	}
+	return nil
+}
+
+// GetFailedTorrents lists every torrent previously given up on for an item.
+func (r *Repo) GetFailedTorrents(ctx context.Context, tvdbID string, season, episode int) ([]*models.FailedTorrent, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT tvdb_id, season, episode, info_hash, torrent_title, COALESCE(reason, '')
+		FROM FailedTorrents WHERE tvdb_id = $1 AND season = $2 AND episode = $3
+	`, tvdbID, season, episode)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query failed torrents: %w", err)
+	}
+	defer rows.Close()
+
+	failed := []*models.FailedTorrent{}
+	for rows.Next() {
+		var ft models.FailedTorrent
+		if err := rows.Scan(&ft.TvdbID, &ft.Season, &ft.Episode, &ft.InfoHash, &ft.Title, &ft.Reason); err != nil {
+			return nil, fmt.Errorf("failed to scan failed torrent: %w", err)
+		}
+		failed = append(failed, &ft)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating failed torrent rows: %w", err)
+	}
+	return failed, nil
 }
 
 func (r *Repo) GetPreferredUploaders(ctx context.Context, mediaType string, isAnime bool) ([]string, error) {

@@ -98,6 +98,9 @@ func TestMonitorTorrentCompletion_ResumedMonitorInheritsDeadline(t *testing.T) {
 	// up on its first pass without ever polling qBittorrent.
 	repo.On("GetNotification", mock.Anything, "999").Return(nil, nil)
 	repo.On("InsertDownloadHistory", mock.Anything, "Some Show", 1, 2, 0, "", "failure", "monitor timeout").Return(nil)
+	repo.On("InsertFailedTorrent", mock.Anything, mock.MatchedBy(func(ft *models.FailedTorrent) bool {
+		return ft.InfoHash == "stale-hash" && ft.Reason == "monitor timeout"
+	})).Return(nil)
 	repo.On("DeleteActiveTorrent", mock.Anything, "stale-hash").Return(nil)
 
 	q := newResumeTestHandler(t, repo)
@@ -117,7 +120,7 @@ func TestMonitorTorrentCompletion_ResumedMonitorInheritsDeadline(t *testing.T) {
 
 	finished := make(chan struct{})
 	go func() {
-		q.monitorTorrentCompletion(context.Background(), match, "stale-hash", "uuid-1",
+		q.monitorTorrentCompletion(context.Background(), match, nil, "stale-hash", "uuid-1",
 			time.Now().Add(-2*time.Hour), done, &wg)
 		close(finished)
 	}()
@@ -157,6 +160,9 @@ func TestMonitorTorrentCompletion_TimeoutMarksNotificationFailed(t *testing.T) {
 		return n.Status == notifications.StatusFailed
 	})).Return(nil)
 	repo.On("InsertDownloadHistory", mock.Anything, "Some Show", 0, 0, 0, "", "failure", "monitor timeout").Return(nil)
+	repo.On("InsertFailedTorrent", mock.Anything, mock.MatchedBy(func(ft *models.FailedTorrent) bool {
+		return ft.InfoHash == "stale-hash" && ft.Reason == "monitor timeout"
+	})).Return(nil)
 	repo.On("DeleteActiveTorrent", mock.Anything, "stale-hash").Return(nil)
 
 	q := newResumeTestHandler(t, repo)
@@ -168,7 +174,7 @@ func TestMonitorTorrentCompletion_TimeoutMarksNotificationFailed(t *testing.T) {
 	var wg sync.WaitGroup
 	done := make(chan models.TorrentCompleteEvent, 1)
 	wg.Add(1)
-	q.monitorTorrentCompletion(context.Background(), match, "stale-hash", "uuid-1",
+	q.monitorTorrentCompletion(context.Background(), match, nil, "stale-hash", "uuid-1",
 		time.Now().Add(-2*time.Hour), done, &wg)
 
 	repo.AssertExpectations(t)

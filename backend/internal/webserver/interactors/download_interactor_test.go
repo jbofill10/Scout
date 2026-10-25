@@ -24,10 +24,10 @@ import (
 // handed to the torrenter.
 type fakeDispatcher struct {
 	resp     dlstatus.DownloadResponse
+	respFor  func(req tvdb.Media) dlstatus.DownloadResponse // when set, overrides resp per call
 	err      error
 	mu       sync.Mutex
-	calls    int
-	lastReq  tvdb.Media
+	reqs     []tvdb.Media
 	blockOn  chan struct{} // when set, Download blocks until it is closed
 	started  chan struct{} // when set, closed once Download is entered
 	startedO sync.Once
@@ -35,8 +35,7 @@ type fakeDispatcher struct {
 
 func (f *fakeDispatcher) Download(_ context.Context, req tvdb.Media) (dlstatus.DownloadResponse, error) {
 	f.mu.Lock()
-	f.calls++
-	f.lastReq = req
+	f.reqs = append(f.reqs, req)
 	f.mu.Unlock()
 
 	if f.started != nil {
@@ -45,19 +44,33 @@ func (f *fakeDispatcher) Download(_ context.Context, req tvdb.Media) (dlstatus.D
 	if f.blockOn != nil {
 		<-f.blockOn
 	}
+	if f.respFor != nil {
+		return f.respFor(req), f.err
+	}
 	return f.resp, f.err
 }
 
 func (f *fakeDispatcher) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.calls
+	return len(f.reqs)
 }
 
+// payload returns the most recent request handed to the torrenter.
 func (f *fakeDispatcher) payload() tvdb.Media {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.lastReq
+	if len(f.reqs) == 0 {
+		return tvdb.Media{}
+	}
+	return f.reqs[len(f.reqs)-1]
+}
+
+// payloads returns every request handed to the torrenter, in order.
+func (f *fakeDispatcher) payloads() []tvdb.Media {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]tvdb.Media(nil), f.reqs...)
 }
 
 // fakeSchedulerRepo records the terminal-status transitions made by the
@@ -75,6 +88,8 @@ type fakeSchedulerRepo struct {
 	historyCount     int
 	scheduleCount    int
 	scheduleErr      error
+	retryCount       int
+	retryMedia       []tvdb.Media
 	pendingMeta      map[string]repository.ScheduleMeta
 	pendingMetaErr   error
 }
@@ -109,10 +124,13 @@ func (f *fakeSchedulerRepo) Schedule(context.Context, tvdb.Media, time.Time, str
 	return f.scheduleErr
 }
 
-// Unused-by-dispatch methods (present to satisfy the interface).
-func (f *fakeSchedulerRepo) ScheduleRetry(context.Context, tvdb.Media, time.Time, string, string, string, string) error {
+func (f *fakeSchedulerRepo) ScheduleRetry(_ context.Context, media tvdb.Media, _ time.Time, _, _, _, _ string) error {
+	f.retryCount++
+	f.retryMedia = append(f.retryMedia, media)
 	return nil
 }
+
+// Unused-by-dispatch methods (present to satisfy the interface).
 func (f *fakeSchedulerRepo) GetDueMedia(context.Context, time.Time) ([]repository.DueItem, error) {
 	return nil, nil
 }

@@ -69,6 +69,24 @@ The torrenter service SHALL select appropriate Prowlarr indexers for movies base
 - **THEN** the service SHALL use defined constants for indexer IDs
 - **AND** NYAA constant SHALL map to correct Prowlarr indexer ID
 - **AND** 1337 constant SHALL map to 1337x Prowlarr indexer ID
+- **AND** TPB constant SHALL map to The Pirate Bay Prowlarr indexer ID
+
+### Requirement: Fallback Indexer
+
+The torrenter service SHALL search The Pirate Bay only after the preferred indexers for the media kind produced no usable torrent, so a release carried by the preferred indexer is always taken from there.
+
+#### Scenario: Preferred indexer has the release
+
+- **WHEN** any relax tier against the preferred indexers yields a confident best pick
+- **THEN** the service SHALL download that torrent
+- **AND** SHALL NOT query The Pirate Bay
+
+#### Scenario: Preferred indexer has nothing usable
+
+- **WHEN** every relax tier against the preferred indexers yields no confident best pick (no results, no valid matches, or errors)
+- **THEN** the service SHALL rerun the relax tiers against The Pirate Bay
+- **AND** report `no_torrent_found` only when The Pirate Bay also yields nothing
+- **AND** report `indexer_unreachable` only when every search against every indexer errored
 
 ### Requirement: Movie Repository Existence Check
 

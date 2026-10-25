@@ -653,6 +653,54 @@ func (_m *Repository) InsertActiveTorrent(ctx context.Context, at *models.Active
 	return r0
 }
 
+// GetFailedTorrents provides a mock function with given fields: ctx, tvdbID, season, episode
+func (_m *Repository) GetFailedTorrents(ctx context.Context, tvdbID string, season int, episode int) ([]*models.FailedTorrent, error) {
+	ret := _m.Called(ctx, tvdbID, season, episode)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetFailedTorrents")
+	}
+
+	var r0 []*models.FailedTorrent
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, int, int) ([]*models.FailedTorrent, error)); ok {
+		return rf(ctx, tvdbID, season, episode)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, int, int) []*models.FailedTorrent); ok {
+		r0 = rf(ctx, tvdbID, season, episode)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*models.FailedTorrent)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string, int, int) error); ok {
+		r1 = rf(ctx, tvdbID, season, episode)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// InsertFailedTorrent provides a mock function with given fields: ctx, ft
+func (_m *Repository) InsertFailedTorrent(ctx context.Context, ft *models.FailedTorrent) error {
+	ret := _m.Called(ctx, ft)
+
+	if len(ret) == 0 {
+		panic("no return value specified for InsertFailedTorrent")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, *models.FailedTorrent) error); ok {
+		r0 = rf(ctx, ft)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // NewRepository creates a new instance of Repository. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewRepository(t interface {

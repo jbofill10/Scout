@@ -36,7 +36,28 @@ func (s *RepoTestSuite) TestInsertActiveTorrent_Success() {
 	s.Require().NoError(err)
 
 	s.mock.ExpectExec(`INSERT INTO ActiveTorrents`).
-		WithArgs(at.InfoHash, at.TrackingUUID, at.TorrentTitle, strategy, at.StartedAt, "", "").
+		WithArgs(at.InfoHash, at.TrackingUUID, at.TorrentTitle, strategy, at.StartedAt, "", "", nil).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	s.NoError(s.repo.InsertActiveTorrent(context.Background(), at))
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+// The search request rides along as JSONB so a dead download can be replaced
+// after a restart.
+func (s *RepoTestSuite) TestInsertActiveTorrent_PersistsSearchRequest() {
+	at := activeTorrentFixture()
+	at.Request = &models.SearchRequest{
+		Media:   tvdb.Media{Id: "12345", Name: "Some Show", Category: "series"},
+		Episode: &tvdb.Episode{SeasonNumber: 1, Number: 2},
+	}
+	strategy, err := json.Marshal(at.Strategy)
+	s.Require().NoError(err)
+	request, err := json.Marshal(at.Request)
+	s.Require().NoError(err)
+
+	s.mock.ExpectExec(`INSERT INTO ActiveTorrents`).
+		WithArgs(at.InfoHash, at.TrackingUUID, at.TorrentTitle, strategy, at.StartedAt, "", "", request).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	s.NoError(s.repo.InsertActiveTorrent(context.Background(), at))
@@ -77,8 +98,8 @@ func (s *RepoTestSuite) TestGetActiveTorrents_RoundTripsStrategy() {
 	strategy, err := json.Marshal(at.Strategy)
 	s.Require().NoError(err)
 
-	rows := sqlmock.NewRows([]string{"info_hash", "tracking_uuid", "torrent_title", "strategy", "started_at"}).
-		AddRow(at.InfoHash, at.TrackingUUID, at.TorrentTitle, strategy, at.StartedAt)
+	rows := sqlmock.NewRows([]string{"info_hash", "tracking_uuid", "torrent_title", "strategy", "started_at", "request"}).
+		AddRow(at.InfoHash, at.TrackingUUID, at.TorrentTitle, strategy, at.StartedAt, nil)
 	s.mock.ExpectQuery(`SELECT info_hash, tracking_uuid, torrent_title, strategy, started_at`).WillReturnRows(rows)
 
 	active, err := s.repo.GetActiveTorrents(context.Background())
@@ -98,7 +119,7 @@ func (s *RepoTestSuite) TestGetActiveTorrents_RoundTripsStrategy() {
 }
 
 func (s *RepoTestSuite) TestGetActiveTorrents_Empty() {
-	rows := sqlmock.NewRows([]string{"info_hash", "tracking_uuid", "torrent_title", "strategy", "started_at"})
+	rows := sqlmock.NewRows([]string{"info_hash", "tracking_uuid", "torrent_title", "strategy", "started_at", "request"})
 	s.mock.ExpectQuery(`SELECT info_hash, tracking_uuid, torrent_title, strategy, started_at`).WillReturnRows(rows)
 
 	active, err := s.repo.GetActiveTorrents(context.Background())
@@ -110,8 +131,8 @@ func (s *RepoTestSuite) TestGetActiveTorrents_Empty() {
 // A row whose strategy cannot be parsed can never be resumed, so it is dropped
 // rather than left to wedge the startup sweep on every boot.
 func (s *RepoTestSuite) TestGetActiveTorrents_DiscardsUnreadableStrategy() {
-	rows := sqlmock.NewRows([]string{"info_hash", "tracking_uuid", "torrent_title", "strategy", "started_at"}).
-		AddRow("bad-hash", "uuid-1", "Broken", []byte("{not json"), time.Now())
+	rows := sqlmock.NewRows([]string{"info_hash", "tracking_uuid", "torrent_title", "strategy", "started_at", "request"}).
+		AddRow("bad-hash", "uuid-1", "Broken", []byte("{not json"), time.Now(), nil)
 	s.mock.ExpectQuery(`SELECT info_hash, tracking_uuid, torrent_title, strategy, started_at`).WillReturnRows(rows)
 	s.mock.ExpectExec(`DELETE FROM ActiveTorrents`).
 		WithArgs("bad-hash").

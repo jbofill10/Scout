@@ -521,6 +521,33 @@ func (s *QbittHandlerTestSuite) TestCalcIndexerIDs_NonAnimeMovie() {
 	s.Contains(ids, ONE337x_ID)
 }
 
+func (s *QbittHandlerTestSuite) TestIndexerTiers_PreferredThenPirateBay() {
+	cases := []struct {
+		name      string
+		category  string
+		anime     bool
+		preferred []int64
+	}{
+		{"non-anime show", "series", false, []int64{ONE337x_ID}},
+		{"anime show", "series", true, []int64{NYAA_ID}},
+		{"non-anime movie", "movie", false, []int64{ONE337x_ID}},
+		{"anime movie", "movie", true, []int64{NYAA_ID, ONE337x_ID}},
+	}
+	for _, tc := range cases {
+		tiers := s.handler.indexerTiers(tc.category, tc.anime)
+		s.Equal([][]int64{tc.preferred, {TPB_ID}}, tiers, tc.name)
+	}
+}
+
+func (s *QbittHandlerTestSuite) TestIndexerTiers_NoFallbackWhenPirateBayUnset() {
+	orig := TPB_ID
+	TPB_ID = 0
+	defer func() { TPB_ID = orig }()
+
+	tiers := s.handler.indexerTiers("series", false)
+	s.Equal([][]int64{{ONE337x_ID}}, tiers)
+}
+
 func (s *QbittHandlerTestSuite) TestStandardizeNumber() {
 	testCases := []struct {
 		input    int
@@ -731,8 +758,8 @@ func (s *QbittHandlerTestSuite) TestFailedResult() {
 // surface the episode id. The webserver keys notifications/retries by episode
 // id, so reverting EpisodeTvdbID to the show id would silently break shows.
 func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_EpisodeIdentity() {
-	const showID = "555000"   // Shows table key (req.Id)
-	const episodeID = 777111  // distinct episode id
+	const showID = "555000"  // Shows table key (req.Id)
+	const episodeID = 777111 // distinct episode id
 	media := &tvdb.Media{
 		Id:   showID,
 		Name: "Identity Show",
@@ -784,6 +811,8 @@ func (s *QbittHandlerTestSuite) TestExecuteSearchStrategies_NoStrategies() {
 		context.Background(),
 		[]*models.SearchStrategy{},
 		&tvdb.Media{Name: "Test", Category: "series"},
+		[]int64{ONE337x_ID},
+		nil,
 	)
 
 	s.Empty(matches)
