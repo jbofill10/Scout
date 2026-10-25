@@ -48,3 +48,29 @@ func (h *MediaExtendedHandler) GetBatchExtended(c *gin.Context) {
 		telemetry.WithTraceContext(ctx, "count", len(results))...)
 	c.JSON(http.StatusOK, results)
 }
+
+// GetDetails returns the full detail record for a single media item, used by the
+// UI when a card is opened. Defaults to series so callers that omit mediaType
+// keep the historic behaviour of the extended endpoints.
+func (h *MediaExtendedHandler) GetDetails(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	mediaId := c.Param("id")
+	mediaType := c.Query("mediaType")
+	if mediaType != "movie" {
+		mediaType = "series"
+	}
+
+	h.logger.InfoContext(ctx, "Media details request",
+		telemetry.WithTraceContext(ctx, "media_id", mediaId, "media_type", mediaType)...)
+
+	details, err := h.tvdbClient.GetMediaDetails(ctx, mediaId, mediaType)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "Failed to fetch media details",
+			telemetry.WithTraceContext(ctx, "media_id", mediaId, "error", err)...)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch media details from tvdb-proxy"})
+		return
+	}
+
+	c.JSON(http.StatusOK, details)
+}

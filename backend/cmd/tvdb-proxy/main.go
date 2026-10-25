@@ -482,7 +482,12 @@ func querySeriesMetadata(ctx context.Context, seriesId string) (tvdb.TVDBSeriesR
 
 // fetchTranslations fetches translation data for a given media ID and language code
 // Returns a slice of aliases from the translation endpoint, or an empty slice on error
-func fetchTranslations(ctx context.Context, mediaId string, language string, mediaType string) []tvdb.Alias {
+// fetchTranslations returns the translated record for a media item along with
+// the aliases derived from it. Movies keep their overview and tagline here
+// rather than on the extended record, so callers need the record itself too.
+func fetchTranslations(
+	ctx context.Context, mediaId string, language string, mediaType string,
+) (tvdb.TVDBTranslationData, []tvdb.Alias) {
 	// Conditional translations endpoint based on media type
 	var translationURL string
 	if mediaType == "movie" {
@@ -494,7 +499,7 @@ func fetchTranslations(ctx context.Context, mediaId string, language string, med
 	req, err := http.NewRequestWithContext(ctx, "GET", translationURL, nil)
 	if err != nil {
 		logger.ErrorContext(ctx, "Failed to create translations request", "media_id", mediaId, "language", language, "error", err)
-		return []tvdb.Alias{}
+		return tvdb.TVDBTranslationData{}, []tvdb.Alias{}
 	}
 
 	req.Header.Set("Accept", "application/json")
@@ -508,7 +513,7 @@ func fetchTranslations(ctx context.Context, mediaId string, language string, med
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.ErrorContext(ctx, "Failed to fetch translations", "media_id", mediaId, "language", language, "error", err)
-		return []tvdb.Alias{}
+		return tvdb.TVDBTranslationData{}, []tvdb.Alias{}
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); cerr != nil {
@@ -519,13 +524,13 @@ func fetchTranslations(ctx context.Context, mediaId string, language string, med
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logger.ErrorContext(ctx, "Failed to read translations response body", "media_id", mediaId, "language", language, "error", err)
-		return []tvdb.Alias{}
+		return tvdb.TVDBTranslationData{}, []tvdb.Alias{}
 	}
 
 	var translationInfo tvdb.TVDBTranslationResponse
 	if err := json.Unmarshal(bodyBytes, &translationInfo); err != nil {
 		logger.ErrorContext(ctx, "Failed to decode translations response", "media_id", mediaId, "language", language, "error", err)
-		return []tvdb.Alias{}
+		return tvdb.TVDBTranslationData{}, []tvdb.Alias{}
 	}
 
 	logger.InfoContext(ctx, "Fetched translation", "media_id", mediaId, "language", language, "name", translationInfo.Data.Name, "body", translationInfo)
@@ -543,8 +548,26 @@ func fetchTranslations(ctx context.Context, mediaId string, language string, med
 			Name:     alias,
 		})
 	}
-	return aliases
+	return translationInfo.Data, aliases
+}
 
+// earliestRelease picks a movie's release date: the global first_release when
+// TVDB provides one, otherwise the earliest dated entry in releases.
+func earliestRelease(first tvdb.Release, releases []tvdb.Release) string {
+	if first.Date != "" {
+		return first.Date
+	}
+
+	earliest := ""
+	for _, release := range releases {
+		if release.Date == "" {
+			continue
+		}
+		if earliest == "" || release.Date < earliest {
+			earliest = release.Date
+		}
+	}
+	return earliest
 }
 
 // fetchExtendedInformation fetches extended metadata for a single media item
@@ -612,13 +635,29 @@ func fetchExtendedInformation(ctx context.Context, mediaId string, mediaType str
 
 	// Always fetch English translations
 	logger.InfoContext(ctx, "Fetching English translations", "media_id", mediaId)
-	engAliases := fetchTranslations(ctx, mediaId, "eng", mediaType)
+	engTranslation, engAliases := fetchTranslations(ctx, mediaId, "eng", mediaType)
 	info.Data.Aliases = append(info.Data.Aliases, engAliases...)
+
+	// Movies carry no inline overview or tagline, so take them from the English
+	// translation. Series usually have an overview already; only fill the gaps.
+	if info.Data.Overview == "" {
+		info.Data.Overview = engTranslation.Overview
+	}
+	if info.Data.Tagline == "" {
+		info.Data.Tagline = engTranslation.Tagline
+	}
+
+	// Movies have no firstAired field: their release date lives in first_release,
+	// with per-country dates in releases. Downstream scheduling and the detail
+	// view both read firstAired, so normalise it here.
+	if info.Data.FirstAired == "" {
+		info.Data.FirstAired = earliestRelease(info.Data.FirstRelease, info.Data.Releases)
+	}
 
 	// If anime, also fetch Japanese translations
 	if isAnime {
 		logger.InfoContext(ctx, "Media is anime, fetching Japanese translations", "media_id", mediaId)
-		jpnAliases := fetchTranslations(ctx, mediaId, "jpn", mediaType)
+		_, jpnAliases := fetchTranslations(ctx, mediaId, "jpn", mediaType)
 		info.Data.Aliases = append(info.Data.Aliases, jpnAliases...)
 	}
 

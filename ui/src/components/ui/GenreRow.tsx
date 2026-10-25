@@ -260,6 +260,7 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
           status={selectedShowStatus}
           mediaName={selectedShowInfo.name}
           posterUrl={selectedShowInfo.posterUrl}
+          tvdbId={selectedShowInfo.tvdbId}
           enrichedMedia={selectedEnrichedMedia}
           onDownload={handleDownload}
           showDownloadButton={true}

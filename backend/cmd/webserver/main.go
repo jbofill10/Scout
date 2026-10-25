@@ -184,6 +184,7 @@ func main() {
 	r.GET("/genres", popularHandler.GetGenres)
 	r.POST("/status/batch", statusHandler.GetBatchStatus)
 	r.POST("/media/batch-extended", mediaExtendedHandler.GetBatchExtended)
+	r.GET("/media/:id/details", mediaExtendedHandler.GetDetails)
 	r.GET("/schedule/weekly", scheduleHandler.GetWeeklySchedule)
 
 	// TVDB routes
