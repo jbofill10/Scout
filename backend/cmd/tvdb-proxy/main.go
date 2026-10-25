@@ -34,6 +34,117 @@ var tvDbConfig TvDbConfig
 
 var logger *slog.Logger
 
+// tokenMu guards tvDbConfig.Token. TVDB v4 bearer tokens expire after roughly a
+// month, so the token is re-issued proactively on a timer and reactively
+// whenever TVDB answers 401. Before this the proxy logged in once at startup
+// and served 401s forever once the token aged out.
+var tokenMu sync.RWMutex
+
+func currentToken() string {
+	tokenMu.RLock()
+	defer tokenMu.RUnlock()
+	return tvDbConfig.Token
+}
+
+// refreshToken re-authenticates with TVDB unless another caller already
+// replaced staleToken, in which case that newer token is returned as is. The
+// login runs under the write lock so concurrent 401s collapse into one login.
+func refreshToken(ctx context.Context, staleToken string) (string, error) {
+	tokenMu.Lock()
+	defer tokenMu.Unlock()
+	if tvDbConfig.Token != staleToken {
+		return tvDbConfig.Token, nil
+	}
+	token, err := getApiKey(ctx)
+	if err != nil {
+		return "", err
+	}
+	tvDbConfig.Token = token
+	return token, nil
+}
+
+// startTokenRefresher re-logins on an interval so the token never reaches
+// TVDB's expiry. TVDB_TOKEN_REFRESH_INTERVAL overrides the 24h default, with a
+// 1h floor to stay polite to the login endpoint.
+func startTokenRefresher() {
+	interval := 24 * time.Hour
+	if raw := os.Getenv("TVDB_TOKEN_REFRESH_INTERVAL"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		switch {
+		case err != nil:
+			logger.Warn("Invalid TVDB_TOKEN_REFRESH_INTERVAL, using default", "value", raw, "default", interval.String())
+		case parsed < time.Hour:
+			logger.Warn("TVDB_TOKEN_REFRESH_INTERVAL below 1h, clamping to 1h", "value", raw)
+			interval = time.Hour
+		default:
+			interval = parsed
+		}
+	}
+	logger.Info("TVDB token refresher started", "interval", interval.String())
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if _, err := refreshToken(ctx, currentToken()); err != nil {
+				logger.Error("Scheduled TVDB token refresh failed, will retry next interval", "error", err)
+			} else {
+				logger.Info("Scheduled TVDB token refresh succeeded")
+			}
+			cancel()
+		}
+	}()
+}
+
+// tvdbAuthedGet performs an authenticated GET against a full TVDB URL and
+// returns the status code and body. On 401 it re-authenticates once and
+// retries, so an expired token costs one extra round trip instead of an outage.
+// If re-authentication itself fails the original 401 response is returned.
+func tvdbAuthedGet(ctx context.Context, url string) (int, []byte, error) {
+	client := &http.Client{
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Timeout:   30 * time.Second,
+	}
+
+	do := func(token string) (int, []byte, error) {
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return 0, nil, err
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return 0, nil, err
+		}
+		defer func() {
+			if cerr := resp.Body.Close(); cerr != nil {
+				logger.InfoContext(ctx, "Error closing response body", "error", cerr)
+			}
+		}()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return resp.StatusCode, nil, err
+		}
+		return resp.StatusCode, body, nil
+	}
+
+	token := currentToken()
+	status, body, err := do(token)
+	if err != nil || status != http.StatusUnauthorized {
+		return status, body, err
+	}
+
+	logger.WarnContext(ctx, "TVDB rejected bearer token, re-authenticating", "url", url)
+	newToken, err := refreshToken(ctx, token)
+	if err != nil {
+		logger.ErrorContext(ctx, "TVDB re-authentication failed", "error", err)
+		return status, body, nil
+	}
+	return do(newToken)
+}
+
 // Genre cache structures
 type genreCache struct {
 	mu           sync.RWMutex
@@ -79,6 +190,7 @@ func main() {
 		logger.Error("Failed to load config", "error", err)
 		os.Exit(1)
 	}
+	startTokenRefresher()
 
 	// Initialize genre cache on startup
 	ctx := context.Background()
@@ -95,7 +207,7 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 	router.GET("/ready", func(c *gin.Context) {
-		if tvDbConfig.Token != "" {
+		if currentToken() != "" {
 			c.JSON(http.StatusOK, gin.H{"status": "ok"})
 		} else {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable"})
@@ -315,7 +427,9 @@ func loadConfig() error {
 		os.Exit(1)
 	}
 
+	tokenMu.Lock()
 	tvDbConfig.Token = token
+	tokenMu.Unlock()
 
 	// Validate required fields
 	if tvDbConfig.Host == "" {
@@ -401,37 +515,10 @@ func getApiKey(ctx context.Context) (string, error) {
 }
 
 func tvDbGet(ctx context.Context, uri string) ([]byte, error) {
-	// Create a new HTTP request
 	logger.InfoContext(ctx, "Making TVDB API request", "uri", uri)
-	req, err := http.NewRequestWithContext(ctx, "GET", tvDbConfig.Host+uri, nil)
-	if err != nil {
-		logger.InfoContext(ctx, "Error making request")
-		return nil, err
-	}
-
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", tvDbConfig.Token))
-
-	client := &http.Client{
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
-		Timeout:   30 * time.Second,
-	}
-
-	resp, err := client.Do(req)
+	statusCode, body, err := tvdbAuthedGet(ctx, tvDbConfig.Host+uri)
 	if err != nil {
 		logger.InfoContext(ctx, "Error making request to TVDB", "error", err)
-		return nil, err
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			logger.InfoContext(ctx, "Error closing response body", "value", err)
-		}
-	}()
-
-	// Read response body
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		logger.InfoContext(ctx, "Error reading response body", "value", err)
 		return nil, err
 	}
 
@@ -441,16 +528,16 @@ func tvDbGet(ctx context.Context, uri string) ([]byte, error) {
 		preview = string(body[:500]) + "..."
 	}
 	logger.InfoContext(ctx, "TVDB API response",
-		"status_code", resp.StatusCode,
+		"status_code", statusCode,
 		"body_length", len(body),
 		"body_preview", preview)
 
 	// Check HTTP status code
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if statusCode < 200 || statusCode >= 300 {
 		logger.ErrorContext(ctx, "TVDB API returned error",
-			"status_code", resp.StatusCode,
+			"status_code", statusCode,
 			"response_body", string(body))
-		return nil, fmt.Errorf("TVDB API error: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("TVDB API error: status %d", statusCode)
 	}
 
 	return body, nil
@@ -496,34 +583,9 @@ func fetchTranslations(
 		translationURL = tvDbConfig.Host + fmt.Sprintf("/series/%s/translations/%s", mediaId, language)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", translationURL, nil)
-	if err != nil {
-		logger.ErrorContext(ctx, "Failed to create translations request", "media_id", mediaId, "language", language, "error", err)
-		return tvdb.TVDBTranslationData{}, []tvdb.Alias{}
-	}
-
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", tvDbConfig.Token))
-
-	client := &http.Client{
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
-		Timeout:   30 * time.Second,
-	}
-
-	resp, err := client.Do(req)
+	_, bodyBytes, err := tvdbAuthedGet(ctx, translationURL)
 	if err != nil {
 		logger.ErrorContext(ctx, "Failed to fetch translations", "media_id", mediaId, "language", language, "error", err)
-		return tvdb.TVDBTranslationData{}, []tvdb.Alias{}
-	}
-	defer func() {
-		if cerr := resp.Body.Close(); cerr != nil {
-			logger.ErrorContext(ctx, "warning: failed to close translations response body", "error", cerr)
-		}
-	}()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		logger.ErrorContext(ctx, "Failed to read translations response body", "media_id", mediaId, "language", language, "error", err)
 		return tvdb.TVDBTranslationData{}, []tvdb.Alias{}
 	}
 
@@ -582,32 +644,9 @@ func fetchExtendedInformation(ctx context.Context, mediaId string, mediaType str
 		url = tvDbConfig.Host + fmt.Sprintf("/series/%s/extended", mediaId)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", tvDbConfig.Token))
-
-	client := &http.Client{
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
-		Timeout:   30 * time.Second,
-	}
-
-	resp, err := client.Do(req)
+	_, bodyBytes, err := tvdbAuthedGet(ctx, url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make request to TVDB: %w", err)
-	}
-	defer func() {
-		if cerr := resp.Body.Close(); cerr != nil {
-			logger.ErrorContext(ctx, "warning: failed to close response body", "error", cerr)
-		}
-	}()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
 	var info tvdb.TVDBSeriesExtendedResponse

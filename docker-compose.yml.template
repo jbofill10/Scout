@@ -30,6 +30,7 @@ services:
       TVDB_HOST: ${TVDB_HOST:-https://api4.thetvdb.com/v4}
       TVDB_API_KEY: ${TVDB_API_KEY}
       TVDB_PIN: ${TVDB_PIN}
+      TVDB_TOKEN_REFRESH_INTERVAL: ${TVDB_TOKEN_REFRESH_INTERVAL:-24h}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-localhost:4317}
       OTEL_SERVICE_NAME: tvdb-proxy
     ports:
