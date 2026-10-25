@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,81 @@ func TestDownloadShow_SummaryCountsEachEpisode(t *testing.T) {
 	assert.Equal(t, 1, dispatcher.callCount())
 	assert.Len(t, dispatcher.payload().Metadata.Episodes, 1)
 	assert.Equal(t, 1, dispatcher.payload().Metadata.Episodes[0].Id)
+}
+
+// A season's episodes go to the torrenter one per call. The torrenter searches
+// them sequentially, so a whole-season request used to outlive the client's
+// deadline and come back as "unreachable" for every episode.
+func TestDownloadShow_DispatchesOneEpisodePerTorrenterCall(t *testing.T) {
+	repo := &fakeSchedulerRepo{}
+	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("CreateNotification", mock.Anything, mock.Anything).Return(nil)
+	dispatcher := &fakeDispatcher{respFor: func(req tvdb.Media) dlstatus.DownloadResponse {
+		ep := req.Metadata.Episodes[0]
+		return dlstatus.DownloadResponse{Results: []dlstatus.EpisodeResult{
+			epResult(strconv.Itoa(ep.Id), dlstatus.OutcomeDownloading, ""),
+		}}
+	}}
+
+	i := newSummaryInteractor(t, repo, notifRepo, dispatcher)
+
+	req := tvdb.Media{Id: "555", Name: "Test Show", Category: "series", Aliases: []string{"TS"}}
+	req.Metadata.Episodes = []tvdb.Episode{
+		{Id: 1, SeasonNumber: 1, Number: 1, Aired: aired(-30)},
+		{Id: 2, SeasonNumber: 1, Number: 2, Aired: aired(-23)},
+		{Id: 3, SeasonNumber: 1, Number: 3, Aired: aired(-16)},
+	}
+
+	summary, err := i.DownloadShow(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, 3, summary.QueuedNow)
+
+	payloads := dispatcher.payloads()
+	require.Len(t, payloads, 3)
+	for idx, p := range payloads {
+		require.Len(t, p.Metadata.Episodes, 1, "call %d must carry exactly one episode", idx)
+		assert.Equal(t, idx+1, p.Metadata.Episodes[0].Id, "episodes are dispatched in order")
+		assert.Equal(t, "555", p.Id)
+		assert.Equal(t, "Test Show", p.Name)
+	}
+	assert.Equal(t, 0, repo.retryCount, "nothing failed, so nothing is scheduled for retry")
+}
+
+// Each call's outcome is reconciled on its own: one failed episode gets one
+// retry row, and the others are left alone.
+func TestDownloadShow_RetriesOnlyTheEpisodeThatFailed(t *testing.T) {
+	repo := &fakeSchedulerRepo{}
+	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("CreateNotification", mock.Anything, mock.Anything).Return(nil)
+	notifRepo.On("GetNotification", mock.Anything, "2").Return(nil, nil)
+	dispatcher := &fakeDispatcher{respFor: func(req tvdb.Media) dlstatus.DownloadResponse {
+		ep := req.Metadata.Episodes[0]
+		if ep.Id == 2 {
+			return dlstatus.DownloadResponse{Results: []dlstatus.EpisodeResult{
+				epResult("2", dlstatus.OutcomeFailed, dlstatus.CodeNoTorrentFound),
+			}}
+		}
+		return dlstatus.DownloadResponse{Results: []dlstatus.EpisodeResult{
+			epResult(strconv.Itoa(ep.Id), dlstatus.OutcomeDownloading, ""),
+		}}
+	}}
+
+	i := newSummaryInteractor(t, repo, notifRepo, dispatcher)
+
+	req := tvdb.Media{Id: "555", Name: "Test Show", Category: "series"}
+	req.Metadata.Episodes = []tvdb.Episode{
+		{Id: 1, SeasonNumber: 1, Number: 1, Aired: aired(-30)},
+		{Id: 2, SeasonNumber: 1, Number: 2, Aired: aired(-23)},
+		{Id: 3, SeasonNumber: 1, Number: 3, Aired: aired(-16)},
+	}
+
+	_, err := i.DownloadShow(context.Background(), req)
+	require.NoError(t, err)
+
+	assert.Equal(t, 3, dispatcher.callCount())
+	require.Equal(t, 1, repo.retryCount)
+	require.Len(t, repo.retryMedia[0].Metadata.Episodes, 1)
+	assert.Equal(t, 2, repo.retryMedia[0].Metadata.Episodes[0].Id)
 }
 
 func TestDownloadShow_AlreadyScheduledCountsAsSkipped(t *testing.T) {

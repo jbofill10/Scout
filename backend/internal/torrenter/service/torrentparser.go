@@ -87,17 +87,20 @@ func (tp *TorrentParser) initPatterns() {
 		},
 		// Scene Format: Show.S##E##.Title.Quality.Codec-Group
 		// Example: Breaking.Bad.S01E05.Gray.Matter.1080p.BluRay.x264-DEMAND
+		// Separators may be dots or spaces: indexers that mirror eztv listings
+		// print the same release as "Show S01E05 Title 1080p BluRay x264-DEMAND".
 		{
 			name:       "scene-standard",
-			regex:      regexp.MustCompile(`(?i)^(.+?)\.S(\d{1,2})E(\d{1,3})(?:E(\d{1,3}))?(?:v(\d+))?\..*?(1080p|720p|480p|2160p|4k).*?-([^\s\.]+)`),
+			regex:      regexp.MustCompile(`(?i)^(.+?)[\s\.]S(\d{1,2})E(\d{1,3})(?:E(\d{1,3}))?(?:v(\d+))?[\s\.].*?(1080p|720p|480p|2160p|4k).*?-([^\s\.]+)`),
 			parser:     parseScene,
 			confidence: 0.90,
 		},
 		// Alternative Scene Format: Show.S##E##.Quality
-		// Example: Show.S01E05.1080p.mkv
+		// Examples: Show.S01E05.1080p.mkv
+		//           Show S01E05 (1080p NF WEBRip x265 Qman) [UTR]
 		{
 			name:       "scene-simple",
-			regex:      regexp.MustCompile(`(?i)^(.+?)\.S(\d{1,2})E(\d{1,3})(?:E(\d{1,3}))?(?:v(\d+))?\..*?(1080p|720p|480p|2160p|4k)`),
+			regex:      regexp.MustCompile(`(?i)^(.+?)[\s\.]S(\d{1,2})E(\d{1,3})(?:E(\d{1,3}))?(?:v(\d+))?[\s\.].*?(1080p|720p|480p|2160p|4k)`),
 			parser:     parseSceneSimple,
 			confidence: 0.85,
 		},
@@ -559,7 +562,13 @@ func extractQuality(qualityString string) string {
 
 // GetQualityTier returns a numeric tier for quality comparison
 func (pt *ParsedTorrent) GetQualityTier() int {
-	switch strings.ToLower(pt.Quality) {
+	return QualityTier(pt.Quality)
+}
+
+// QualityTier maps a resolution label to its comparison tier: 5 for 4K/2160p,
+// 4 for 1080p, 3 for 720p, 2 for 480p, and 1 for anything unrecognised.
+func QualityTier(label string) int {
+	switch strings.ToLower(strings.TrimSpace(label)) {
 	case "4k", "2160p":
 		return 5
 	case "1080p":

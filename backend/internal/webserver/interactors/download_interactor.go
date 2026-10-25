@@ -430,10 +430,18 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) (
 	return summary, nil
 }
 
-// dispatchShowDownload sends aired episodes to the torrenter and reconciles the
-// per-episode outcomes: transient failures get a retry row, permanent ones a
-// failed notification and history entry. It runs on a detached context, so
-// errors are logged rather than returned.
+// dispatchShowDownload sends aired episodes to the torrenter one at a time and
+// reconciles each outcome as it comes back: transient failures get a retry row,
+// permanent ones a failed notification and history entry. It runs on a
+// detached context, so errors are logged rather than returned.
+//
+// One episode per call, because the torrenter searches a request's episodes
+// sequentially and each search can take minutes. Sending a whole season in one
+// request outran the client's deadline, which cancelled the torrenter mid-run
+// and reported every episode unreachable, including the ones it had already
+// added to qBittorrent. Reconciling per episode also means a restart part-way
+// through loses at most the episode in flight, not the retry rows for the ones
+// already answered.
 func (i *DownloadInteractor) dispatchShowDownload(
 	ctx context.Context,
 	payload tvdb.Media,
@@ -448,18 +456,28 @@ func (i *DownloadInteractor) dispatchShowDownload(
 	)
 	defer span.End()
 
-	resp, dlErr := i.torrenterClient.Download(ctx, payload)
-	if dlErr != nil {
-		i.logger.ErrorContext(ctx, "Failed to download show", "error", dlErr)
-	}
-	i.logger.InfoContext(ctx, "Sent aired episodes to torrenter", "count", len(payload.Metadata.Episodes))
-
 	traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
-	allScheduled, scheduleErr := i.handleImmediateShowFailures(ctx, payload, extendedInfo, isAnime, resp, traceID, spanID)
-	if !allScheduled || scheduleErr != nil {
-		i.logger.ErrorContext(ctx, "Some show download failures could not be scheduled for retry",
-			"error", scheduleErr, "media", payload.Name)
+	unhandled := 0
+	for _, ep := range payload.Metadata.Episodes {
+		single := payload
+		single.Metadata.Episodes = []tvdb.Episode{ep}
+
+		resp, dlErr := i.torrenterClient.Download(ctx, single)
+		if dlErr != nil {
+			i.logger.ErrorContext(ctx, "Failed to download episode", "error", dlErr,
+				"media", payload.Name, "season", ep.SeasonNumber, "episode", ep.Number)
+		}
+
+		allScheduled, scheduleErr := i.handleImmediateShowFailures(ctx, single, extendedInfo, isAnime, resp, traceID, spanID)
+		if !allScheduled || scheduleErr != nil {
+			unhandled++
+			i.logger.ErrorContext(ctx, "Episode download failure could not be scheduled for retry",
+				"error", scheduleErr, "media", payload.Name, "season", ep.SeasonNumber, "episode", ep.Number)
+		}
 	}
+
+	i.logger.InfoContext(ctx, "Sent aired episodes to torrenter",
+		"count", len(payload.Metadata.Episodes), "unhandled_failures", unhandled)
 }
 
 // DownloadMovie handles the download request for a movie. Like DownloadShow it

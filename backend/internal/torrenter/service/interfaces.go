@@ -53,6 +53,11 @@ type Repository interface {
 	DeleteActiveTorrent(ctx context.Context, infoHash string) error
 	GetActiveTorrents(ctx context.Context) ([]*models.ActiveTorrent, error)
 
+	// Torrents that were tried for an item and gave up on, so a later search
+	// for the same item does not pick them again
+	InsertFailedTorrent(ctx context.Context, ft *models.FailedTorrent) error
+	GetFailedTorrents(ctx context.Context, tvdbID string, season, episode int) ([]*models.FailedTorrent, error)
+
 	// Library browsing methods
 	GetAllShows(ctx context.Context) ([]library.LibraryShow, error)
 	GetAllMovies(ctx context.Context) ([]library.LibraryMovie, error)

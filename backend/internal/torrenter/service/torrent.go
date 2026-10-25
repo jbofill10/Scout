@@ -3,9 +3,12 @@ package service
 import (
 	"context"
 	"fmt"
+	"html"
 	"log/slog"
+	"math"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,12 +47,36 @@ type QbittHandler struct {
 	repo   Repository
 	logger *slog.Logger
 	parser *TorrentParser
+	// minQualityTier is the lowest resolution tier pickBestTorrent will accept
+	// (see QualityTier). Zero disables the floor.
+	minQualityTier int
 }
 
-// Indexer IDs
+// defaultMinQuality is the resolution floor applied when MIN_QUALITY is unset.
+// 720p releases are the best-seeded listings on public indexers, so without a
+// floor the seeder-aware picker drifts down to them for anything with a thin
+// 1080p swarm.
+const defaultMinQuality = "1080p"
+
+// minQualityTier reads the resolution floor from MIN_QUALITY (480p, 720p,
+// 1080p, 2160p or 4k). An unrecognised value falls back to the default rather
+// than silently disabling the floor.
+func minQualityTier() int {
+	label := os.Getenv("MIN_QUALITY")
+	if tier := QualityTier(label); label != "" && tier > 1 {
+		return tier
+	}
+	return QualityTier(defaultMinQuality)
+}
+
+// Prowlarr indexer IDs. Nyaa and 1337x are the preferred indexers for their media
+// kinds. The Pirate Bay is a last resort: it is only searched when the preferred
+// indexers turn up nothing usable (see indexerTiers), so a release that exists on
+// both is always taken from the preferred one.
 var (
 	NYAA_ID    = int64(1) // Anime
-	ONE337x_ID = int64(2) // General
+	ONE337x_ID = int64(2) // General, preferred
+	TPB_ID     = int64(3) // General, fallback only
 )
 
 const (
@@ -80,12 +107,14 @@ func NewQbittHandler(qCfg *models.QbittCfg, pCfg *models.ProwlarrCfg, repo Repos
 
 	p := prowlarr.New(starr.New(pCfg.Key, pCfg.Host, 60*time.Hour))
 	q := &QbittHandler{
-		c:      qb,
-		logger: logger,
-		p:      p,
-		repo:   repo,
-		parser: NewTorrentParser(),
+		c:              qb,
+		logger:         logger,
+		p:              p,
+		repo:           repo,
+		parser:         NewTorrentParser(),
+		minQualityTier: minQualityTier(),
 	}
+	logger.Info("Torrent quality floor", "min_quality_tier", q.minQualityTier)
 
 	if err := loginWithTimeout(qb, qbittLoginTimeout); err != nil {
 		logger.Warn("Failed to login to qBittorrent, continuing without it and retrying in background",
@@ -137,12 +166,12 @@ const prowlarrSearchTimeout = 45 * time.Second
 // attempts × strategies × tiers), so a sick indexer can't pin a single episode's request.
 const episodeSearchDeadline = 5 * time.Minute
 
-func (q *QbittHandler) searchProwlarr(ctx context.Context, query, category string, isAnime bool) ([]*prowlarr.Search, error) {
-	q.logger.InfoContext(ctx, "Searching Prowlarr", "query", query, "category", category)
+func (q *QbittHandler) searchProwlarr(ctx context.Context, query, category string, indexerIDs []int64) ([]*prowlarr.Search, error) {
+	q.logger.InfoContext(ctx, "Searching Prowlarr", "query", query, "category", category, "indexer_ids", indexerIDs)
 
 	input := prowlarr.SearchInput{
 		Query:      query,
-		IndexerIDs: q.calcIndexerIDs(category, isAnime),
+		IndexerIDs: indexerIDs,
 		Limit:      500,
 		Categories: q.calcCategories(category == "series"),
 	}
@@ -217,6 +246,18 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 			close(done)
 			return results, nil
 		}
+
+		if q.inFlightTvdbIDs(ctx)[req.Id] {
+			q.logger.InfoContext(ctx, "Movie already has a torrent in flight, skipping",
+				telemetry.WithTraceContext(ctx, "movie", req.Name, "tvdb_id", req.Id)...)
+			q.updateNotificationStatus(ctx, req.Id, "", notifications.StatusDownloading)
+			results = append(results, dlstatus.EpisodeResult{
+				TvdbID:  req.Id,
+				Outcome: dlstatus.OutcomeDownloading,
+			})
+			close(done)
+			return results, nil
+		}
 	}
 
 	// Handle series: Filter out episodes that already exist in Plex
@@ -227,8 +268,11 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 		}
 		results = append(results, existsResults...)
 
+		episodesToDownload, inFlightResults := q.filterInFlightEpisodes(ctx, req, episodesToDownload)
+		results = append(results, inFlightResults...)
+
 		if len(episodesToDownload) == 0 {
-			q.logger.InfoContext(ctx, "All episodes already exist in Plex, nothing to download",
+			q.logger.InfoContext(ctx, "Every episode is already in Plex or downloading, nothing to search",
 				telemetry.WithTraceContext(ctx, "show", req.Name)...)
 			close(done)
 			return results, nil
@@ -350,6 +394,61 @@ func (q *QbittHandler) filterExistingEpisodes(ctx context.Context, req *tvdb.Med
 	return episodesToDownload, existsResults, nil
 }
 
+// inFlightTvdbIDs returns the notification ids (episode id for series, media id
+// for movies) of every torrent still recorded as in flight. A lookup failure
+// yields an empty set so the caller searches as it always did; the worst case
+// is re-adding a torrent qBittorrent already has.
+func (q *QbittHandler) inFlightTvdbIDs(ctx context.Context) map[string]bool {
+	ids := map[string]bool{}
+	active, err := q.repo.GetActiveTorrents(ctx)
+	if err != nil {
+		q.logger.WarnContext(ctx, "Failed to load in-flight torrents, searching without that check",
+			telemetry.WithTraceContext(ctx, "error", err.Error())...)
+		return ids
+	}
+	for _, at := range active {
+		if at.Strategy != nil && at.Strategy.EpisodeTvdbID != "" {
+			ids[at.Strategy.EpisodeTvdbID] = true
+		}
+	}
+	return ids
+}
+
+// filterInFlightEpisodes drops episodes that already have a torrent in flight,
+// which happens when a season is requested again or a retry row fires for an
+// episode whose first pass did add a torrent but never got to report it. Those
+// episodes are reported as downloading, and their notifications are put back
+// on downloading in case the retry engine had moved them to "searching".
+func (q *QbittHandler) filterInFlightEpisodes(ctx context.Context, req *tvdb.Media, episodes []tvdb.Episode) ([]tvdb.Episode, []dlstatus.EpisodeResult) {
+	if len(episodes) == 0 {
+		return episodes, nil
+	}
+	inFlight := q.inFlightTvdbIDs(ctx)
+	if len(inFlight) == 0 {
+		return episodes, nil
+	}
+
+	toDownload := make([]tvdb.Episode, 0, len(episodes))
+	skipped := []dlstatus.EpisodeResult{}
+	for _, episode := range episodes {
+		id := strconv.Itoa(episode.Id)
+		if !inFlight[id] {
+			toDownload = append(toDownload, episode)
+			continue
+		}
+		q.logger.InfoContext(ctx, "Episode already has a torrent in flight, skipping",
+			telemetry.WithTraceContext(ctx, "name", req.Name, "season", episode.SeasonNumber, "episode", episode.Number)...)
+		q.updateNotificationStatus(ctx, id, "", notifications.StatusDownloading)
+		skipped = append(skipped, dlstatus.EpisodeResult{
+			TvdbID:  id,
+			Season:  episode.SeasonNumber,
+			Episode: episode.Number,
+			Outcome: dlstatus.OutcomeDownloading,
+		})
+	}
+	return toDownload, skipped
+}
+
 // buildSearchStrategies creates search strategies for all episodes that need downloading
 func (q *QbittHandler) buildSearchStrategies(ctx context.Context, req *tvdb.Media, episodes []tvdb.Episode) [][]*models.SearchStrategy {
 	searchStrategies := [][]*models.SearchStrategy{}
@@ -389,47 +488,15 @@ func (q *QbittHandler) processEpisodeDownload(
 		)
 	}
 
-	// Run strategies tier-by-tier (ascending RelaxLevel), stopping at the first tier
-	// that produces a confident best pick. Track failure semantics across all attempted
-	// tiers: only treat the indexer as unreachable when EVERY attempted strategy errored.
-	var (
-		match        *models.TorrentMatch
-		winningCtx   context.Context
-		attemptedAny bool
-		erroredAll   = true
-	)
-
-	for _, tier := range groupStrategiesByRelaxLevel(strategies) {
-		bestMatches, strategyContexts, allIndexersFailed := q.executeSearchStrategies(episodeCtx, tier, req)
-		attemptedAny = true
-		if !allIndexersFailed {
-			erroredAll = false
-		}
-
-		// Select the best torrent from this tier's matches.
-		q.sortBySeedersDESC(bestMatches)
-		q.sortTorrentsByQuality(bestMatches)
-		tierMatch := q.pickBestTorrent(episodeCtx, bestMatches, req.Category, req.Anime)
-
-		// End all non-winning strategy spans for this tier.
-		for ss, strategyCtx := range strategyContexts {
-			if tierMatch == nil || ss != tierMatch.Strategy {
-				span := trace.SpanFromContext(strategyCtx)
-				span.SetStatus(codes.Ok, "strategy not selected")
-				span.End()
-			}
-		}
-
-		if tierMatch != nil {
-			match = tierMatch
-			winningCtx = strategyContexts[tierMatch.Strategy]
-			break
-		}
+	var excluded *excludedTorrents
+	if len(strategies) > 0 {
+		excluded = q.loadExcludedTorrents(episodeCtx, req.Id, strategies[0].Season, strategies[0].Episode)
 	}
+	outcome := q.searchForMatch(episodeCtx, strategies, req, excluded)
 
 	// If every strategy actually attempted (across all tried tiers) errored against
-	// Prowlarr, the indexer is unreachable.
-	if attemptedAny && erroredAll {
+	// Prowlarr, the indexers are unreachable.
+	if outcome.attemptedAny && outcome.erroredAll {
 		q.logger.WarnContext(episodeCtx, "All indexer searches failed", "show", req.Name)
 		ss := strategies[0]
 		q.recordDownloadFailure(episodeCtx, req, ss, "indexer unreachable")
@@ -439,7 +506,7 @@ func (q *QbittHandler) processEpisodeDownload(
 		return q.failedResult(ss, dlstatus.CodeIndexerUnreachable)
 	}
 
-	if match == nil {
+	if outcome.match == nil {
 		q.logger.WarnContext(episodeCtx, "No suitable torrent found", "show", req.Name)
 		ss := strategies[0]
 		q.recordDownloadFailure(episodeCtx, req, ss, "no suitable torrent found")
@@ -452,7 +519,209 @@ func (q *QbittHandler) processEpisodeDownload(
 
 	// Download the torrent and start monitoring
 	episodeSpan.End()
-	return q.initiateDownloadAndMonitor(winningCtx, match, done, wg)
+	return q.initiateDownloadAndMonitor(outcome.winningCtx, outcome.match, searchRequestFor(req, strategies[0]), done, wg)
+}
+
+// excludedTorrents is the set of releases already tried and given up on for
+// one item. A nil set excludes nothing.
+type excludedTorrents struct {
+	hashes map[string]bool
+	titles map[string]bool
+}
+
+func newExcludedTorrents(failed []*models.FailedTorrent) *excludedTorrents {
+	ex := &excludedTorrents{hashes: map[string]bool{}, titles: map[string]bool{}}
+	for _, f := range failed {
+		if f.InfoHash != "" {
+			ex.hashes[strings.ToLower(f.InfoHash)] = true
+		}
+		if f.Title != "" {
+			ex.titles[normalizeTitle(f.Title)] = true
+		}
+	}
+	return ex
+}
+
+// normalizeTitle makes release titles comparable across sources: qBittorrent
+// HTML-encodes characters such as the apostrophe in "Marvel's" while Prowlarr
+// does not, and whitespace and case vary between listings of one release.
+func normalizeTitle(title string) string {
+	return strings.ToLower(strings.Join(strings.Fields(html.UnescapeString(title)), " "))
+}
+
+// contains reports whether a search hit is one of the excluded releases, by
+// info hash when the indexer supplies one and by title otherwise. Prowlarr
+// leaves the hash empty for .torrent-file results, so the title match does
+// most of the work for 1337x.
+func (ex *excludedTorrents) contains(t *prowlarr.Search) bool {
+	if ex == nil || t == nil {
+		return false
+	}
+	if t.InfoHash != "" && ex.hashes[strings.ToLower(t.InfoHash)] {
+		return true
+	}
+	return ex.titles[normalizeTitle(t.Title)]
+}
+
+// drop removes excluded hits from results in place and returns how many went.
+func (ex *excludedTorrents) drop(results *[]*prowlarr.Search) int {
+	if ex == nil || len(*results) == 0 {
+		return 0
+	}
+	kept := (*results)[:0]
+	dropped := 0
+	for _, t := range *results {
+		if ex.contains(t) {
+			dropped++
+			continue
+		}
+		kept = append(kept, t)
+	}
+	*results = kept
+	return dropped
+}
+
+// loadExcludedTorrents fetches the releases already given up on for an item.
+// A lookup failure excludes nothing: the search still runs, at the risk of
+// re-picking a torrent that failed before.
+func (q *QbittHandler) loadExcludedTorrents(ctx context.Context, tvdbID string, season, episode int) *excludedTorrents {
+	failed, err := q.repo.GetFailedTorrents(ctx, tvdbID, season, episode)
+	if err != nil {
+		q.logger.WarnContext(ctx, "Failed to load previously failed torrents, searching without that check",
+			telemetry.WithTraceContext(ctx, "error", err.Error(), "tvdb_id", tvdbID, "season", season, "episode", episode)...)
+		return nil
+	}
+	if len(failed) == 0 {
+		return nil
+	}
+	return newExcludedTorrents(failed)
+}
+
+// searchRequestFor captures what is needed to search for one item again from
+// scratch, so a dead download can be replaced later.
+func searchRequestFor(req *tvdb.Media, ss *models.SearchStrategy) *models.SearchRequest {
+	media := *req
+	media.Metadata.Episodes = nil
+	sr := &models.SearchRequest{Media: media}
+	if ss != nil && ss.EpisodeMeta != nil && !ss.IsMovie {
+		ep := *ss.EpisodeMeta
+		sr.Episode = &ep
+	}
+	return sr
+}
+
+// searchOutcome is what searchForMatch learned about one episode (or movie) across
+// every indexer tier and relax tier it tried.
+type searchOutcome struct {
+	match      *models.TorrentMatch
+	winningCtx context.Context
+	// attemptedAny is true once at least one strategy was sent to Prowlarr.
+	attemptedAny bool
+	// erroredAll is true when every strategy sent to Prowlarr errored, which means
+	// the indexers were unreachable rather than merely empty.
+	erroredAll bool
+}
+
+// searchForMatch walks the indexer tiers in priority order and, within each, the relax
+// tiers in ascending order, stopping at the first tier that produces a confident best
+// pick. A later indexer tier is only consulted when every earlier one produced no
+// usable torrent, so the preferred indexer always wins when it carries the release at all.
+func (q *QbittHandler) searchForMatch(ctx context.Context, strategies []*models.SearchStrategy, req *tvdb.Media, excluded *excludedTorrents) searchOutcome {
+	outcome := searchOutcome{erroredAll: true}
+	relaxTiers := groupStrategiesByRelaxLevel(strategies)
+
+	// A pick whose reported seeder count is suspect (see seederBoost) is only a
+	// last resort: on public indexers such listings are usually dead, and a
+	// dead torrent sits at 0% until the monitor gives up. So instead of taking
+	// it, the search moves straight on to the next indexer tier looking for a
+	// live swarm, and settles for the weak pick only when nothing better turns
+	// up anywhere. Relaxed queries on the same indexer are skipped in that case:
+	// they exist to find a release under a different name, not a healthier one,
+	// and every extra query counts against the indexer's rate limit.
+	var weak *models.TorrentMatch
+	var weakCtx context.Context
+
+	for tierIdx, indexerIDs := range q.indexerTiers(req.Category, req.Anime) {
+		if tierIdx > 0 {
+			q.logger.InfoContext(ctx, "Preferred indexers had no usable torrent, trying fallback indexers",
+				telemetry.WithTraceContext(ctx, "media", req.Name, "indexer_ids", indexerIDs, "have_weak_pick", weak != nil)...)
+		}
+
+		for _, tier := range relaxTiers {
+			bestMatches, strategyContexts, allIndexersFailed := q.executeSearchStrategies(ctx, tier, req, indexerIDs, excluded)
+			outcome.attemptedAny = true
+			if !allIndexersFailed {
+				outcome.erroredAll = false
+			}
+
+			// Select the best torrent from this tier's matches.
+			q.sortBySeedersDESC(bestMatches)
+			q.sortTorrentsByQuality(bestMatches)
+			tierMatch := q.pickBestTorrent(ctx, bestMatches, req.Category, req.Anime)
+
+			// End all non-winning strategy spans for this tier.
+			for ss, strategyCtx := range strategyContexts {
+				if tierMatch == nil || ss != tierMatch.Strategy {
+					span := trace.SpanFromContext(strategyCtx)
+					span.SetStatus(codes.Ok, "strategy not selected")
+					span.End()
+				}
+			}
+
+			if tierMatch == nil {
+				continue
+			}
+
+			if tierMatch.Torrent.Seeders > suspectSeederCount {
+				if weak != nil {
+					endStrategySpan(weakCtx, "superseded by a better-seeded pick")
+				}
+				outcome.match = tierMatch
+				outcome.winningCtx = strategyContexts[tierMatch.Strategy]
+				return outcome
+			}
+
+			q.logger.WarnContext(ctx, "Best pick has too few seeders to trust, keeping it as a last resort and searching on",
+				telemetry.WithTraceContext(ctx,
+					"media", req.Name,
+					"torrent_title", tierMatch.Torrent.Title,
+					"seeders", tierMatch.Torrent.Seeders,
+					"indexer_ids", indexerIDs)...)
+			if weak == nil || tierMatch.Torrent.Seeders > weak.Torrent.Seeders {
+				if weak != nil {
+					endStrategySpan(weakCtx, "superseded by a better-seeded last resort")
+				}
+				weak = tierMatch
+				weakCtx = strategyContexts[tierMatch.Strategy]
+			} else {
+				endStrategySpan(strategyContexts[tierMatch.Strategy], "weaker than the kept last resort")
+			}
+			// Skip this indexer's relaxed tiers and try the next indexer.
+			break
+		}
+	}
+
+	if weak != nil {
+		q.logger.WarnContext(ctx, "No better-seeded torrent found anywhere, settling for the weakly seeded pick",
+			telemetry.WithTraceContext(ctx,
+				"media", req.Name,
+				"torrent_title", weak.Torrent.Title,
+				"seeders", weak.Torrent.Seeders)...)
+		outcome.match = weak
+		outcome.winningCtx = weakCtx
+	}
+	return outcome
+}
+
+// endStrategySpan closes the span of a search strategy that had been kept
+// open as a potential winner but was not selected in the end.
+func endStrategySpan(strategyCtx context.Context, why string) {
+	if strategyCtx == nil {
+		return
+	}
+	span := trace.SpanFromContext(strategyCtx)
+	span.SetStatus(codes.Ok, why)
+	span.End()
 }
 
 // groupStrategiesByRelaxLevel partitions strategies into tiers ordered by ascending
@@ -536,7 +805,8 @@ func (q *QbittHandler) applyFailureNotification(ctx context.Context, tvdbID stri
 	q.updateNotificationStatus(ctx, tvdbID, code.HumanReason(), notifications.StatusSearching)
 }
 
-// executeSearchStrategies runs all search strategies and collects matching torrents.
+// executeSearchStrategies runs all search strategies against the given Prowlarr indexers
+// and collects matching torrents.
 //
 // Unlike the previous implementation, a Prowlarr error on one strategy no longer aborts the whole
 // episode: the error is recorded and the remaining strategies still run. The returned
@@ -547,6 +817,8 @@ func (q *QbittHandler) executeSearchStrategies(
 	ctx context.Context,
 	strategies []*models.SearchStrategy,
 	req *tvdb.Media,
+	indexerIDs []int64,
+	excluded *excludedTorrents,
 ) ([]*models.TorrentMatch, map[*models.SearchStrategy]context.Context, bool) {
 	bestMatches := []*models.TorrentMatch{}
 	strategyContexts := make(map[*models.SearchStrategy]context.Context)
@@ -562,10 +834,11 @@ func (q *QbittHandler) executeSearchStrategies(
 			attribute.Int("season", ss.Season),
 			attribute.Int("episode", ss.Episode),
 			attribute.Bool("is_anime", req.Anime),
+			attribute.Int64Slice("indexer_ids", indexerIDs),
 		)
 
 		q.logger.InfoContext(strategyCtx, "Search Query", telemetry.WithTraceContext(strategyCtx, "query", ss.Query)...)
-		pResp, err := q.searchProwlarr(strategyCtx, ss.Query, req.Category, req.Anime)
+		pResp, err := q.searchProwlarr(strategyCtx, ss.Query, req.Category, indexerIDs)
 		if err != nil {
 			// Record the failure and continue with the remaining strategies instead of aborting.
 			erroredStrategies++
@@ -578,6 +851,12 @@ func (q *QbittHandler) executeSearchStrategies(
 		}
 
 		strategySpan.SetAttributes(attribute.Int("results_found", len(pResp)))
+
+		if dropped := excluded.drop(&pResp); dropped > 0 {
+			q.logger.InfoContext(strategyCtx, "Skipped torrents that already failed for this item",
+				telemetry.WithTraceContext(strategyCtx, "query", ss.Query, "skipped", dropped)...)
+			strategySpan.SetAttributes(attribute.Int("previously_failed_skipped", dropped))
+		}
 
 		if len(pResp) == 0 {
 			q.logger.InfoContext(strategyCtx, "no results found", "query", ss.Query)
@@ -664,6 +943,7 @@ func (q *QbittHandler) logFilteringSummary(ctx context.Context, total, valid int
 func (q *QbittHandler) initiateDownloadAndMonitor(
 	ctx context.Context,
 	match *models.TorrentMatch,
+	request *models.SearchRequest,
 	done chan<- models.TorrentCompleteEvent,
 	wg *sync.WaitGroup,
 ) dlstatus.EpisodeResult {
@@ -689,6 +969,7 @@ func (q *QbittHandler) initiateDownloadAndMonitor(
 		TorrentTitle: match.Torrent.Title,
 		Strategy:     ss,
 		StartedAt:    startedAt,
+		Request:      request,
 	}
 	if err := q.repo.InsertActiveTorrent(ctx, active); err != nil {
 		q.logger.ErrorContext(ctx, "Failed to persist in-flight torrent, monitor will not survive a restart",
@@ -700,7 +981,7 @@ func (q *QbittHandler) initiateDownloadAndMonitor(
 
 	// Start monitoring goroutine
 	wg.Add(1)
-	go q.monitorTorrentCompletion(ctx, match, infoHash, trackingUUID, startedAt, done, wg)
+	go q.monitorTorrentCompletion(ctx, match, request, infoHash, trackingUUID, startedAt, done, wg)
 
 	return dlstatus.EpisodeResult{
 		TvdbID:  ss.EpisodeTvdbID,
@@ -760,7 +1041,7 @@ func (q *QbittHandler) ResumeMonitors(ctx context.Context, done chan<- models.To
 
 		wg.Add(1)
 		resumed++
-		go q.monitorTorrentCompletion(context.Background(), match, at.InfoHash, at.TrackingUUID, at.StartedAt, done, &wg)
+		go q.monitorTorrentCompletion(context.Background(), match, at.Request, at.InfoHash, at.TrackingUUID, at.StartedAt, done, &wg)
 	}
 
 	if resumed == 0 {
@@ -878,6 +1159,7 @@ func monitorTimeout() time.Duration {
 func (q *QbittHandler) monitorTorrentCompletion(
 	ctx context.Context,
 	match *models.TorrentMatch,
+	request *models.SearchRequest,
 	infoHash string,
 	trackingUUID string,
 	startedAt time.Time,
@@ -917,6 +1199,12 @@ func (q *QbittHandler) monitorTorrentCompletion(
 
 	ranRecheck := false
 	missedPolls := 0
+	// Progress bookkeeping for dead-swarm detection: a torrent that has made no
+	// progress for deadSwarmGrace while connected to no seeds is not going to
+	// finish, and is replaced rather than watched until the deadline.
+	lastProgress := -1.0
+	lastProgressAt := time.Now()
+	grace := deadSwarmGrace()
 	for {
 		elapsed := time.Since(start)
 
@@ -929,6 +1217,7 @@ func (q *QbittHandler) monitorTorrentCompletion(
 					"timeout", timeout.String())...)
 			q.updateNotificationStatus(monitorCtx, match.Strategy.EpisodeTvdbID, dlstatus.CodeMonitorLost.HumanReason(), notifications.StatusFailed)
 			q.recordStrategyFailure(monitorCtx, match.Strategy, "monitor timeout")
+			q.recordFailedTorrent(monitorCtx, match, infoHash, "monitor timeout")
 			q.clearActiveTorrent(monitorCtx, infoHash)
 			monitorSpan.SetStatus(codes.Error, "monitor timeout")
 			return
@@ -973,6 +1262,7 @@ func (q *QbittHandler) monitorTorrentCompletion(
 						"missed_polls", missedPolls)...)
 				q.updateNotificationStatus(monitorCtx, match.Strategy.EpisodeTvdbID, dlstatus.CodeMonitorLost.HumanReason(), notifications.StatusFailed)
 				q.recordStrategyFailure(monitorCtx, match.Strategy, "monitor lost: torrent no longer in qbittorrent")
+				q.recordFailedTorrent(monitorCtx, match, infoHash, "removed from qbittorrent")
 				q.clearActiveTorrent(monitorCtx, infoHash)
 				monitorSpan.SetStatus(codes.Error, "torrent missing from qbittorrent")
 				return
@@ -984,6 +1274,10 @@ func (q *QbittHandler) monitorTorrentCompletion(
 
 		missedPolls = 0
 		torrent := torrents[0]
+		if torrent.Progress > lastProgress {
+			lastProgress = torrent.Progress
+			lastProgressAt = time.Now()
+		}
 		if q.didTorrentComplete(&torrent) {
 			if !ranRecheck {
 				ranRecheck = true
@@ -1010,9 +1304,141 @@ func (q *QbittHandler) monitorTorrentCompletion(
 			}
 			break
 		} else {
+			stalledFor := time.Since(lastProgressAt)
+			if isDeadSwarm(stalledFor, torrent.NumSeeds, torrent.DlSpeed, grace) {
+				q.logger.WarnContext(monitorCtx, "Torrent has no seeds and has made no progress, giving up on it",
+					telemetry.WithTraceContext(monitorCtx,
+						"torrent_title", match.Torrent.Title,
+						"torrent_hash", infoHash,
+						"progress", torrent.Progress*100,
+						"stalled_for", stalledFor.Round(time.Second).String(),
+						"leechers", torrent.NumLeechs)...)
+				reason := fmt.Sprintf("dead swarm: no seeds and no progress for %s", stalledFor.Round(time.Minute))
+				q.giveUpOnTorrent(monitorCtx, match, infoHash, reason)
+				q.replaceDeadTorrent(monitorCtx, request, match.Strategy, done, wg)
+				monitorSpan.SetStatus(codes.Error, "dead swarm")
+				return
+			}
 			q.logger.InfoContext(monitorCtx, "Torrent downloading", "title", match.Torrent.Title, "progress", torrent.Progress*100)
 		}
 	}
+}
+
+// isDeadSwarm decides that a download will not finish: it has sat at the same
+// progress for at least grace while connected to no seeds and transferring
+// nothing. Leechers alone do not count; with no seed in the swarm the missing
+// pieces are not there to be had.
+func isDeadSwarm(stalledFor time.Duration, connectedSeeds, dlSpeed int64, grace time.Duration) bool {
+	return stalledFor >= grace && connectedSeeds == 0 && dlSpeed == 0
+}
+
+// deadSwarmGrace reads how long a download may make no progress with no seeds
+// before it is replaced, from DEAD_SWARM_GRACE (a Go duration).
+func deadSwarmGrace() time.Duration {
+	if v := os.Getenv("DEAD_SWARM_GRACE"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultDeadSwarmGrace
+}
+
+const (
+	defaultDeadSwarmGrace = 15 * time.Minute
+	// maxDeadReplacements bounds how many dead torrents are swapped out for one
+	// item before it is reported as failed.
+	maxDeadReplacements = 3
+)
+
+// recordFailedTorrent remembers a torrent that was given up on for an item, so
+// later searches for it skip the release.
+func (q *QbittHandler) recordFailedTorrent(ctx context.Context, match *models.TorrentMatch, infoHash, reason string) {
+	ss := match.Strategy
+	if ss == nil {
+		return
+	}
+	ft := &models.FailedTorrent{
+		TvdbID:   ss.TvdbId,
+		Season:   ss.Season,
+		Episode:  ss.Episode,
+		InfoHash: infoHash,
+		Title:    match.Torrent.Title,
+		Reason:   reason,
+	}
+	if err := q.repo.InsertFailedTorrent(ctx, ft); err != nil {
+		q.logger.ErrorContext(ctx, "Failed to record failed torrent",
+			telemetry.WithTraceContext(ctx, "error", err.Error(), "torrent_title", match.Torrent.Title)...)
+	}
+}
+
+// giveUpOnTorrent removes a download that will not finish: out of qBittorrent
+// with its files, into the failed list, and off the in-flight table.
+func (q *QbittHandler) giveUpOnTorrent(ctx context.Context, match *models.TorrentMatch, infoHash, reason string) {
+	if err := q.c.DeleteTorrentsCtx(ctx, []string{infoHash}, true); err != nil {
+		q.logger.ErrorContext(ctx, "Failed to remove dead torrent from qBittorrent",
+			telemetry.WithTraceContext(ctx, "error", err.Error(), "torrent_hash", infoHash)...)
+	}
+	q.recordStrategyFailure(ctx, match.Strategy, reason)
+	q.recordFailedTorrent(ctx, match, infoHash, reason)
+	q.clearActiveTorrent(ctx, infoHash)
+}
+
+// replaceDeadTorrent searches for another copy of an item whose download was
+// given up on, skipping every release already tried, and starts a fresh
+// download and monitor for it. After maxDeadReplacements the item is reported
+// as failed instead. Nothing happens for in-flight rows written before the
+// search request was recorded.
+func (q *QbittHandler) replaceDeadTorrent(
+	ctx context.Context,
+	request *models.SearchRequest,
+	ss *models.SearchStrategy,
+	done chan<- models.TorrentCompleteEvent,
+	wg *sync.WaitGroup,
+) {
+	if request == nil {
+		q.logger.WarnContext(ctx, "Cannot look for a replacement: no search request recorded for this torrent",
+			telemetry.WithTraceContext(ctx, "tvdb_id", ss.EpisodeTvdbID)...)
+		q.updateNotificationStatus(ctx, ss.EpisodeTvdbID, "Chosen torrent had no seeds", notifications.StatusFailed)
+		return
+	}
+	if request.Replaced >= maxDeadReplacements {
+		reason := fmt.Sprintf("No copy with live seeds found after %d tries", request.Replaced+1)
+		q.logger.WarnContext(ctx, "Giving up on item: every replacement was dead too",
+			telemetry.WithTraceContext(ctx, "tvdb_id", ss.EpisodeTvdbID, "tries", request.Replaced+1)...)
+		q.updateNotificationStatus(ctx, ss.EpisodeTvdbID, reason, notifications.StatusFailed)
+		return
+	}
+	request.Replaced++
+
+	q.updateNotificationStatus(ctx, ss.EpisodeTvdbID, "Chosen torrent had no seeds, looking for another copy", notifications.StatusSearching)
+	q.logger.InfoContext(ctx, "Searching for a replacement torrent",
+		telemetry.WithTraceContext(ctx, "media", request.Media.Name, "season", ss.Season, "episode", ss.Episode, "replacement", request.Replaced)...)
+
+	media := request.Media
+	var strategies []*models.SearchStrategy
+	if request.Episode == nil {
+		strategies = q.createMovieSearchStrategy(&media)
+	} else {
+		strategies = q.createSearchStrategy(&media, request.Episode)
+	}
+	if len(strategies) == 0 {
+		q.updateNotificationStatus(ctx, ss.EpisodeTvdbID, "Chosen torrent had no seeds and no other copy could be searched for", notifications.StatusFailed)
+		return
+	}
+
+	searchCtx, cancel := context.WithTimeout(ctx, episodeSearchDeadline)
+	defer cancel()
+	excluded := q.loadExcludedTorrents(searchCtx, media.Id, ss.Season, ss.Episode)
+	outcome := q.searchForMatch(searchCtx, strategies, &media, excluded)
+	if outcome.match == nil {
+		q.logger.WarnContext(ctx, "No replacement torrent found",
+			telemetry.WithTraceContext(ctx, "media", media.Name, "season", ss.Season, "episode", ss.Episode)...)
+		q.recordStrategyFailure(ctx, ss, "no replacement torrent found")
+		q.updateNotificationStatus(ctx, ss.EpisodeTvdbID, "Chosen torrent had no seeds and no other copy was found", notifications.StatusFailed)
+		return
+	}
+
+	q.initiateDownloadAndMonitor(outcome.winningCtx, outcome.match, request, done, wg)
 }
 
 func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episode) []*models.SearchStrategy {
@@ -1203,11 +1629,12 @@ func (q *QbittHandler) calcCategories(show bool) []int64 {
 	}
 }
 
-// calcIndexerIDs determines which Prowlarr indexers to use based on media type and anime status
+// calcIndexerIDs determines the preferred Prowlarr indexers for the media type and anime status
 // Anime shows: NYAA only
 // Regular shows: 1337x only
 // Anime movies: NYAA + 1337x (both indexers for better coverage)
 // Regular movies: 1337x only
+// The Pirate Bay is never preferred; indexerTiers adds it as the fallback.
 func (q *QbittHandler) calcIndexerIDs(category string, isAnime bool) []int64 {
 	if category == "movie" {
 		// Movies: anime uses both NYAA and 1337x, regular uses 1337x only
@@ -1222,6 +1649,19 @@ func (q *QbittHandler) calcIndexerIDs(category string, isAnime bool) []int64 {
 		return []int64{NYAA_ID}
 	}
 	return []int64{ONE337x_ID}
+}
+
+// indexerTiers returns the groups of Prowlarr indexers to search for the media, in
+// priority order: the preferred indexers from calcIndexerIDs first, then The Pirate
+// Bay on its own. A group is only searched when every earlier group produced no usable
+// torrent, so 1337x still wins whenever it carries the release at all.
+func (q *QbittHandler) indexerTiers(category string, isAnime bool) [][]int64 {
+	preferred := q.calcIndexerIDs(category, isAnime)
+	tiers := [][]int64{preferred}
+	if TPB_ID != 0 && !slices.Contains(preferred, TPB_ID) {
+		tiers = append(tiers, []int64{TPB_ID})
+	}
+	return tiers
 }
 
 // TorrentValidationResult holds the result of torrent validation
@@ -1839,6 +2279,41 @@ func relaxConfidenceCutoff(ss *models.SearchStrategy) float64 {
 	return baseConfidenceCutoff
 }
 
+// seederBoost is the swarm-health term of a torrent's final score. Above a
+// handful of seeders it grows with the log of the reported count, so a few
+// more barely register but an order of magnitude does, capped just above the
+// 1080p quality boost (0.6): a 720p release with 100+ seeders outscores a
+// 1080p one with six, while a 1080p release with 16 or more still wins.
+//
+// The low end is deliberately harsh. Indexers report stale counts, and on
+// 1337x a listing showing 2-5 seeders routinely turns out to have none: those
+// picks sat in qBittorrent at 0% until the monitor gave up. So five or fewer
+// is a penalty that outweighs one resolution tier, and zero is treated as
+// dead, chosen only when nothing else passed validation.
+//
+//	seeders:  0     1      3      5    6     15   31   63   127+
+//	boost:   -1.0  -0.32  -0.16   0.0  0.28  0.4  0.5  0.6  0.7
+func seederBoost(seeders int) float64 {
+	switch {
+	case seeders <= 0:
+		return -1.0
+	case seeders <= suspectSeederCount:
+		return -0.4 + 0.08*float64(seeders)
+	}
+	boost := 0.1 * math.Log2(float64(1+seeders))
+	if boost > maxSeederBoost {
+		return maxSeederBoost
+	}
+	return boost
+}
+
+const (
+	// suspectSeederCount is the reported seeder count at or below which a
+	// listing is assumed to be effectively dead.
+	suspectSeederCount = 5
+	maxSeederBoost     = 0.7
+)
+
 func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.TorrentMatch, mediaType string, isAnime bool) *models.TorrentMatch {
 	if len(matches) == 0 {
 		return nil
@@ -1868,6 +2343,7 @@ func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.To
 
 	// Score each match
 	scoredMatches := make([]*TorrentMatchWithScore, 0, len(matches))
+	belowFloor := 0
 	for i, match := range matches {
 		q.logger.InfoContext(ctx, "Evaluating torrent for selection",
 			"index", i+1,
@@ -1925,6 +2401,21 @@ func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.To
 			quality = validationResult.Parsed.Quality
 		}
 
+		// Resolution floor: anything below it, including a title whose
+		// resolution could not be parsed, is not an acceptable copy no matter
+		// how well seeded. Rejecting here (rather than scoring low) means an
+		// indexer with only sub-floor releases yields no match, so the search
+		// moves on to the fallback indexer tier instead of settling.
+		if q.minQualityTier > 0 && qualityTier < q.minQualityTier {
+			belowFloor++
+			q.logger.WarnContext(ctx, "Torrent below minimum quality, skipping",
+				"torrent_title", match.Torrent.Title,
+				"quality", quality,
+				"quality_tier", qualityTier,
+				"min_quality_tier", q.minQualityTier)
+			continue
+		}
+
 		// Calculate year-aware quality boost
 		releaseYear := ""
 		if match.Strategy != nil {
@@ -1957,11 +2448,18 @@ func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.To
 		}
 		finalScore += uploaderBoost
 
+		// Swarm health. Without this a 1080p listing with two seeders beat a
+		// 720p one with two hundred, and the pick sat in qBittorrent at 0%.
+		seedBoost := seederBoost(match.Torrent.Seeders)
+		finalScore += seedBoost
+
 		q.logger.InfoContext(ctx, "Calculated final score",
 			"torrent_title", match.Torrent.Title,
 			"final_score", finalScore,
 			"uploader_boost", uploaderBoost,
-			"matched_uploader", matchedUploader)
+			"matched_uploader", matchedUploader,
+			"seeders", match.Torrent.Seeders,
+			"seeder_boost", seedBoost)
 
 		scoredMatches = append(scoredMatches, &TorrentMatchWithScore{
 			TorrentMatch:     match,
@@ -1973,7 +2471,8 @@ func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.To
 	q.logger.InfoContext(ctx, "Torrent scoring complete",
 		"total_evaluated", len(matches),
 		"total_scored", len(scoredMatches),
-		"total_rejected", len(matches)-len(scoredMatches))
+		"total_rejected", len(matches)-len(scoredMatches),
+		"below_quality_floor", belowFloor)
 
 	if len(scoredMatches) == 0 {
 		q.logger.WarnContext(ctx, "No torrents passed re-validation, cannot select best torrent")

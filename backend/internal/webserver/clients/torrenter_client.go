@@ -22,12 +22,20 @@ type TorrenterClient struct {
 	Client *http.Client
 }
 
+// torrenterRequestTimeout bounds a single torrenter call. A download call
+// carries one episode (or movie), whose indexer search the torrenter itself
+// caps at 5 minutes, so this only needs headroom for the qBittorrent hand-off
+// after the search. It must stay above that cap: when the client gives up
+// first, the torrenter's context is cancelled mid-flight and the episode is
+// reported unreachable even if a torrent was about to be added.
+const torrenterRequestTimeout = 6 * time.Minute
+
 func NewTorrenterClient(host string) *TorrenterClient {
 	return &TorrenterClient{
 		Host: host,
 		Client: &http.Client{
 			Transport: otelhttp.NewTransport(http.DefaultTransport),
-			Timeout:   5 * time.Minute,
+			Timeout:   torrenterRequestTimeout,
 		},
 	}
 }
@@ -37,6 +45,10 @@ func NewTorrenterClient(host string) *TorrenterClient {
 // it returns a synthesized DownloadResponse where every episode in the request
 // is marked failed with CodeTorrenterUnreachable (a transient code), alongside
 // the error, so the caller's retry engine can act on it uniformly.
+//
+// The torrenter searches a request's episodes one after another, so callers
+// should send one episode per call; a multi-episode request can outlive
+// torrenterRequestTimeout and be reported unreachable as a whole.
 func (c *TorrenterClient) Download(ctx context.Context, req tvdb.Media) (dlstatus.DownloadResponse, error) {
 	url := fmt.Sprintf("http://%s/download", c.Host)
 	slog.InfoContext(ctx, "Sending download request", "url", url, "media", req.Name)
@@ -355,7 +367,7 @@ func (c *TorrenterClient) SyncEpisodes(ctx context.Context, seriesTvdbId string,
 	slog.InfoContext(ctx, "Syncing episodes to torrenter", "url", url, "series_tvdb_id", seriesTvdbId, "episode_count", len(episodes))
 
 	requestBody := struct {
-		SeriesTvdbId string                 `json:"seriesTvdbId"`
+		SeriesTvdbId string                `json:"seriesTvdbId"`
 		Episodes     []library.TvdbEpisode `json:"episodes"`
 	}{
 		SeriesTvdbId: seriesTvdbId,

@@ -30,7 +30,7 @@ Scout is an over-engineered microservices architecture for automated media torre
 - **TVDB API v4** - Media metadata and search
 - **qBittorrent** - Torrent client
 - **Plex Media Server** - Library management
-- **Prowlarr** - Indexer aggregation (NYAA for anime, 1337x for shows)
+- **Prowlarr** - Indexer aggregation (NYAA for anime, 1337x for shows, The Pirate Bay as a last-resort fallback)
 
 ## Project Conventions
 
@@ -162,7 +162,7 @@ Example flow: `DownloadHandler` → `DownloadInteractor` → `QbittHandler`/`Rep
   - Regular shows: Season/episode format (S01E05), uses `SeasonNumber`/`EpisodeNumber` fields
   - Detection: TVDB genre tags containing "Anime"
 - **Torrent Quality Selection**: Prioritize by quality tier (4K > 1080p > 720p), then by trusted uploaders
-- **Indexer Selection**: NYAA for anime (specialized), 1337x for regular shows, both searched via Prowlarr
+- **Indexer Selection**: NYAA for anime (specialized), 1337x for regular shows, all searched via Prowlarr. The Pirate Bay is only searched when the preferred indexer has nothing usable, so 1337x wins whenever it carries the release
 - **Episode Air Dates**: Future episodes stored in `ScheduledDownloads` table, downloaded when air date arrives
 
 **TVDB API Integration:**
@@ -239,7 +239,7 @@ Example flow: `DownloadHandler` → `DownloadInteractor` → `QbittHandler`/`Rep
    - Authentication: API key
    - Configuration: `PROWLARR_HOST`, `PROWLARR_KEY`
    - Used by: torrenter service
-   - Indexers: NYAA (anime), 1337x (shows/movies)
+   - Indexers: NYAA (anime, id 1), 1337x (shows/movies, id 2), The Pirate Bay (fallback, id 3)
 
 **Infrastructure Dependencies:**
 

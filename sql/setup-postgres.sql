@@ -211,6 +211,26 @@ CREATE TABLE IF NOT EXISTS ActiveTorrents (
 
 CREATE INDEX IF NOT EXISTS idx_active_torrents_info_hash ON ActiveTorrents(info_hash);
 
+-- What is needed to search for the item again if this torrent's swarm turns out
+-- to be dead (media identity, aliases, episode). NULL on rows from before this
+-- was recorded.
+ALTER TABLE ActiveTorrents ADD COLUMN IF NOT EXISTS request JSONB;
+
+-- Torrents tried for an item and given up on (no seeds, monitor timeout, gone
+-- from qBittorrent). Searches for the same item skip them.
+CREATE TABLE IF NOT EXISTS FailedTorrents (
+    id SERIAL PRIMARY KEY,
+    tvdb_id TEXT NOT NULL,
+    season INTEGER NOT NULL,
+    episode INTEGER NOT NULL,
+    info_hash TEXT NOT NULL DEFAULT '',
+    torrent_title TEXT NOT NULL,
+    reason TEXT,
+    failed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_failed_torrents_item ON FailedTorrents(tvdb_id, season, episode);
+
 -- Notifications table for tracking download progress
 CREATE TABLE IF NOT EXISTS Notifications (
     id SERIAL PRIMARY KEY,

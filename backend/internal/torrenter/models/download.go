@@ -47,6 +47,32 @@ type ActiveTorrent struct {
 	TorrentTitle string
 	Strategy     *SearchStrategy
 	StartedAt    time.Time
+	// Request is what is needed to search for this item again from scratch,
+	// so a download whose swarm turns out to be dead can be replaced, even
+	// after a restart. Nil for rows written before it was recorded.
+	Request *SearchRequest
+}
+
+// SearchRequest is the media identity and aliases the search strategies for
+// one episode (or movie) are built from, plus how many dead torrents have
+// already been swapped out for it.
+type SearchRequest struct {
+	Media    tvdb.Media    // Id, Name, Category, Anime, Aliases; Metadata.Episodes is empty
+	Episode  *tvdb.Episode // nil for movies
+	Replaced int
+}
+
+// FailedTorrent records a torrent that was tried for an item and gave up on:
+// no seeds, monitor timeout, or removed from qBittorrent. Later searches for
+// the same item skip it, by info hash when the indexer supplies one and by
+// exact title otherwise.
+type FailedTorrent struct {
+	TvdbID   string // show id for series, media id for movies
+	Season   int
+	Episode  int
+	InfoHash string
+	Title    string
+	Reason   string
 }
 
 // FileEntry is a single file discovered underneath a download directory.
