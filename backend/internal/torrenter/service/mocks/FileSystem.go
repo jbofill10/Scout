@@ -78,6 +78,42 @@ func (_m *FileSystem) WalkFiles(root string) ([]models.FileEntry, error) {
 	return r0, r1
 }
 
+// WriteFile provides a mock function with given fields: path, data
+func (_m *FileSystem) WriteFile(path string, data []byte) error {
+	ret := _m.Called(path, data)
+
+	if len(ret) == 0 {
+		panic("no return value specified for WriteFile")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(string, []byte) error); ok {
+		r0 = rf(path, data)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Exists provides a mock function with given fields: path
+func (_m *FileSystem) Exists(path string) bool {
+	ret := _m.Called(path)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Exists")
+	}
+
+	var r0 bool
+	if rf, ok := ret.Get(0).(func(string) bool); ok {
+		r0 = rf(path)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	return r0
+}
+
 // NewFileSystem creates a new instance of FileSystem. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewFileSystem(t interface {

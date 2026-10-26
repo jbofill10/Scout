@@ -97,6 +97,11 @@ type SearchStrategy struct {
 	// TvdbId, which is the show/media id used for library base-directory lookups.
 	EpisodeTvdbID string
 	IsMovie       bool // True if this is a movie search strategy
+	// ImdbID of the movie, or of the parent show for an episode, carried so
+	// subtitles can be matched once the download lands. Empty when unknown.
+	ImdbID string
+	// RuntimeMinutes of the movie or episode when TVDB knows it; 0 otherwise.
+	RuntimeMinutes int
 	// RelaxLevel is the query-relaxation tier this strategy belongs to.
 	// 0 = strict (exact S##E## / padded absolute), 1 = relaxed (alternate
 	// episode formats, unpadded absolute, punctuation-stripped names),

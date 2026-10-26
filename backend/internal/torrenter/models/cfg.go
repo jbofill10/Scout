@@ -30,9 +30,10 @@ type RefreshCfg struct {
 }
 
 type TorrenterConf struct {
-	Prowlarr ProwlarrCfg
-	Qbitt    QbittCfg
-	Ui       UiCfg
-	Plex     PlexCfg
-	Refresh  RefreshCfg
+	Prowlarr  ProwlarrCfg
+	Qbitt     QbittCfg
+	Ui        UiCfg
+	Plex      PlexCfg
+	Refresh   RefreshCfg
+	Subtitles SubtitlesCfg
 }

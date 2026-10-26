@@ -3,14 +3,14 @@ package service
 import (
 	"context"
 	"fmt"
+	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"log/slog"
 	"path/filepath"
-	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 )
 
 var (
@@ -34,14 +34,19 @@ type MediaProcessSvc struct {
 	repo     Repository
 	fs       FileSystem
 	dirCache *BaseDirectoryCache
+	// subs fetches subtitles once a video is linked; nil disables it.
+	subs SubtitleFetcher
 }
 
-func NewMediaProcessSvc(logger *slog.Logger, repo Repository, fs FileSystem) MediaProcessor {
+// NewMediaProcessSvc builds the post-download processor. subs may be nil,
+// in which case no subtitles are fetched.
+func NewMediaProcessSvc(logger *slog.Logger, repo Repository, fs FileSystem, subs SubtitleFetcher) MediaProcessor {
 	return &MediaProcessSvc{
 		Logger:   logger,
 		repo:     repo,
 		fs:       fs,
 		dirCache: NewBaseDirectoryCache(),
+		subs:     subs,
 	}
 }
 
@@ -249,7 +254,55 @@ func (mp *MediaProcessSvc) ProcessDownloadedTorrent(ctx context.Context, media *
 
 	mp.Logger.InfoContext(ctx, "Successfully created symbolic link", "path", fullSavePath)
 
+	// Subtitles are a nice-to-have on top of a download that already landed:
+	// nothing here may turn the download into a failure.
+	mp.fetchSubtitles(ctx, media, sourcePath, fullSavePath, originalFileName)
+
 	return nil
+}
+
+// fetchSubtitles asks the subtitle fetcher for sidecar files next to the
+// linked video. Outcomes are logged only; the caller has already succeeded.
+func (mp *MediaProcessSvc) fetchSubtitles(ctx context.Context, media *models.TorrentCompleteEvent,
+	sourcePath, libraryPath, originalFileName string) {
+	if mp.subs == nil || media.Req == nil {
+		return
+	}
+	req := models.SubtitleRequest{
+		VideoPath:      sourcePath,
+		LibraryPath:    libraryPath,
+		ReleaseName:    strings.TrimSuffix(originalFileName, filepath.Ext(originalFileName)),
+		ImdbID:         media.Req.ImdbID,
+		Title:          media.Req.MediaName,
+		Year:           media.Req.ReleaseYear,
+		IsMovie:        media.Req.IsMovie,
+		RuntimeMinutes: media.Req.RuntimeMinutes,
+	}
+	if !media.Req.IsMovie {
+		// Seasonal numbering, never the absolute number an anime strategy
+		// searched with: that is what subtitle providers index by.
+		if media.Req.EpisodeMeta != nil {
+			req.Season = media.Req.EpisodeMeta.SeasonNumber
+			req.Episode = media.Req.EpisodeMeta.Number
+		} else {
+			req.Season = media.Req.Season
+			req.Episode = media.Req.Episode
+		}
+	}
+
+	results, err := mp.subs.Fetch(ctx, req)
+	if err != nil {
+		mp.Logger.WarnContext(ctx, "Subtitle fetch failed (non-fatal)", "media", media.Req.MediaName,
+			"season", req.Season, "episode", req.Episode, "error", err)
+	}
+	for _, r := range results {
+		mp.Logger.InfoContext(ctx, "Subtitle added", "media", media.Req.MediaName, "path", r.Path,
+			"language", r.Language, "sdh", r.HearingImpaired, "hash_match", r.HashMatch)
+	}
+	if err == nil && len(results) == 0 {
+		mp.Logger.InfoContext(ctx, "No subtitles added", "media", media.Req.MediaName,
+			"season", req.Season, "episode", req.Episode)
+	}
 }
 
 // Formats numbers less than 10 to be prefixed with a zero

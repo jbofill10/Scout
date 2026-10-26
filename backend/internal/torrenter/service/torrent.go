@@ -1465,14 +1465,16 @@ func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episo
 	// newShowStrategy builds a seasonal show strategy with the given query and relax level.
 	newShowStrategy := func(query, name string, relax int) *models.SearchStrategy {
 		return &models.SearchStrategy{
-			Query:         query,
-			MediaName:     name,
-			Season:        episode.SeasonNumber,
-			Episode:       episode.Number,
-			EpisodeMeta:   episode,
-			TvdbId:        req.Id,
-			EpisodeTvdbID: strconv.Itoa(episode.Id),
-			RelaxLevel:    relax,
+			Query:          query,
+			MediaName:      name,
+			Season:         episode.SeasonNumber,
+			Episode:        episode.Number,
+			EpisodeMeta:    episode,
+			TvdbId:         req.Id,
+			EpisodeTvdbID:  strconv.Itoa(episode.Id),
+			ImdbID:         req.ImdbID,
+			RuntimeMinutes: episode.Runtime,
+			RelaxLevel:     relax,
 		}
 	}
 
@@ -1480,15 +1482,17 @@ func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episo
 	// authoritative Exclude:["season","episode"] behavior preserved.
 	newAbsoluteStrategy := func(query, name string, relax int) *models.SearchStrategy {
 		return &models.SearchStrategy{
-			Query:         query,
-			MediaName:     name,
-			Season:        episode.SeasonNumber,
-			Episode:       episode.AbsoluteNumber,
-			EpisodeMeta:   episode,
-			Exclude:       []string{"season", "episode"},
-			TvdbId:        req.Id,
-			EpisodeTvdbID: strconv.Itoa(episode.Id),
-			RelaxLevel:    relax,
+			Query:          query,
+			MediaName:      name,
+			Season:         episode.SeasonNumber,
+			Episode:        episode.AbsoluteNumber,
+			EpisodeMeta:    episode,
+			Exclude:        []string{"season", "episode"},
+			TvdbId:         req.Id,
+			EpisodeTvdbID:  strconv.Itoa(episode.Id),
+			ImdbID:         req.ImdbID,
+			RuntimeMinutes: episode.Runtime,
+			RelaxLevel:     relax,
 		}
 	}
 
@@ -1579,16 +1583,18 @@ func (q *QbittHandler) createMovieSearchStrategy(req *tvdb.Media) []*models.Sear
 
 	newMovie := func(query string, relax int) *models.SearchStrategy {
 		return &models.SearchStrategy{
-			Query:         query,
-			MediaName:     req.Name,
-			Season:        0,   // Movies have no season
-			Episode:       0,   // Movies have no episode (used to detect movie vs show)
-			EpisodeMeta:   nil, // Movies have no episode metadata
-			TvdbId:        req.Id,
-			EpisodeTvdbID: req.Id, // Movies key notifications/EpisodeResult by media id
-			ReleaseYear:   req.Year,
-			IsMovie:       true, // Flag this as a movie search strategy
-			RelaxLevel:    relax,
+			Query:          query,
+			MediaName:      req.Name,
+			Season:         0,   // Movies have no season
+			Episode:        0,   // Movies have no episode (used to detect movie vs show)
+			EpisodeMeta:    nil, // Movies have no episode metadata
+			TvdbId:         req.Id,
+			EpisodeTvdbID:  req.Id, // Movies key notifications/EpisodeResult by media id
+			ReleaseYear:    req.Year,
+			IsMovie:        true, // Flag this as a movie search strategy
+			ImdbID:         req.ImdbID,
+			RuntimeMinutes: req.Runtime,
+			RelaxLevel:     relax,
 		}
 	}
 

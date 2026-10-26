@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
@@ -79,7 +80,40 @@ func Load() (models.TorrenterConf, error) {
 	}
 	cfg.Refresh.RefreshInterval = refreshInterval
 
+	// Subtitle fetching is optional: no API key, no fetching.
+	cfg.Subtitles.APIKey = getEnv("OPENSUBTITLES_API_KEY", "")
+	cfg.Subtitles.Username = getEnv("OPENSUBTITLES_USERNAME", "")
+	cfg.Subtitles.Password = getEnv("OPENSUBTITLES_PASSWORD", "")
+	cfg.Subtitles.Languages = splitList(getEnv("SUBTITLE_LANGUAGES", "en"))
+	cfg.Subtitles.PreferSDH = getEnv("SUBTITLE_PREFER_SDH", "false") == "true"
+
+	maxDownloads := getEnv("SUBTITLE_MAX_DOWNLOADS_PER_ITEM", "3")
+	if val, err := strconv.Atoi(maxDownloads); err == nil && val > 0 {
+		cfg.Subtitles.MaxDownloadsPerItem = val
+	} else {
+		return cfg, fmt.Errorf("invalid SUBTITLE_MAX_DOWNLOADS_PER_ITEM value: %s", maxDownloads)
+	}
+
+	subtitleTimeoutStr := getEnv("SUBTITLE_TIMEOUT", "2m")
+	subtitleTimeout, err := time.ParseDuration(subtitleTimeoutStr)
+	if err != nil {
+		return cfg, fmt.Errorf("invalid SUBTITLE_TIMEOUT value: %s", subtitleTimeoutStr)
+	}
+	cfg.Subtitles.Timeout = subtitleTimeout
+
 	return cfg, nil
+}
+
+// splitList parses a comma-separated list, dropping blanks and surrounding
+// whitespace, so "en, es," becomes ["en", "es"].
+func splitList(value string) []string {
+	var out []string
+	for _, part := range strings.Split(value, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // getEnv retrieves an environment variable or returns a default value
