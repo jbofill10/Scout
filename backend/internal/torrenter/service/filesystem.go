@@ -96,3 +96,42 @@ func (fs *FsSvc) WalkFiles(root string) ([]models.FileEntry, error) {
 
 	return files, nil
 }
+
+// WriteFile writes data to a temp file beside path and renames it into place,
+// so a reader never sees a partial file. It refuses to replace an existing
+// path: a subtitle the user put there by hand must win over a fetched one.
+func (fs *FsSvc) WriteFile(path string, data []byte) error {
+	if fs.Exists(path) {
+		return fmt.Errorf("%s already exists", path)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Chmod(tmpName, 0644); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
+}
+
+// Exists reports whether path exists, following nothing: a dangling link
+// still counts, since the name is taken either way.
+func (fs *FsSvc) Exists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
+}

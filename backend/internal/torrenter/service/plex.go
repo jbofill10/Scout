@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -525,4 +526,47 @@ func extractMovieBaseDirectory(filePath, libraryPath string) string {
 
 	// Return library path + movie directory
 	return filepath.Join(libraryPath, parts[0])
+}
+
+// PlexLibraryRefresher asks Plex to rescan a single directory. It is separate
+// from PlexHandler because the media processor needs it and PlexHandler is
+// built on top of the media processor.
+type PlexLibraryRefresher struct {
+	cfg        *models.PlexCfg
+	httpClient *http.Client
+	logger     *slog.Logger
+}
+
+func NewPlexRefresher(cfg *models.PlexCfg, logger *slog.Logger) *PlexLibraryRefresher {
+	return &PlexLibraryRefresher{
+		cfg:        cfg,
+		httpClient: &http.Client{Timeout: 15 * time.Second},
+		logger:     logger,
+	}
+}
+
+// RefreshPath triggers GET /library/sections/{id}/refresh?path=dir on the
+// movie or show section. Plex answers 200 immediately and scans in the
+// background.
+func (p *PlexLibraryRefresher) RefreshPath(ctx context.Context, isMovie bool, dir string) error {
+	section := p.cfg.ShowSections
+	if isMovie {
+		section = p.cfg.MovieSections
+	}
+	endpoint := fmt.Sprintf("%s/library/sections/%d/refresh?path=%s", p.cfg.Host, section, url.QueryEscape(dir))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Plex-Token", p.cfg.Key)
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("plex refresh: HTTP %d", resp.StatusCode)
+	}
+	p.logger.InfoContext(ctx, "Asked Plex to rescan directory", "section", section, "path", dir)
+	return nil
 }

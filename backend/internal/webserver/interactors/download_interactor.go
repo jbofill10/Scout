@@ -346,6 +346,7 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) (
 				Overview:     req.Overview,
 				Year:         req.Year,
 				Aliases:      i.extractAliases(extendedInfo.Data.Aliases),
+				ImdbID:       extendedInfo.Data.ImdbID(),
 			}
 			scheduledMedia.Metadata.Episodes = []tvdb.Episode{episode}
 
@@ -412,6 +413,7 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) (
 			Year:     req.Year,
 			Metadata: req.Metadata,
 			Aliases:  i.extractAliases(extendedInfo.Data.Aliases),
+			ImdbID:   extendedInfo.Data.ImdbID(),
 		}
 		downloadPayload.Metadata.Episodes = mediaToDownload
 		summary.QueuedNow = len(mediaToDownload)
@@ -498,6 +500,7 @@ func (i *DownloadInteractor) DownloadMovie(ctx context.Context, req tvdb.Media) 
 	isAnime := isMediaAnime(extendedInfo)
 	req.Anime = isAnime
 	req.Aliases = i.extractAliases(extendedInfo.Data.Aliases)
+	req.ImdbID = extendedInfo.Data.ImdbID()
 
 	// Parse release date from FirstAired field
 	releaseDate, err := time.Parse("2006-01-02", req.Metadata.FirstAired)
@@ -675,6 +678,7 @@ func (i *DownloadInteractor) buildScheduledMedia(req tvdb.Media, extendedInfo tv
 		Overview:     req.Overview,
 		Year:         req.Year,
 		Aliases:      i.extractAliases(extendedInfo.Data.Aliases),
+		ImdbID:       extendedInfo.Data.ImdbID(),
 	}
 	scheduledMedia.Metadata.Episodes = []tvdb.Episode{episode}
 	return scheduledMedia

@@ -3,6 +3,8 @@ package media
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strings"
 )
 
 // Status represents the TVDB API v4 status object
@@ -72,6 +74,9 @@ type Media struct {
 	OriginalCountry string `json:"originalCountry,omitempty"`
 	// Original language, e.g. "eng"
 	OriginalLanguage string `json:"originalLanguage,omitempty"`
+	// IMDb id ("tt1234567") for the show or movie, from the TVDB extended
+	// record's remote ids. Used to look up subtitles; empty when TVDB has none.
+	ImdbID string `json:"imdbId,omitempty"`
 	// Information about series, such as episodes, date aired, etc.
 	Metadata TVDBSeriesMetadata `json:"metadata"`
 }
@@ -159,22 +164,23 @@ type TVDBSeriesExtendedResponse struct {
 }
 
 type TVDBSeriesExtendedData struct {
-	Id               int       `json:"id"`               // Series ID
-	Name             string    `json:"name"`             // Series name
-	Slug             string    `json:"slug"`             // Series slug
-	Image            string    `json:"image"`            // Image URL
-	Overview         string    `json:"overview"`         // Series overview/description
-	Year             string    `json:"year"`             // Year
-	Status           Status    `json:"status"`           // Status object (Continuing, Ended, etc.)
-	Genres           []Genres  `json:"genres"`           // Critical: Used for anime detection
-	Aliases          []Alias   `json:"aliases"`          // Critical: Used for torrent search
-	FirstAired       string    `json:"firstAired"`       // Critical: Used for movie scheduling
-	LastAired        string    `json:"lastAired"`        // Last aired date
-	OriginalCountry  string    `json:"originalCountry"`  // Country of origin
-	OriginalLanguage string    `json:"originalLanguage"` // Original language
-	Episodes         []Episode `json:"episodes"`         // Episodes now included in extended response
-	AverageRuntime   int       `json:"averageRuntime"`   // Average episode runtime
-	Score            float64   `json:"score"`            // Popularity score
+	Id               int        `json:"id"`               // Series ID
+	Name             string     `json:"name"`             // Series name
+	Slug             string     `json:"slug"`             // Series slug
+	Image            string     `json:"image"`            // Image URL
+	Overview         string     `json:"overview"`         // Series overview/description
+	Year             string     `json:"year"`             // Year
+	Status           Status     `json:"status"`           // Status object (Continuing, Ended, etc.)
+	Genres           []Genres   `json:"genres"`           // Critical: Used for anime detection
+	Aliases          []Alias    `json:"aliases"`          // Critical: Used for torrent search
+	FirstAired       string     `json:"firstAired"`       // Critical: Used for movie scheduling
+	LastAired        string     `json:"lastAired"`        // Last aired date
+	OriginalCountry  string     `json:"originalCountry"`  // Country of origin
+	OriginalLanguage string     `json:"originalLanguage"` // Original language
+	Episodes         []Episode  `json:"episodes"`         // Episodes now included in extended response
+	AverageRuntime   int        `json:"averageRuntime"`   // Average episode runtime
+	Score            float64    `json:"score"`            // Popularity score
+	RemoteIds        []RemoteID `json:"remoteIds"`        // External ids (IMDb, TMDb, ...)
 	// Movie extended responses are decoded into this same struct, so movie-only
 	// fields live here too. Movies carry no firstAired: their release dates come
 	// from first_release/releases instead.
@@ -247,10 +253,31 @@ type ContentRating struct {
 	FullName    string `json:"fullName"`    // Full name of the rating
 }
 
-// RemoteID represents external service IDs (IMDB, TMDB, etc.) from TVDB API v4
+// RemoteID represents external service IDs (IMDB, TMDB, etc.) from TVDB API v4.
+// The id is the identifier on the remote service itself ("tt3778644" for IMDb,
+// "348350" for TMDb), so it is a string even when the service uses numbers.
 type RemoteID struct {
-	Id         int    `json:"id"`
-	Type       int    `json:"type"`       // Type identifier for the service
-	RemoteId   string `json:"remoteId"`   // The actual ID on the external service
+	Id         string `json:"id"`
+	Type       int    `json:"type"`       // Type identifier for the service (2 = IMDb)
 	SourceName string `json:"sourceName"` // Name of the service (e.g., "IMDB", "TheMovieDB.com")
+}
+
+// RemoteIDTypeIMDb is the TVDB remote id type for IMDb entries.
+const RemoteIDTypeIMDb = 2
+
+var imdbIDPattern = regexp.MustCompile(`^tt\d{5,10}$`)
+
+// ImdbID returns the IMDb id from the extended record's remote ids, or "" when
+// TVDB lists none or lists something that is not a title id.
+func (d TVDBSeriesExtendedData) ImdbID() string {
+	for _, rid := range d.RemoteIds {
+		if rid.Type != RemoteIDTypeIMDb && !strings.EqualFold(rid.SourceName, "IMDB") {
+			continue
+		}
+		id := strings.TrimSpace(rid.Id)
+		if imdbIDPattern.MatchString(id) {
+			return id
+		}
+	}
+	return ""
 }

@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"log/slog"
-	tvdb "github.com/jbofill10/scout/backend/pkg/media"
-	"strings"
-	"testing"
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 	"github.com/jbofill10/scout/backend/internal/torrenter/repository/mocks"
 	servicemocks "github.com/jbofill10/scout/backend/internal/torrenter/service/mocks"
+	tvdb "github.com/jbofill10/scout/backend/pkg/media"
+	"log/slog"
+	"strings"
+	"testing"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -37,7 +37,7 @@ func (ts *testSuite) SetupTest() {
 	ts.fs = servicemocks.NewFileSystem(ts.T())
 
 	// Use constructor to ensure cache is properly initialized
-	ts.svc = NewMediaProcessSvc(ts.logger, ts.repo, ts.fs).(*MediaProcessSvc)
+	ts.svc = NewMediaProcessSvc(ts.logger, ts.repo, ts.fs, nil).(*MediaProcessSvc)
 }
 
 func (ts *testSuite) TestConstructPlexFilename() {

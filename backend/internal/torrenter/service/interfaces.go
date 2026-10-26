@@ -71,6 +71,18 @@ type FileSystem interface {
 	HardLink(sourcePath, destPath string) error
 	MkDir(path string) error
 	WalkFiles(root string) ([]models.FileEntry, error)
+	// WriteFile atomically writes data to path, replacing nothing: it fails
+	// when path already exists.
+	WriteFile(path string, data []byte) error
+	// Exists reports whether path exists (file, directory or link).
+	Exists(path string) bool
+}
+
+// SubtitleFetcher finds and writes subtitles for a video that just landed in
+// the library. Fetch returns one result per language it wrote a file for;
+// a request that yields nothing is not an error.
+type SubtitleFetcher interface {
+	Fetch(ctx context.Context, req models.SubtitleRequest) ([]models.SubtitleResult, error)
 }
 
 // PlexService handles Plex library operations

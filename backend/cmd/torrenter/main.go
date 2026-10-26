@@ -103,7 +103,20 @@ func main() {
 	}
 
 	fs := service.NewFsSvc(logger)
-	mp := service.NewMediaProcessSvc(logger, repo, fs)
+
+	// Subtitle fetching is opt-in: it needs an OpenSubtitles API key.
+	var subs service.SubtitleFetcher
+	if cfg.Subtitles.APIKey != "" {
+		provider := clients.NewOpenSubtitlesClient(&cfg.Subtitles, logger)
+		refresher := service.NewPlexRefresher(&cfg.Plex, logger)
+		subs = service.NewSubtitleSvc(&cfg.Subtitles, provider, fs, refresher, logger)
+		logger.Info("Subtitle fetching enabled", "languages", cfg.Subtitles.Languages,
+			"authenticated", cfg.Subtitles.Username != "")
+	} else {
+		logger.Info("Subtitle fetching disabled: OPENSUBTITLES_API_KEY not set")
+	}
+
+	mp := service.NewMediaProcessSvc(logger, repo, fs, subs)
 	plex := service.NewPlexHandler(repo, logger, &cfg.Plex, mp)
 
 	// Initialize interactors

@@ -31,6 +31,7 @@ Scout is an over-engineered microservices architecture for automated media torre
 - **qBittorrent** - Torrent client
 - **Plex Media Server** - Library management
 - **Prowlarr** - Indexer aggregation (NYAA for anime, 1337x for shows, The Pirate Bay as a last-resort fallback)
+- **OpenSubtitles** - Subtitle lookup and download for finished media (optional)
 
 ## Project Conventions
 
@@ -240,6 +241,12 @@ Example flow: `DownloadHandler` → `DownloadInteractor` → `QbittHandler`/`Rep
    - Configuration: `PROWLARR_HOST`, `PROWLARR_KEY`
    - Used by: torrenter service
    - Indexers: NYAA (anime, id 1), 1337x (shows/movies, id 2), The Pirate Bay (fallback, id 3)
+
+5. **OpenSubtitles** (Subtitle Provider, optional)
+   - Purpose: Subtitles for downloaded media, matched by file hash and IMDb id
+   - Authentication: API key for search; user login for downloads (20/day on the free tier)
+   - Configuration: `OPENSUBTITLES_API_KEY`, `OPENSUBTITLES_USERNAME`, `OPENSUBTITLES_PASSWORD`, `SUBTITLE_LANGUAGES`
+   - Used by: torrenter service, after a download is linked into Plex
 
 **Infrastructure Dependencies:**
 
