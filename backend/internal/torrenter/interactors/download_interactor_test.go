@@ -22,6 +22,11 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(new(bytes.Buffer), nil))
 }
 
+// fakeLibrarySyncer counts sync requests from the completion handler.
+type fakeLibrarySyncer struct{ requests int }
+
+func (f *fakeLibrarySyncer) RequestSync() { f.requests++ }
+
 func completionEvent() models.TorrentCompleteEvent {
 	return models.TorrentCompleteEvent{
 		SavePath: "/data/Downloads/Some.Movie",
@@ -49,7 +54,7 @@ func TestHandleDownloadCompletion_ClearsActiveTorrentOnSuccess(t *testing.T) {
 	repo.On("DeleteActiveTorrent", mock.Anything, "hash-1").Return(nil)
 	qbitt.On("RemoveUUIDTag", mock.Anything, "hash-1", "uuid-1").Return(nil)
 
-	i := NewDownloadInteractor(qbitt, mp, repo, testLogger())
+	i := NewDownloadInteractor(qbitt, mp, repo, nil, testLogger())
 
 	dlComplete := make(chan models.TorrentCompleteEvent, 1)
 	dlComplete <- completionEvent()
@@ -75,7 +80,7 @@ func TestHandleDownloadCompletion_ClearsActiveTorrentOnProcessingFailure(t *test
 	})).Return(nil)
 	repo.On("DeleteActiveTorrent", mock.Anything, "hash-1").Return(nil)
 
-	i := NewDownloadInteractor(qbitt, mp, repo, testLogger())
+	i := NewDownloadInteractor(qbitt, mp, repo, nil, testLogger())
 
 	dlComplete := make(chan models.TorrentCompleteEvent, 1)
 	dlComplete <- completionEvent()
@@ -102,7 +107,7 @@ func TestHandleDownloadCompletion_SurvivesDeleteFailure(t *testing.T) {
 	repo.On("DeleteActiveTorrent", mock.Anything, "hash-1").Return(errors.New("db down"))
 	qbitt.On("RemoveUUIDTag", mock.Anything, "hash-1", "uuid-1").Return(nil)
 
-	i := NewDownloadInteractor(qbitt, mp, repo, testLogger())
+	i := NewDownloadInteractor(qbitt, mp, repo, nil, testLogger())
 
 	dlComplete := make(chan models.TorrentCompleteEvent, 1)
 	dlComplete <- completionEvent()
@@ -135,7 +140,7 @@ func TestResumeInFlightDownloads_PropagatesError(t *testing.T) {
 		}).
 		Return(0, errors.New("db down"))
 
-	i := NewDownloadInteractor(qbitt, mp, repo, testLogger())
+	i := NewDownloadInteractor(qbitt, mp, repo, nil, testLogger())
 
 	err := i.ResumeInFlightDownloads(context.Background())
 
@@ -154,8 +159,57 @@ func TestResumeInFlightDownloads_Success(t *testing.T) {
 		}).
 		Return(3, nil)
 
-	i := NewDownloadInteractor(qbitt, mp, repo, testLogger())
+	i := NewDownloadInteractor(qbitt, mp, repo, nil, testLogger())
 
 	assert.NoError(t, i.ResumeInFlightDownloads(context.Background()))
 	qbitt.AssertExpectations(t)
+}
+
+// A linked file only reads as downloaded once the Plex mirror has been re-read,
+// so every processed torrent asks for a sync; a failed one has nothing to add.
+func TestHandleDownloadCompletion_RequestsLibrarySync(t *testing.T) {
+	t.Run("after a processed torrent", func(t *testing.T) {
+		repo := repomocks.NewRepository(t)
+		mp := servicemocks.NewMediaProcessor(t)
+		qbitt := servicemocks.NewTorrentService(t)
+		library := &fakeLibrarySyncer{}
+
+		mp.On("ProcessDownloadedTorrent", mock.Anything, mock.Anything).Return(nil)
+		repo.On("UpdateDownloadHistoryStatus", mock.Anything, "hash-1", "success", "").Return(nil)
+		repo.On("GetNotification", mock.Anything, "999").Return(&notifications.Notification{ID: 1}, nil)
+		repo.On("UpdateNotification", mock.Anything, mock.Anything).Return(nil)
+		repo.On("DeleteActiveTorrent", mock.Anything, "hash-1").Return(nil)
+		qbitt.On("RemoveUUIDTag", mock.Anything, "hash-1", "uuid-1").Return(nil)
+
+		i := NewDownloadInteractor(qbitt, mp, repo, library, testLogger())
+
+		dlComplete := make(chan models.TorrentCompleteEvent, 1)
+		dlComplete <- completionEvent()
+		close(dlComplete)
+		i.handleDownloadCompletion(context.Background(), dlComplete)
+
+		assert.Equal(t, 1, library.requests)
+	})
+
+	t.Run("not after a processing failure", func(t *testing.T) {
+		repo := repomocks.NewRepository(t)
+		mp := servicemocks.NewMediaProcessor(t)
+		qbitt := servicemocks.NewTorrentService(t)
+		library := &fakeLibrarySyncer{}
+
+		mp.On("ProcessDownloadedTorrent", mock.Anything, mock.Anything).Return(errors.New("no video files found"))
+		repo.On("UpdateDownloadHistoryStatus", mock.Anything, "hash-1", "failure", "no video files found").Return(nil)
+		repo.On("GetNotification", mock.Anything, "999").Return(&notifications.Notification{ID: 1}, nil)
+		repo.On("UpdateNotification", mock.Anything, mock.Anything).Return(nil)
+		repo.On("DeleteActiveTorrent", mock.Anything, "hash-1").Return(nil)
+
+		i := NewDownloadInteractor(qbitt, mp, repo, library, testLogger())
+
+		dlComplete := make(chan models.TorrentCompleteEvent, 1)
+		dlComplete <- completionEvent()
+		close(dlComplete)
+		i.handleDownloadCompletion(context.Background(), dlComplete)
+
+		assert.Equal(t, 0, library.requests)
+	})
 }

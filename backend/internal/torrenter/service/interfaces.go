@@ -89,3 +89,9 @@ type SubtitleFetcher interface {
 type PlexService interface {
 	SyncPlexLibrary(ctx context.Context) error
 }
+
+// LibrarySyncer is how the download path gets a file it just linked into
+// the library mirrored into the database. RequestSync never blocks.
+type LibrarySyncer interface {
+	RequestSync()
+}

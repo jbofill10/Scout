@@ -63,3 +63,40 @@ func TestLoadRejectsBadSubtitleValues(t *testing.T) {
 		t.Fatal("expected error for bad timeout")
 	}
 }
+
+func TestLoadPlexSyncDefaults(t *testing.T) {
+	setRequiredEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Plex.SyncDelay != 2*time.Minute || cfg.Plex.SyncInterval != 30*time.Minute {
+		t.Fatalf("unexpected defaults: %+v", cfg.Plex)
+	}
+}
+
+func TestLoadPlexSyncOverrides(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("PLEX_SYNC_DELAY", "45s")
+	t.Setenv("PLEX_SYNC_INTERVAL", "0")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Plex.SyncDelay != 45*time.Second || cfg.Plex.SyncInterval != 0 {
+		t.Fatalf("unexpected: %+v", cfg.Plex)
+	}
+}
+
+func TestLoadRejectsBadPlexSyncValues(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("PLEX_SYNC_DELAY", "soon")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for bad sync delay")
+	}
+	t.Setenv("PLEX_SYNC_DELAY", "1m")
+	t.Setenv("PLEX_SYNC_INTERVAL", "-5m")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for negative sync interval")
+	}
+}

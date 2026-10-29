@@ -14,23 +14,28 @@ import (
 )
 
 type DownloadInteractor struct {
-	qbitt  service.TorrentService
-	mp     service.MediaProcessor
-	repo   service.Repository
-	logger *slog.Logger
+	qbitt   service.TorrentService
+	mp      service.MediaProcessor
+	repo    service.Repository
+	library service.LibrarySyncer
+	logger  *slog.Logger
 }
 
+// NewDownloadInteractor wires the download pipeline. library may be nil, in
+// which case the database mirror of Plex only catches up on its own schedule.
 func NewDownloadInteractor(
 	qbitt service.TorrentService,
 	mp service.MediaProcessor,
 	repo service.Repository,
+	library service.LibrarySyncer,
 	logger *slog.Logger,
 ) *DownloadInteractor {
 	return &DownloadInteractor{
-		qbitt:  qbitt,
-		mp:     mp,
-		repo:   repo,
-		logger: logger,
+		qbitt:   qbitt,
+		mp:      mp,
+		repo:    repo,
+		library: library,
+		logger:  logger,
 	}
 }
 
@@ -106,6 +111,12 @@ func (i *DownloadInteractor) handleDownloadCompletion(ctx context.Context, dlCom
 			// replay the same failure.
 			i.clearActiveTorrent(eventCtx, event.Hash)
 			continue
+		}
+
+		// The file is in the library folder; have the database mirror catch up
+		// so the item reads as downloaded without waiting for a restart.
+		if i.library != nil {
+			i.library.RequestSync()
 		}
 
 		if err := i.repo.UpdateDownloadHistoryStatus(eventCtx, event.Hash, "success", ""); err != nil {

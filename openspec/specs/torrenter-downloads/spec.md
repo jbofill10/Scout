@@ -172,3 +172,25 @@ The torrenter service SHALL monitor movie torrent downloads and trigger post-pro
 - **AND** create subdirectory for movie: `{defaultPath}/{MovieName} ({Year})`
 - **AND** save movie file to constructed path
 
+
+### Requirement: Library Mirror Freshness
+
+The torrenter SHALL keep its database mirror of the Plex library current without a restart, so a movie or episode it has downloaded is reported as in the library.
+
+#### Scenario: Sync after a download lands
+
+- **WHEN** a downloaded torrent has been linked into the Plex library
+- **THEN** the service SHALL request a Plex library sync
+- **AND** run it once no further download has landed for `PLEX_SYNC_DELAY`
+- **AND** fold requests made while a sync is pending or running into one later sync
+- **AND** NOT block the download pipeline on the sync
+
+#### Scenario: Periodic sync
+
+- **WHEN** `PLEX_SYNC_INTERVAL` is greater than zero
+- **THEN** the service SHALL re-read the Plex library every interval in addition to the start-up sync
+
+#### Scenario: Start-up sync retry
+
+- **WHEN** the start-up sync fails
+- **THEN** the service SHALL retry it once after one minute
