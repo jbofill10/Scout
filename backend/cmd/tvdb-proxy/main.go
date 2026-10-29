@@ -8,13 +8,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
+	"github.com/jbofill10/scout/backend/pkg/search"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
 	"github.com/gin-gonic/gin"
@@ -233,31 +233,37 @@ func main() {
 	}
 }
 
+// getSeries handles GET /series: a structured media search. Besides mediaName
+// and mediaType it accepts the filters search.Query carries (year, director,
+// person, personRole, company, country, language, imdb, altName); see
+// pkg/search for their meaning. At least one of mediaName, person, director
+// or imdb must be present.
 func getSeries(c *gin.Context) {
 	// Extract context for trace propagation
 	ctx := c.Request.Context()
 
-	mediaName := c.Query("mediaName")
-	mediaType := c.Query("mediaType")
+	query := search.FromProxyParams(c.Request.URL.Query())
+	mediaType := c.Query(search.ParamMediaType)
 
-	if mediaName == "" {
+	if query.IsEmpty() {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Bad Request: 'mediaName' parameter is missing"})
 		return
 	}
-	if mediaType == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Bad Request: 'mediaType' parameter is missing"})
+	if mediaType != "series" && mediaType != "movie" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Bad Request: 'mediaType' must be 'series' or 'movie'"})
 		return
 	}
 
-	response, err := queryShow(ctx, mediaName, mediaType)
-
+	response, err := searchMedia(ctx, query, mediaType)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintln("Internal Server Error: Unable to query show", mediaName)})
+		logger.ErrorContext(ctx, "Search failed", telemetry.WithTraceContext(ctx, "title", query.Title, "error", err)...)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintln("Internal Server Error: Unable to query show", query.Title),
+		})
 		return
 	}
 	logger.InfoContext(ctx, "Search response", telemetry.WithTraceContext(ctx, "count", len(response))...)
 	c.JSON(http.StatusOK, response)
-
 }
 
 // searchItemToMedia maps one TVDB search hit onto the Media shape the rest of
@@ -273,29 +279,37 @@ func searchItemToMedia(item tvdb.TVDBSearchItem) (tvdb.Media, bool) {
 		return tvdb.Media{}, false
 	}
 
-	// Normalize image URL - prepend domain if relative path
-	imageUrl := item.ImageUrl
-	if imageUrl != "" && !strings.Contains(imageUrl, "https") {
-		imageUrl = "https://artworks.thetvdb.com" + imageUrl
-	}
-
 	aliases := item.Aliases
 	if aliases == nil {
 		aliases = []string{}
 	}
 
+	// TVDB only translates some names; fall back to the original so a hit
+	// never shows up without a title.
+	name := item.Translations.Eng
+	if name == "" {
+		name = item.OriginalName
+	}
+
 	return tvdb.Media{
-		Id:           parts[1],
-		Name:         item.Translations.Eng,
-		Category:     item.Category,
-		ImageUrl:     imageUrl,
-		OriginalName: item.OriginalName,
-		Slug:         item.Slug,
-		Status:       item.Status,
-		Overview:     item.Overviews.Eng,
-		Year:         item.Year,
-		Aliases:      aliases,
-		Anime:        isAnimeGenre(item.Genres, item.Category),
+		Id:               parts[1],
+		Name:             name,
+		Category:         item.Category,
+		ImageUrl:         absoluteArtworkURL(item.ImageUrl),
+		OriginalName:     item.OriginalName,
+		Slug:             item.Slug,
+		Status:           item.Status,
+		Overview:         item.Overviews.Eng,
+		Year:             item.Year,
+		Aliases:          aliases,
+		Genres:           item.Genres,
+		Anime:            isAnimeGenre(item.Genres, item.Category),
+		Director:         item.Director,
+		Studios:          item.Studios,
+		Network:          item.Network,
+		OriginalCountry:  item.Country,
+		OriginalLanguage: item.PrimaryLanguage,
+		Metadata:         tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{}},
 	}, true
 }
 
@@ -308,94 +322,6 @@ func isAnimeGenre(genres []string, mediaType string) bool {
 		}
 	}
 	return false
-}
-
-// Queries TVDB for media
-func queryShow(ctx context.Context, showName, mediaType string) ([]tvdb.Media, error) {
-
-	results := []tvdb.Media{}
-	var resultsMu sync.Mutex
-
-	uriQuery := fmt.Sprintf("/search?query=%s&type=%s", showName, mediaType)
-
-	var searchResponse = &tvdb.TVDBSearchResponse{}
-	result, err := tvDbGet(ctx, uriQuery)
-
-	if err != nil {
-		logger.InfoContext(ctx, "Unable to get show information", telemetry.WithTraceContext(ctx, "value", err)...)
-	}
-
-	// Attempt to marshal response
-	if err := json.Unmarshal(result, &searchResponse); err != nil {
-		logger.InfoContext(ctx, "Unable to unmarshal json response", "value", err)
-		return nil, err
-	}
-
-	ch := make(chan struct{}, 20)
-	var wg sync.WaitGroup
-	logger.InfoContext(ctx, "Search results count", "count", len(searchResponse.Data), "bytes", len(result))
-	for _, item := range searchResponse.Data {
-		mediaData, ok := searchItemToMedia(item)
-		if !ok {
-			logger.WarnContext(ctx, "Skipping invalid TVDB item id format", "raw_id", item.Id)
-			continue
-		}
-
-		wg.Add(1)
-		ch <- struct{}{}
-
-		go func(ctx context.Context, mediaData tvdb.Media) {
-			defer wg.Done()
-			defer func() { <-ch }()
-
-			// Skip episode metadata fetching for movies
-			if mediaData.Category == "movie" {
-				// Set empty metadata for movies
-				mediaData.Metadata = tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{}}
-				resultsMu.Lock()
-				results = append(results, mediaData)
-				resultsMu.Unlock()
-				return
-			}
-
-			// Fetch episode metadata for series
-			seriesResponse, err := querySeriesMetadata(ctx, mediaData.Id)
-			if err != nil {
-				logger.WarnContext(ctx, "Failed to fetch episode metadata, returning partial result",
-					"media_id", mediaData.Id,
-					"media_name", mediaData.Name,
-					"error", err)
-				// Still add the media with empty metadata rather than dropping it
-				mediaData.Metadata = tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{}}
-				resultsMu.Lock()
-				results = append(results, mediaData)
-				resultsMu.Unlock()
-				return
-			}
-
-			mediaData.Metadata = seriesResponse.Data
-			mediaData.Metadata.Episodes = seriesResponse.Data.Episodes
-			mediaData.Metadata.Number = seriesResponse.Data.Number
-			mediaData.Metadata.FirstAired = seriesResponse.Data.FirstAired
-			mediaData.Metadata.LastAired = seriesResponse.Data.LastAired
-			mediaData.Score = seriesResponse.Data.Score
-
-			resultsMu.Lock()
-			results = append(results, mediaData)
-			resultsMu.Unlock()
-		}(ctx, mediaData)
-
-	}
-
-	wg.Wait()
-	close(ch)
-
-	// Sort by score in descending order
-	sort.SliceStable(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
-	})
-
-	return results, nil
 }
 
 func loadConfig() error {

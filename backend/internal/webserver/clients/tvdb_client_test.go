@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
+	"github.com/jbofill10/scout/backend/pkg/search"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -52,12 +53,53 @@ func (s *TVDBProxyClientTestSuite) TestSearch_Success() {
 
 	client := NewTVDBProxyClient(server.URL[7:]) // Remove http://
 
-	results, err := client.Search(context.Background(), "series", "test")
+	results, err := client.Search(context.Background(), "series", search.Query{Title: "test"})
 
 	s.NoError(err)
 	s.Len(results, 2)
 	s.Equal("Test Show", results[0].Name)
 	s.Equal("Another Show", results[1].Name)
+}
+
+func (s *TVDBProxyClientTestSuite) TestSearch_SendsParsedQueryAsParameters() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.Equal("/series", r.URL.Path)
+		params := r.URL.Query()
+		s.Equal("movie", params.Get("mediaType"))
+		s.Equal("Class of", params.Get("mediaName"))
+		s.Equal("Class of 1984", params.Get("altName"))
+		s.Equal("1984", params.Get("year"))
+		s.Equal("Mark Lester", params.Get("director"))
+		s.Equal("A24 Films", params.Get("company"))
+		s.False(params.Has("person"), "empty filters are not sent")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode([]tvdb.Media{})
+	}))
+	defer server.Close()
+
+	client := NewTVDBProxyClient(server.URL[7:])
+
+	_, err := client.Search(context.Background(), "movie", search.Query{
+		Title: "Class of", AltTitle: "Class of 1984", Year: "1984", Director: "Mark Lester", Company: "A24 Films",
+	})
+
+	s.NoError(err)
+}
+
+func (s *TVDBProxyClientTestSuite) TestSearch_NullBodyBecomesEmptyList() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("null"))
+	}))
+	defer server.Close()
+
+	client := NewTVDBProxyClient(server.URL[7:])
+
+	results, err := client.Search(context.Background(), "series", search.Query{Title: "x"})
+
+	s.NoError(err)
+	s.NotNil(results)
+	s.Empty(results)
 }
 
 func (s *TVDBProxyClientTestSuite) TestSearch_EmptyResults() {
@@ -69,7 +111,7 @@ func (s *TVDBProxyClientTestSuite) TestSearch_EmptyResults() {
 
 	client := NewTVDBProxyClient(server.URL[7:])
 
-	results, err := client.Search(context.Background(), "series", "nonexistent")
+	results, err := client.Search(context.Background(), "series", search.Query{Title: "nonexistent"})
 
 	s.NoError(err)
 	s.Empty(results)
@@ -83,7 +125,7 @@ func (s *TVDBProxyClientTestSuite) TestSearch_HTTPError() {
 
 	client := NewTVDBProxyClient(server.URL[7:])
 
-	results, err := client.Search(context.Background(), "series", "test")
+	results, err := client.Search(context.Background(), "series", search.Query{Title: "test"})
 
 	// JSON decoder returns EOF on empty body
 	s.Error(err)
@@ -99,7 +141,7 @@ func (s *TVDBProxyClientTestSuite) TestSearch_InvalidJSON() {
 
 	client := NewTVDBProxyClient(server.URL[7:])
 
-	results, err := client.Search(context.Background(), "series", "test")
+	results, err := client.Search(context.Background(), "series", search.Query{Title: "test"})
 
 	s.Error(err)
 	s.Nil(results)
@@ -109,7 +151,7 @@ func (s *TVDBProxyClientTestSuite) TestSearch_NetworkError() {
 	// Use invalid host to trigger network error
 	client := NewTVDBProxyClient("invalid-host:9999")
 
-	results, err := client.Search(context.Background(), "series", "test")
+	results, err := client.Search(context.Background(), "series", search.Query{Title: "test"})
 
 	s.Error(err)
 	s.Nil(results)

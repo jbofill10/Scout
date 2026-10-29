@@ -14,10 +14,20 @@ interface SearchResultsGridProps {
    * columns from it. Phones ignore it and always fit two columns.
    */
   minCardWidth?: number;
-  /** Optional label shown under the title in the hover overlay. */
+  /**
+   * Optional label shown under the title in the hover overlay. When omitted
+   * each card shows its year and, for results found through a person rather
+   * than the title, who that was ("2022 · Mia Goth · Actor").
+   */
   cardCategory?: string;
   sx?: SxProps<Theme>;
 }
+
+/** Year and provenance line for a result card. */
+const cardLabel = (result: EnrichedMedia): string | undefined => {
+  const parts = [result.media.year, result.media.matchedVia].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+};
 
 /**
  * SearchResultsGrid
@@ -43,7 +53,7 @@ const SearchResultsGrid: React.FC<SearchResultsGridProps> = ({
           id: result.media.id,
           name: result.media.mediaName,
           imageUrl: result.media.image_url,
-          category: cardCategory,
+          category: cardCategory ?? cardLabel(result),
         },
         statusBadge: buildStatusBadgeFromEnriched(result.status),
       })),

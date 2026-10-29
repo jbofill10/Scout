@@ -77,6 +77,15 @@ type Media struct {
 	// IMDb id ("tt1234567") for the show or movie, from the TVDB extended
 	// record's remote ids. Used to look up subtitles; empty when TVDB has none.
 	ImdbID string `json:"imdbId,omitempty"`
+	// Director, as TVDB's search index lists it (movies only)
+	Director string `json:"director,omitempty"`
+	// Production studios (movies only)
+	Studios []string `json:"studios,omitempty"`
+	// Original network (series only)
+	Network string `json:"network,omitempty"`
+	// Why a search returned this item when it was not a title match, e.g.
+	// "Mia Goth · Actor". Empty for ordinary title hits.
+	MatchedVia string `json:"matchedVia,omitempty"`
 	// Information about series, such as episodes, date aired, etc.
 	Metadata TVDBSeriesMetadata `json:"metadata"`
 }
@@ -120,6 +129,78 @@ type TVDBSearchItem struct {
 	Aliases []string `json:"aliases"`
 	// Genre names; TVDB returns these for movie hits only
 	Genres []string `json:"genres"`
+	// Director; movie hits only
+	Director string `json:"director"`
+	// Production studios; movie hits only
+	Studios []string `json:"studios"`
+	// Original network; series hits only
+	Network string `json:"network"`
+	// Country of origin, e.g. "usa"
+	Country string `json:"country"`
+	// Primary language, e.g. "eng"
+	PrimaryLanguage string `json:"primary_language"`
+	// TVDB's numeric id as a string, "154561". Person hits carry it too.
+	TvdbID string `json:"tvdb_id"`
+}
+
+// TVDBPeopleExtendedResponse wraps /people/{id}/extended.
+type TVDBPeopleExtendedResponse struct {
+	Data TVDBPeopleExtended `json:"data"`
+}
+
+// TVDBPeopleExtended is a person with every credit TVDB has for them.
+type TVDBPeopleExtended struct {
+	Id         int             `json:"id"`
+	Name       string          `json:"name"`
+	Image      string          `json:"image"`
+	Characters []TVDBCharacter `json:"characters"`
+}
+
+// TVDBCharacter is one credit: a role on a series or a movie. Exactly one of
+// SeriesId and MovieId is set; the matching record carries the title's name,
+// poster and year so credits can be listed without a lookup per title.
+type TVDBCharacter struct {
+	Id         int             `json:"id"`
+	Name       string          `json:"name"`
+	PeopleType string          `json:"peopleType"` // "Actor", "Director", "Writer", "Guest Star", ...
+	SeriesId   *int            `json:"seriesId"`
+	MovieId    *int            `json:"movieId"`
+	Series     *TVDBRecordInfo `json:"series"`
+	Movie      *TVDBRecordInfo `json:"movie"`
+	IsFeatured bool            `json:"isFeatured"`
+	Sort       int             `json:"sort"`
+}
+
+// TVDBRecordInfo is the short form TVDB embeds for a linked series or movie.
+type TVDBRecordInfo struct {
+	Name  string `json:"name"`
+	Image string `json:"image"`
+	Year  string `json:"year"`
+}
+
+// TVDBRemoteIDSearchResponse wraps /search/remoteid/{id}: a list of hits, each
+// holding the matched record under the key for its type.
+type TVDBRemoteIDSearchResponse struct {
+	Data []TVDBRemoteIDHit `json:"data"`
+}
+
+// TVDBRemoteIDHit is one remote-id match. Only the field for the record's
+// type is set; people, episodes and companies can match too and are ignored.
+type TVDBRemoteIDHit struct {
+	Movie  *TVDBBaseRecord `json:"movie"`
+	Series *TVDBBaseRecord `json:"series"`
+}
+
+// TVDBBaseRecord is the short series/movie record TVDB returns from
+// /series/{id}, /movies/{id} and remote-id lookups.
+type TVDBBaseRecord struct {
+	Id     int     `json:"id"`
+	Name   string  `json:"name"`
+	Slug   string  `json:"slug"`
+	Image  string  `json:"image"`
+	Year   string  `json:"year"`
+	Status Status  `json:"status"`
+	Score  float64 `json:"score"`
 }
 
 type Episode struct {

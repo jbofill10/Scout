@@ -1,17 +1,20 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import Box from "@mui/material/Box";
+import Chip from "@mui/material/Chip";
 import Container from "@mui/material/Container";
 import InputAdornment from "@mui/material/InputAdornment";
 import LinearProgress from "@mui/material/LinearProgress";
 import TextField from "@mui/material/TextField";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
 import CircularProgress from "@mui/material/CircularProgress";
 import Slide from "@mui/material/Slide";
 import CloseIcon from "@mui/icons-material/Close";
 import ErrorOutlineRoundedIcon from "@mui/icons-material/ErrorOutlineRounded";
+import HelpOutlineRoundedIcon from "@mui/icons-material/HelpOutlineRounded";
 import SearchIcon from "@mui/icons-material/Search";
 import SearchOffOutlinedIcon from "@mui/icons-material/SearchOffOutlined";
 import Tv from "@mui/icons-material/Tv";
@@ -23,6 +26,14 @@ import type { EnrichedMedia, ShowStatus } from "../../types/MediaStatus";
 import { logError } from "../../lib/logger";
 import { useDownloadRequest } from "../../hooks/useDownloadRequest";
 import { useEnrichedSearch } from "../../hooks/useEnrichedSearch";
+import type { SearchMediaType } from "../../hooks/useEnrichedSearch";
+import {
+  SEARCH_EXAMPLES,
+  filterLabel,
+  needsTitle,
+  withoutFilter,
+} from "../../utils/searchQuery";
+import type { SearchQuery } from "../../utils/searchQuery";
 
 interface SearchDropdownProps {
   isOpen: boolean;
@@ -30,6 +41,60 @@ interface SearchDropdownProps {
 }
 
 const SEARCH_DEBOUNCE_MS = 300;
+
+const SYNTAX_HELP = [
+  ["X (2022) or X 2022", "title and year"],
+  ["actor:Mia Goth", "everything they have starred in"],
+  ["director:Ti West", "a director's work"],
+  ["person:Ti West", "any credit, in any role"],
+  ["studio:A24 or network:HBO", "where it was made or aired"],
+  ["country:deu lang:deu", "origin and language"],
+  ["tt13560574 or an IMDb link", "one exact title"],
+] as const;
+
+/**
+ * What to say when a search comes back empty, given how the backend read it.
+ */
+const noResultsCopy = (
+  term: string,
+  query: SearchQuery | null,
+  mediaType: SearchMediaType,
+): { title: string; detail: string } => {
+  const kind = mediaType === "movie" ? "movie" : "TV show";
+  const otherTab = mediaType === "movie" ? "TV Shows" : "Movies";
+
+  if (query && needsTitle(query)) {
+    const filters = query.filters
+      .map((filter) => `${filterLabel(filter.key).toLowerCase()} ${filter.value}`)
+      .join(", ");
+    return {
+      title: "Add a title to go with that",
+      detail: `A ${filters} filter needs a title to search for, or a person to look up.`,
+    };
+  }
+  if (query?.imdbId) {
+    return {
+      title: `No ${kind} has IMDb id ${query.imdbId}`,
+      detail: `If it is a ${otherTab.toLowerCase().replace(/s$/, "")}, switch to the ${otherTab} tab.`,
+    };
+  }
+  if (query?.person) {
+    return {
+      title: `No ${kind}s found for ${query.person}`,
+      detail: `Check the spelling, or try the ${otherTab} tab.`,
+    };
+  }
+  if (query?.director) {
+    return {
+      title: `No ${kind}s directed by ${query.director}`,
+      detail: `Check the spelling, or try the ${otherTab} tab.`,
+    };
+  }
+  return {
+    title: `No results for "${term}"`,
+    detail: `Try a different spelling, or switch between TV Shows and Movies.`,
+  };
+};
 
 /**
  * SearchDropdown Component
@@ -41,6 +106,9 @@ const SEARCH_DEBOUNCE_MS = 300;
  * - Media type toggle (TV Shows / Movies)
  * - Debounced search backed by TanStack Query (cached, cancellable, race-free)
  * - Previous results stay visible while a refined term loads
+ * - Filters typed into the box (a year, actor:, director:, studio:, an IMDb
+ *   link) are shown back as removable chips once the backend has read them
+ * - Example searches on the empty screen; syntax help behind the ? icon
  * - Opens MediaStatusDialog on result click
  * - Closes on backdrop click or ESC key
  * - Fills the screen on phones, with the media type toggle on its own row
@@ -49,7 +117,7 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
   const theme = useTheme();
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
-  const [mediaType, setMediaType] = useState<"series" | "movie">("series");
+  const [mediaType, setMediaType] = useState<SearchMediaType>("series");
   const [statusDialogOpen, setStatusDialogOpen] = useState(false);
   const [selectedShowStatus, setSelectedShowStatus] = useState<ShowStatus | null>(null);
   const [selectedShowInfo, setSelectedShowInfo] = useState<{
@@ -63,6 +131,7 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
 
   const {
     results: searchResults,
+    query: parsedQuery,
     isFetching,
     isPlaceholderData,
     error: searchError,
@@ -142,6 +211,14 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
     );
   };
 
+  // Typing a new query right away, e.g. from an example or a removed chip
+  const applyTerm = (term: string, nextMediaType?: SearchMediaType) => {
+    if (nextMediaType) setMediaType(nextMediaType);
+    setSearchTerm(term);
+    setDebouncedSearchTerm(term);
+    searchInputRef.current?.focus();
+  };
+
   // Handle ESC key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -162,16 +239,21 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
   const isDebouncing = searchTerm.trim() !== debouncedSearchTerm.trim();
   const isBusy = isFetching || isDebouncing;
   const hasResults = searchResults.length > 0;
+  // Only describe the interpretation of the term currently in the box
+  const interpretation =
+    parsedQuery && !isDebouncing && !isPlaceholderData && parsedQuery.filters.length > 0
+      ? parsedQuery
+      : null;
 
   // Centered message block reused by the non-result states
-  const message = (icon: React.ReactNode, title: string, detail?: string) => (
+  const message = (icon: React.ReactNode, title: string, detail?: React.ReactNode) => (
     <Box
       sx={{
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         gap: 1,
-        py: 10,
+        py: { xs: 6, sm: 10 },
         textAlign: "center",
       }}
     >
@@ -180,12 +262,29 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
         {title}
       </Typography>
       {detail && (
-        <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
+        <Typography variant="body2" component="div" sx={{ color: theme.palette.text.secondary }}>
           {detail}
         </Typography>
       )}
     </Box>
   );
+
+  const syntaxTooltip = (
+    <Box component="dl" sx={{ m: 0, display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 1.5, rowGap: 0.5 }}>
+      {SYNTAX_HELP.map(([example, meaning]) => (
+        <React.Fragment key={example}>
+          <Box component="dt" sx={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: "0.75rem" }}>
+            {example}
+          </Box>
+          <Box component="dd" sx={{ m: 0, fontSize: "0.75rem", opacity: 0.85 }}>
+            {meaning}
+          </Box>
+        </React.Fragment>
+      ))}
+    </Box>
+  );
+
+  const emptyCopy = noResultsCopy(searchTerm.trim(), parsedQuery, mediaType);
 
   return (
     <>
@@ -243,7 +342,7 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
                 <TextField
                   inputRef={searchInputRef}
                   fullWidth
-                  placeholder="Search for shows or movies..."
+                  placeholder="Search titles, people, years… e.g. X 2022 or actor:Mia Goth"
                   variant="outlined"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
@@ -255,17 +354,25 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
                           <SearchIcon sx={{ color: theme.palette.text.secondary }} />
                         </InputAdornment>
                       ),
-                      endAdornment: hasQuery ? (
+                      endAdornment: (
                         <InputAdornment position="end">
-                          <IconButton
-                            size="small"
-                            onClick={() => setSearchTerm("")}
-                            aria-label="Clear search"
-                          >
-                            <CloseIcon fontSize="small" />
-                          </IconButton>
+                          {hasQuery ? (
+                            <IconButton
+                              size="small"
+                              onClick={() => setSearchTerm("")}
+                              aria-label="Clear search"
+                            >
+                              <CloseIcon fontSize="small" />
+                            </IconButton>
+                          ) : (
+                            <Tooltip title={syntaxTooltip} placement="bottom-end" enterTouchDelay={0} arrow>
+                              <IconButton size="small" aria-label="Search syntax help">
+                                <HelpOutlineRoundedIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
                         </InputAdornment>
-                      ) : undefined,
+                      ),
                     },
                   }}
                   sx={{
@@ -302,6 +409,53 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
                   <CloseIcon />
                 </IconButton>
               </Box>
+
+              {/* How the backend read the term: title plus removable filter chips */}
+              {interpretation && (
+                <Box
+                  role="status"
+                  aria-label="Active search filters"
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: 1,
+                    mt: 1.5,
+                  }}
+                >
+                  <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
+                    {interpretation.title ? (
+                      <>
+                        Searching for{" "}
+                        <Box component="span" sx={{ color: theme.palette.text.primary, fontWeight: 600 }}>
+                          {interpretation.title}
+                        </Box>
+                      </>
+                    ) : (
+                      "Searching"
+                    )}
+                  </Typography>
+                  {interpretation.filters.map((filter) => (
+                    <Chip
+                      key={`${filter.key}:${filter.value}`}
+                      size="small"
+                      variant="outlined"
+                      color="primary"
+                      label={
+                        <>
+                          <Box component="span" sx={{ opacity: 0.75 }}>
+                            {filterLabel(filter.key)}
+                          </Box>
+                          {" "}
+                          {filter.value}
+                        </>
+                      }
+                      onDelete={() => applyTerm(withoutFilter(interpretation, filter))}
+                      deleteIcon={<CloseIcon />}
+                    />
+                  ))}
+                </Box>
+              )}
             </Container>
           </Box>
 
@@ -327,8 +481,8 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
               !searchError &&
               message(
                 <SearchOffOutlinedIcon sx={{ fontSize: 34, color: theme.palette.text.disabled }} />,
-                `No results for "${searchTerm}"`,
-                "Try a different spelling, or switch between TV Shows and Movies.",
+                emptyCopy.title,
+                emptyCopy.detail,
               )}
 
             {!isBusy &&
@@ -357,7 +511,36 @@ const SearchDropdown: React.FC<SearchDropdownProps> = ({ isOpen, onClose }) => {
               message(
                 <SearchIcon sx={{ fontSize: 34, color: theme.palette.text.disabled }} />,
                 "Start typing to search",
-                "Scout looks across TVDB for anything you want to add to your library.",
+                <>
+                  Titles, years, actors, directors, studios, networks or an IMDb link. Try one:
+                  <Box
+                    sx={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      justifyContent: "center",
+                      gap: 1,
+                      mt: 2,
+                      maxWidth: 640,
+                      mx: "auto",
+                    }}
+                  >
+                    {SEARCH_EXAMPLES.map((example) => (
+                      <Tooltip key={example.text} title={example.hint} arrow>
+                        <Chip
+                          label={example.text}
+                          variant="outlined"
+                          onClick={() => applyTerm(example.text, example.mediaType)}
+                          sx={{
+                            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                            fontSize: "0.8125rem",
+                            borderColor: alpha(theme.palette.primary.light, 0.35),
+                            "&:hover": { borderColor: theme.palette.primary.light },
+                          }}
+                        />
+                      </Tooltip>
+                    ))}
+                  </Box>
+                </>,
               )}
           </Container>
         </Box>
