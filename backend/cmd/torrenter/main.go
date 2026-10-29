@@ -137,6 +137,11 @@ func main() {
 
 	// Setup routes
 	r := gin.Default()
+	// Only the compose network sits in front of this service, so only it may
+	// set X-Forwarded-For. 172.16.0.0/12 covers Docker's default bridge pools.
+	if err := r.SetTrustedProxies([]string{"172.16.0.0/12"}); err != nil {
+		logger.Error("Failed to set trusted proxies", "error", err)
+	}
 	r.Use(otelgin.Middleware("torrenter"))
 	r.Use(RecoveryMiddleware(logger)) // Custom recovery middleware with trace logging
 	r.GET("/health", func(c *gin.Context) {

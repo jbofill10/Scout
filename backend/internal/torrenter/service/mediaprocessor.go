@@ -109,7 +109,7 @@ func (mp *MediaProcessSvc) ProcessDownloadedTorrent(ctx context.Context, media *
 	// Create DownloadRequest from SearchStrategy
 	req := &models.DownloadRequest{
 		MediaName:   media.Req.MediaName,
-		ReleaseYear: media.Req.ReleaseYear, // TODO: add to SearchStrategy
+		ReleaseYear: media.Req.ReleaseYear,
 	}
 	if media.Req.IsMovie {
 		req.MediaType = "movie"

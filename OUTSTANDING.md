@@ -10,42 +10,7 @@ Each item includes a command to re-check it, so nothing here has to be taken on 
 
 ---
 
-## 1. `.env.template` is gitignored, so a fresh clone cannot follow the setup
-
-**Severity: high — new-machine setup is broken.**
-
-`README.md` (lines 35 and 108), `CLAUDE.md`, and `DEPLOYMENT.md` all instruct:
-
-```bash
-cp .env.template .env
-```
-
-But `.gitignore:22` has a broad `.env.*` rule that also catches `.env.template`, so the
-file has never been committed. On a fresh clone there is nothing to copy and the
-documented setup path dead-ends.
-
-```bash
-git check-ignore -v .env.template     # -> .gitignore:22:.env.*
-git ls-files .env.template            # -> empty
-```
-
-**Fix:** negate the rule and commit the template.
-
-```gitignore
-.env.*
-!.env.template
-```
-
-**Before committing it, read the local `.env.template` in full and confirm every value is
-a `CHANGE_ME` placeholder.** It is currently an untracked local file, so it may have
-accumulated real values. This is the reason the fix was not applied automatically.
-
-Note the local copy was corrected to say `TVDB_PIN` (see item 2) but that change is
-invisible to git while the file stays ignored.
-
----
-
-## 2. Archive the deployed openspec change
+## 1. Archive the deployed openspec change
 
 `openspec/changes/add-download-request-feedback/` is at **21/21 tasks complete** and has
 been deployed. Per `openspec/AGENTS.md` it should now be archived so it stops appearing
@@ -66,88 +31,7 @@ archiving it.
 
 ---
 
-## 3. Gin trusts all proxies in every service
-
-**Severity: medium — affects the correctness of client IPs, and gin flags it itself.**
-
-All three Go services call `gin.Default()` without ever calling `SetTrustedProxies`, so
-gin trusts `X-Forwarded-For` from any source. Everything sits behind the nginx container,
-so the practical exposure is limited to the LAN, but any client IP used for logging or
-rate limiting is currently attacker-settable.
-
-```bash
-grep -rn "SetTrustedProxies" backend/ --include=*.go        # -> no matches
-docker compose logs torrenter | grep "trusted all proxies"  # -> warning present
-```
-
-**Fix:** in each of `backend/cmd/{webserver,torrenter,tvdb-proxy}/main.go`, restrict to the
-compose network after creating the router:
-
-```go
-if err := r.SetTrustedProxies([]string{"172.19.0.0/16"}); err != nil {
-    logger.Error("Failed to set trusted proxies", "error", err)
-}
-```
-
-`172.19.0.0/16` is the current `scout_scout-network` subnet. Docker assigns it
-dynamically, so re-confirm before relying on it, and prefer the wider `172.16.0.0/12`
-if you would rather not have the value drift:
-
-```bash
-docker network inspect scout_scout-network --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
-```
-
----
-
-## 4. `fmt.Printf` bypasses structured logging in tvdb-proxy
-
-**Severity: low — one line, but it breaks the tracing contract.**
-
-`backend/cmd/tvdb-proxy/main.go:627` writes to stdout directly:
-
-```go
-fmt.Printf("Fetching extended information for media ID: %s, type: %s\n", mediaId, mediaType)
-```
-
-`OBSERVABILITY.md` requires context-aware logging so entries carry `trace_id`/`span_id` and
-reach the collector. This line is invisible in SigNoz and cannot be correlated to a request.
-A `ctx` is available on the very next line.
-
-```bash
-grep -rn "fmt.Print" backend/ --include=*.go | grep -v _test
-```
-
-**Fix:**
-
-```go
-ctx := c.Request.Context()
-logger.InfoContext(ctx, "Fetching extended information", "media_id", mediaId, "media_type", mediaType)
-```
-
-Two sibling debug logs (`"Is the URL here?"`, `"Is URL here?"`) were already removed in
-#27/#28; this is the last one of that family.
-
----
-
-## 5. `ReleaseYear` is not carried on `SearchStrategy`
-
-`backend/internal/torrenter/service/mediaprocessor.go:106`:
-
-```go
-ReleaseYear: media.Req.ReleaseYear, // TODO: add to SearchStrategy
-```
-
-The processor reads the release year off the original request rather than the search
-strategy that actually produced the download. For movies the target directory is
-`{MovieName} ({Year})/`, so if the two ever disagree the file lands in a differently-named
-folder than Plex expects.
-
-Worth pairing with the `IsMovie` cleanup in #26, which fixed the same class of problem
-(the processor inferring things instead of being told them).
-
----
-
-## 6. The UI ships as one 800 KB chunk
+## 2. The UI ships as one 800 KB chunk
 
 Vite warns on every build:
 
@@ -169,22 +53,7 @@ set `build.rollupOptions.output.manualChunks` to split the vendor bundle.
 
 ---
 
-## 7. `MovieDownloadHistory` is dead schema
-
-The table is created in `sql/setup-postgres.sql` but nothing reads or writes it — shows
-have `ShowDownloadHistory`, movies have no equivalent in code.
-
-```bash
-grep -rn "MovieDownloadHistory" backend/ --include=*.go   # -> no matches
-```
-
-`CLAUDE.md` already describes it as "currently unused (future feature)", so this is a
-deliberate placeholder rather than a bug. Either wire it up alongside the movie download
-path or drop it, so the schema stops implying a feature that does not exist.
-
----
-
-## 8. `fix/torrent-download-scheduling-bugs` can be deleted
+## 3. `fix/torrent-download-scheduling-bugs` can be deleted
 
 The branch is fully triaged. Every commit is either merged into `main` (by content, via
 cherry-pick — the SHAs differ, so git still reports them as unmerged) or deliberately

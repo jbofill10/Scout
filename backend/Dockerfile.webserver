@@ -23,7 +23,7 @@ COPY internal/webserver/ ./internal/webserver/
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w" -o webserver ./cmd/webserver
 
 # Runtime stage
-FROM alpine:3.19
+FROM alpine:3.22
 
 # Runtime deps
 RUN apk --no-cache add ca-certificates tzdata wget
