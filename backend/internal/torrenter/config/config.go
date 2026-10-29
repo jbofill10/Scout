@@ -67,6 +67,19 @@ func Load() (models.TorrenterConf, error) {
 		return cfg, fmt.Errorf("invalid PLEX_SHOW_SECTIONS value: %s", showSections)
 	}
 
+	// How the database mirror of Plex is kept current after the start-up sync.
+	syncDelay, err := parseNonNegativeDuration("PLEX_SYNC_DELAY", "2m")
+	if err != nil {
+		return cfg, err
+	}
+	cfg.Plex.SyncDelay = syncDelay
+
+	syncInterval, err := parseNonNegativeDuration("PLEX_SYNC_INTERVAL", "30m")
+	if err != nil {
+		return cfg, err
+	}
+	cfg.Plex.SyncInterval = syncInterval
+
 	// Load UI config (default for docker-compose)
 	cfg.Ui.Endpoint = getEnv("UI_ENDPOINT", "ws://webserver:22920/status")
 
@@ -106,6 +119,16 @@ func Load() (models.TorrenterConf, error) {
 
 // splitList parses a comma-separated list, dropping blanks and surrounding
 // whitespace, so "en, es," becomes ["en", "es"].
+// parseNonNegativeDuration reads a duration env var, rejecting negatives.
+func parseNonNegativeDuration(key, defaultValue string) (time.Duration, error) {
+	value := getEnv(key, defaultValue)
+	d, err := time.ParseDuration(value)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("invalid %s value: %s", key, value)
+	}
+	return d, nil
+}
+
 func splitList(value string) []string {
 	var out []string
 	for _, part := range strings.Split(value, ",") {

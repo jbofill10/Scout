@@ -81,7 +81,7 @@ Example flow: `DownloadHandler` → `DownloadInteractor` → `QbittHandler`/`Rep
 
 **Key Patterns:**
 - **Scheduling**: `Scheduler.Start()` goroutine queries `ScheduledDownloads` table, sends due episodes to media queue
-- **Plex Integration**: Syncs library on startup, checks `EpisodeExists()` before downloading to avoid duplicates
+- **Plex Integration**: Syncs library on startup, after downloads land and on a timer; checks `EpisodeExists()` before downloading to avoid duplicates
 - **Error Handling**: Download failures logged to `ShowDownloadHistory`, duplicates return `ErrDuplicateScheduled`
 - **Observability**: OpenTelemetry tracing with trace-correlated structured logging
 

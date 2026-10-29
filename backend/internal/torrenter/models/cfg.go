@@ -22,6 +22,10 @@ type PlexCfg struct {
 	ShowSections  int
 	Host          string
 	Key           string
+	// SyncDelay is the quiet period after a download lands before the library
+	// mirror is re-read from Plex; SyncInterval is the periodic re-read (0 = off).
+	SyncDelay    time.Duration
+	SyncInterval time.Duration
 }
 
 type RefreshCfg struct {

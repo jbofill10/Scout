@@ -118,9 +118,12 @@ func main() {
 
 	mp := service.NewMediaProcessSvc(logger, repo, fs, subs)
 	plex := service.NewPlexHandler(repo, logger, &cfg.Plex, mp)
+	// Keeps the database mirror of Plex current: at start, after downloads
+	// land, and on a timer.
+	plexSync := service.NewPlexSyncScheduler(plex, cfg.Plex.SyncDelay, cfg.Plex.SyncInterval, logger)
 
 	// Initialize interactors
-	downloadInteractor := interactors.NewDownloadInteractor(qbitt, mp, repo, logger)
+	downloadInteractor := interactors.NewDownloadInteractor(qbitt, mp, repo, plexSync, logger)
 	mediaInteractor := interactors.NewMediaInteractor(repo)
 	statusInteractor := interactors.NewStatusInteractor(repo, logger)
 	libraryInteractor := interactors.NewLibraryInteractor(repo, logger)
@@ -163,17 +166,11 @@ func main() {
 	// Plex proxy routes
 	r.GET("/plex/thumb", plexProxyHandler.ProxyThumb)
 
-	// Sync Plex library on startup (non-blocking, retries once on failure)
-	logger.Info("Starting Plex library sync in background")
-	go func() {
-		if err := plex.SyncPlexLibrary(context.Background()); err != nil {
-			logger.Error("Plex library sync failed, retrying in 1 minute", "error", err)
-			time.Sleep(1 * time.Minute)
-			if err := plex.SyncPlexLibrary(context.Background()); err != nil {
-				logger.Error("Plex library sync retry failed", "error", err)
-			}
-		}
-	}()
+	// Mirror the Plex library into the database (non-blocking): once now, then
+	// after each download lands and periodically.
+	logger.Info("Starting Plex library sync scheduler",
+		"sync_delay", cfg.Plex.SyncDelay.String(), "sync_interval", cfg.Plex.SyncInterval.String())
+	go plexSync.Run(context.Background())
 
 	// Resume monitors for torrents that were still downloading when this process
 	// last stopped. Anything that finished during the downtime is picked up on
