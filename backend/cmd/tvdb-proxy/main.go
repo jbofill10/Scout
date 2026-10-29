@@ -201,6 +201,11 @@ func main() {
 	}
 
 	router := gin.Default()
+	// Only the compose network sits in front of this service, so only it may
+	// set X-Forwarded-For. 172.16.0.0/12 covers Docker's default bridge pools.
+	if err := router.SetTrustedProxies([]string{"172.16.0.0/12"}); err != nil {
+		logger.Error("Failed to set trusted proxies", "error", err)
+	}
 	router.Use(otelgin.Middleware("tvdb-proxy"))
 
 	router.GET("/health", func(c *gin.Context) {
@@ -656,9 +661,8 @@ func fetchExtendedInformation(ctx context.Context, mediaId string, mediaType str
 func getExtendedInformation(c *gin.Context) {
 	mediaId := c.Param("id")
 	mediaType := c.Query("mediaType")
-	fmt.Printf("Fetching extended information for media ID: %s, type: %s\n", mediaId, mediaType)
-
 	ctx := c.Request.Context()
+	logger.InfoContext(ctx, "Fetching extended information", "media_id", mediaId, "media_type", mediaType)
 
 	info, err := fetchExtendedInformation(ctx, mediaId, mediaType)
 	if err != nil {

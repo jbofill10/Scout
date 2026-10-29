@@ -169,23 +169,6 @@ CREATE INDEX IF NOT EXISTS idx_show_download_history_span
 ON ShowDownloadHistory(span_id)
 WHERE span_id IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS MovieDownloadHistory (
-    id SERIAL PRIMARY KEY,
-    mediaTitle TEXT NOT NULL,
-    year INTEGER,
-    downloadDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    reason TEXT,
-    status TEXT NOT NULL,
-    trace_id TEXT,
-    span_id TEXT
-);
-
--- Index for querying all movies from a specific download request
-CREATE INDEX IF NOT EXISTS idx_movie_download_history_trace
-ON MovieDownloadHistory(trace_id)
-WHERE trace_id IS NOT NULL;
-
--- Index for finding a specific movie's span in traces
 CREATE TABLE IF NOT EXISTS UploaderPreferences (
     id SERIAL PRIMARY KEY,
     mediaType TEXT NOT NULL,

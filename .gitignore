@@ -20,6 +20,7 @@ vendor/
 **/*.toml
 *.env
 .env.*
+!.env.template
 
 # Local development configs
 config.toml
