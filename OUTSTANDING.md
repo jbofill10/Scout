@@ -10,50 +10,7 @@ Each item includes a command to re-check it, so nothing here has to be taken on 
 
 ---
 
-## 1. Archive the deployed openspec change
-
-`openspec/changes/add-download-request-feedback/` is at **21/21 tasks complete** and has
-been deployed. Per `openspec/AGENTS.md` it should now be archived so it stops appearing
-as active work.
-
-```bash
-grep -c '^- \[ \]' openspec/changes/add-download-request-feedback/tasks.md   # -> 0
-ls openspec/changes/ | grep -v archive
-```
-
-**Fix:** run the archive flow (`/openspec:archive`, or `openspec archive
-add-download-request-feedback`), which moves it under `openspec/changes/archive/` and
-folds the deltas into `openspec/specs/`.
-
-`add-netflix-style-ui-overhaul` is also still listed as active and is worth a look, but it
-has a large task list that was not audited — check whether it is genuinely finished before
-archiving it.
-
----
-
-## 2. The UI ships as one 800 KB chunk
-
-Vite warns on every build:
-
-```
-dist/assets/index-*.js   800.67 kB │ gzip: 244.79 kB
-(!) Some chunks are larger than 500 kB after minification.
-```
-
-Everything — all pages, MUI, TanStack Query — is in a single bundle, so the first paint
-waits on code for pages the user may never open. The `Library` and `Activity` pages added
-in #17 and #25 are both good candidates for route-level splitting.
-
-```bash
-cd ui && npm run build
-```
-
-**Fix:** lazy-load the route components with `React.lazy` + `Suspense` in `App.tsx`, and/or
-set `build.rollupOptions.output.manualChunks` to split the vendor bundle.
-
----
-
-## 3. `fix/torrent-download-scheduling-bugs` can be deleted
+## 1. `fix/torrent-download-scheduling-bugs` can be deleted
 
 The branch is fully triaged. Every commit is either merged into `main` (by content, via
 cherry-pick — the SHAs differ, so git still reports them as unmerged) or deliberately
