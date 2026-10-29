@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
+	"github.com/jbofill10/scout/backend/pkg/search"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -29,8 +29,10 @@ func NewTVDBProxyClient(host string) *TVDBProxyClient {
 	}
 }
 
-func (c *TVDBProxyClient) Search(ctx context.Context, mediaType, mediaName string) ([]tvdb.Media, error) {
-	searchURL := fmt.Sprintf("http://%s/series?mediaType=%s&mediaName=%s", c.Host, mediaType, url.QueryEscape(mediaName))
+// Search asks tvdb-proxy for media matching a parsed query: the title plus any
+// year, person, director, studio/network, country, language or IMDb filters.
+func (c *TVDBProxyClient) Search(ctx context.Context, mediaType string, query search.Query) ([]tvdb.Media, error) {
+	searchURL := fmt.Sprintf("http://%s/series?%s", c.Host, query.ProxyParams(mediaType).Encode())
 	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 	if err != nil {
 		return nil, err
@@ -44,10 +46,16 @@ func (c *TVDBProxyClient) Search(ctx context.Context, mediaType, mediaName strin
 			slog.WarnContext(ctx, "Failed to close response body", "error", cerr)
 		}
 	}()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("tvdb-proxy search returned status %d", resp.StatusCode)
+	}
 	var results []tvdb.Media
 	decoder := json.NewDecoder(resp.Body)
 	if err := decoder.Decode(&results); err != nil {
 		return nil, err
+	}
+	if results == nil {
+		results = []tvdb.Media{}
 	}
 	return results, nil
 }

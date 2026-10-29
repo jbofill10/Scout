@@ -1,7 +1,15 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { EnrichedMedia } from "../types/MediaStatus";
+import type { SearchQuery } from "../utils/searchQuery";
 
 export type SearchMediaType = "series" | "movie";
+
+/** Body of GET /api/search/enriched. */
+export interface EnrichedSearchResponse {
+  results: EnrichedMedia[];
+  /** How the backend read the text: title plus any filters it found. */
+  query: SearchQuery;
+}
 
 /**
  * Fetches enriched search results (media + library status) from the webserver.
@@ -12,13 +20,14 @@ export async function fetchEnrichedSearch(
   query: string,
   mediaType: SearchMediaType,
   signal?: AbortSignal,
-): Promise<EnrichedMedia[]> {
+): Promise<EnrichedSearchResponse> {
   const params = new URLSearchParams({ query, media_type: mediaType });
   const response = await fetch(`/api/search/enriched?${params}`, { signal });
   if (!response.ok) {
     throw new Error(`Search failed: ${response.status} ${response.statusText}`);
   }
-  return response.json();
+  const body: EnrichedSearchResponse = await response.json();
+  return { results: body.results ?? [], query: body.query };
 }
 
 /**
@@ -31,12 +40,15 @@ export async function fetchEnrichedSearch(
  * - cancellation of abandoned requests
  * - a cache, so retyping or toggling back to a recent term is instant
  * - keepPreviousData, so refining a term does not flash an empty grid
+ *
+ * The text may carry filters ("X 2022", "actor:Mia Goth"); the backend parses
+ * them and reports its reading back as `query`, so the UI can show chips.
  */
 export function useEnrichedSearch(query: string, mediaType: SearchMediaType) {
   const term = query.trim();
   const enabled = term.length > 0;
 
-  const result = useQuery<EnrichedMedia[], Error>({
+  const result = useQuery<EnrichedSearchResponse, Error>({
     queryKey: ["search", mediaType, term.toLowerCase()],
     queryFn: ({ signal }) => fetchEnrichedSearch(term, mediaType, signal),
     enabled,
@@ -46,7 +58,9 @@ export function useEnrichedSearch(query: string, mediaType: SearchMediaType) {
 
   return {
     /** Empty while there is no term, even if an older result is cached. */
-    results: enabled ? (result.data ?? []) : [],
+    results: enabled ? (result.data?.results ?? []) : [],
+    /** The backend's reading of the term, once a response has arrived. */
+    query: enabled ? (result.data?.query ?? null) : null,
     /** True whenever a request for the current key is in flight. */
     isFetching: enabled && result.isFetching,
     /** True while the grid is showing results from a previous term. */

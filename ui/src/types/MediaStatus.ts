@@ -100,6 +100,14 @@ export interface MediaRecord {
   originalCountry?: string;
   originalLanguage?: string;
   score?: number;
+  /** Director as TVDB's search index lists it (movies) */
+  director?: string;
+  /** Production studios (movies) */
+  studios?: string[];
+  /** Original network (series) */
+  network?: string;
+  /** Why a search returned this when it was not a title match, e.g. "Mia Goth · Actor" */
+  matchedVia?: string;
   metadata?: {
     firstAired?: string;
     lastAired?: string;
