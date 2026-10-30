@@ -16,6 +16,7 @@ import (
 	"github.com/jbofill10/scout/backend/internal/webserver/interactors"
 	"github.com/jbofill10/scout/backend/internal/webserver/repository"
 	"github.com/jbofill10/scout/backend/internal/webserver/scheduler"
+	"github.com/jbofill10/scout/backend/pkg/dbmigrate"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
 	"github.com/gin-gonic/gin"
@@ -52,6 +53,12 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		logger.Error("Failed to load config", "error", err)
+		os.Exit(1)
+	}
+
+	// Bring the schema up to date before anything queries it.
+	if err := dbmigrate.RunWithConnStr(context.Background(), cfg.Database.ConnStr, logger); err != nil {
+		logger.Error("Failed to run database migrations", "error", err)
 		os.Exit(1)
 	}
 

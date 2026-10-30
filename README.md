@@ -191,7 +191,7 @@ Scout/
 │   ├── media/                    # TVDB data structures
 │   ├── status/                   # Download status types
 │   └── telemetry/                # OpenTelemetry tracing utilities
-├── sql/                          # Database setup and migration scripts
+├── sql/                          # Fresh-database bootstrap (setup-postgres.sql)
 ├── nginx/                        # Nginx reverse proxy configuration
 ├── docker-compose.yml            # Docker Compose orchestration
 ├── .env.template                 # Environment variables template

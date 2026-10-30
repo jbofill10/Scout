@@ -28,7 +28,18 @@ CREATE TABLE IF NOT EXISTS Notifications (
 
 -- Create indexes for efficient queries
 CREATE INDEX IF NOT EXISTS idx_notifications_tvdb_id ON Notifications(tvdb_id);
-CREATE INDEX IF NOT EXISTS idx_notifications_stage ON Notifications(stage);
+-- stage was dropped by 003; on a database that already ran 003 (or was built from
+-- setup-postgres.sql) the column is gone, so only index it when it exists.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'notifications' AND column_name = 'stage'
+    ) THEN
+        CREATE INDEX IF NOT EXISTS idx_notifications_stage ON Notifications(stage);
+    END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_notifications_status ON Notifications(status);
 CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON Notifications(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_is_read ON Notifications(is_read);

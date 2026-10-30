@@ -15,6 +15,7 @@ import (
 	"github.com/jbofill10/scout/backend/internal/torrenter/interactors"
 	"github.com/jbofill10/scout/backend/internal/torrenter/repository"
 	"github.com/jbofill10/scout/backend/internal/torrenter/service"
+	"github.com/jbofill10/scout/backend/pkg/dbmigrate"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
 	"github.com/gin-gonic/gin"
@@ -89,6 +90,11 @@ func main() {
 	dbPass := os.Getenv("DB_PASSWORD")
 	dbName := os.Getenv("DB_NAME")
 	connStr := fmt.Sprintf("host=%s port=5432 user=%s password=%s dbname=%s sslmode=disable", dbHost, dbUser, dbPass, dbName)
+
+	if err := dbmigrate.RunWithConnStr(context.Background(), connStr, logger); err != nil {
+		logger.Error("Failed to run database migrations", "error", err)
+		os.Exit(1)
+	}
 
 	repo, err := repository.NewRepo(logger, connStr)
 	if err != nil {
