@@ -44,6 +44,7 @@ import {
 } from "../hooks/useNotificationTargets";
 import { formatRelativeTime } from "../utils/downloadStage";
 import { formatBytes } from "../utils/formatBytes";
+import { describeAttempt, useRunUpgrades, useUpgradeAttempts, useUpgradeCandidates } from "../hooks/useUpgrades";
 
 /** A titled card holding one group of settings. */
 const SettingCard: React.FC<{ title: string; description: string; children: React.ReactNode }> = ({
@@ -306,6 +307,120 @@ const LibrarySyncSection: React.FC<{ view: SettingsView }> = ({ view }) => {
           Save
         </Button>
       </Box>
+    </SettingCard>
+  );
+};
+
+const UpgradesSection: React.FC<{ view: SettingsView }> = ({ view }) => {
+  const theme = useTheme();
+  const update = useUpdateSettings();
+  const candidates = useUpgradeCandidates();
+  const attempts = useUpgradeAttempts();
+  const run = useRunUpgrades();
+  const [cutoff, setCutoff] = useState(view.values.upgrade_cutoff);
+  const [batch, setBatch] = useState(String(view.values.upgrade_batch));
+  useEffect(() => setCutoff(view.values.upgrade_cutoff), [view.values.upgrade_cutoff]);
+  useEffect(() => setBatch(String(view.values.upgrade_batch)), [view.values.upgrade_batch]);
+  const batchNum = Number(batch);
+  const batchError = !Number.isInteger(batchNum) || batchNum < 1 || batchNum > 50 ? "Whole number between 1 and 50" : null;
+  const dirty = cutoff !== view.values.upgrade_cutoff || (!batchError && batchNum !== view.values.upgrade_batch);
+
+  const save = () => {
+    const body: Parameters<typeof update.mutate>[0] = {};
+    if (cutoff !== view.values.upgrade_cutoff) body.upgrade_cutoff = cutoff;
+    if (!batchError && batchNum !== view.values.upgrade_batch) body.upgrade_batch = batchNum;
+    update.mutate(body);
+  };
+
+  const statusColor = (status: string) =>
+    status === "completed" ? theme.palette.success.main : status === "downloading" || status === "searching" ? theme.palette.text.secondary : theme.palette.error.main;
+
+  return (
+    <SettingCard
+      title="Quality upgrades"
+      description="Replace library copies below a cutoff with better releases. Each pass searches a small batch so the indexers are not hammered; a miss is retried after a week and given up on after three tries. The old file is removed from the library folder when the better copy lands."
+    >
+      <FormControlLabel
+        control={<Switch checked={view.values.upgrades_enabled} disabled={update.isPending} onChange={(e) => update.mutate({ upgrades_enabled: e.target.checked })} />}
+        label="Upgrade copies below the cutoff automatically"
+      />
+      <DefaultHint
+        defaultLabel={view.defaults.upgrades_enabled ? "on" : "off"}
+        overridden={!!view.overridden.upgrades_enabled}
+        onReset={() => update.mutate({ reset: ["upgrades_enabled"] })}
+        busy={update.isPending}
+      />
+
+      <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mt: 2 }}>
+        <Box>
+          <FormControl size="small" sx={{ minWidth: 180 }}>
+            <InputLabel id="upgrade-cutoff-label">Upgrade up to</InputLabel>
+            <Select labelId="upgrade-cutoff-label" label="Upgrade up to" value={cutoff} onChange={(e) => setCutoff(e.target.value)}>
+              {view.options.min_quality.map((q) => (
+                <MenuItem key={q} value={q}>
+                  {q}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <DefaultHint
+            defaultLabel={view.defaults.upgrade_cutoff}
+            overridden={!!view.overridden.upgrade_cutoff}
+            onReset={() => update.mutate({ reset: ["upgrade_cutoff"] })}
+            busy={update.isPending}
+          />
+        </Box>
+        <Box>
+          <TextField
+            size="small"
+            label="Items per pass"
+            value={batch}
+            onChange={(e) => setBatch(e.target.value)}
+            error={!!batchError}
+            helperText={batchError ?? "A pass runs every 6 hours"}
+            slotProps={{ htmlInput: { inputMode: "numeric", pattern: "[0-9]*" } }}
+            sx={{ width: 160 }}
+          />
+          <DefaultHint
+            defaultLabel={String(view.defaults.upgrade_batch)}
+            overridden={!!view.overridden.upgrade_batch}
+            onReset={() => update.mutate({ reset: ["upgrade_batch"] })}
+            busy={update.isPending}
+          />
+        </Box>
+      </Box>
+      <Box sx={{ mt: 2, display: "flex", gap: 1.5, alignItems: "center", flexWrap: "wrap" }}>
+        <Button variant="contained" size="small" disabled={!dirty || !!batchError || update.isPending} onClick={save}>
+          Save
+        </Button>
+        <Button variant="outlined" size="small" disabled={!view.values.upgrades_enabled || run.isPending} onClick={() => run.mutate()}>
+          {run.isPending ? "Starting…" : "Run a pass now"}
+        </Button>
+        {candidates.data && (
+          <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
+            {candidates.data.total} item{candidates.data.total === 1 ? "" : "s"} below {candidates.data.cutoff}
+            {candidates.data.deferred > 0 ? ` · ${candidates.data.deferred} waiting on a retry or given up` : ""}
+          </Typography>
+        )}
+      </Box>
+
+      {attempts.data && attempts.data.length > 0 && (
+        <Box sx={{ mt: 2.5 }}>
+          <Typography variant="subtitle2" sx={{ color: theme.palette.text.secondary, mb: 0.75 }}>
+            Recent attempts
+          </Typography>
+          {attempts.data.slice(0, 8).map((a) => (
+            <Typography key={a.item_key} variant="caption" sx={{ display: "block", color: theme.palette.text.secondary }}>
+              {describeAttempt(a)} · {a.from_quality || "?"} → {a.to_quality} ·{" "}
+              <Box component="span" sx={{ color: statusColor(a.status) }}>
+                {a.status.replace("_", " ")}
+              </Box>
+              {a.reason ? ` (${a.reason})` : ""} · {formatRelativeTime(a.updated_at)}
+              {a.attempts > 1 ? ` · try ${a.attempts}` : ""}
+            </Typography>
+          ))}
+        </Box>
+      )}
     </SettingCard>
   );
 };
@@ -627,6 +742,7 @@ const Settings: React.FC = () => {
             <UploadersSection />
             <SubtitlesSection view={data} />
             <LibrarySyncSection view={data} />
+            <UpgradesSection view={data} />
             <IndexersSection view={data} />
             <NotificationsSection />
           </>

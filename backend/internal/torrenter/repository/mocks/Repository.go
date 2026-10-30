@@ -800,3 +800,81 @@ func (_m *Repository) GetMissingEpisodes(ctx context.Context) ([]library.Missing
 
 	return r0, r1
 }
+
+// GetUpgradeMedia provides a mock function with given fields: ctx
+func (_m *Repository) GetUpgradeMedia(ctx context.Context) ([]models.UpgradeMediaRow, error) {
+	ret := _m.Called(ctx)
+	var r0 []models.UpgradeMediaRow
+	if rf, ok := ret.Get(0).(func(context.Context) []models.UpgradeMediaRow); ok {
+		r0 = rf(ctx)
+	} else if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.UpgradeMediaRow)
+	}
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = rf(ctx)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// GetUpgradeAttempts provides a mock function with given fields: ctx
+func (_m *Repository) GetUpgradeAttempts(ctx context.Context) (map[string]models.UpgradeAttempt, error) {
+	ret := _m.Called(ctx)
+	var r0 map[string]models.UpgradeAttempt
+	if rf, ok := ret.Get(0).(func(context.Context) map[string]models.UpgradeAttempt); ok {
+		r0 = rf(ctx)
+	} else if ret.Get(0) != nil {
+		r0 = ret.Get(0).(map[string]models.UpgradeAttempt)
+	}
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = rf(ctx)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// ListUpgradeAttempts provides a mock function with given fields: ctx, limit
+func (_m *Repository) ListUpgradeAttempts(ctx context.Context, limit int) ([]models.UpgradeAttempt, error) {
+	ret := _m.Called(ctx, limit)
+	var r0 []models.UpgradeAttempt
+	if rf, ok := ret.Get(0).(func(context.Context, int) []models.UpgradeAttempt); ok {
+		r0 = rf(ctx, limit)
+	} else if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.UpgradeAttempt)
+	}
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context, int) error); ok {
+		r1 = rf(ctx, limit)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// RecordUpgradeAttempt provides a mock function with given fields: ctx, a
+func (_m *Repository) RecordUpgradeAttempt(ctx context.Context, a models.UpgradeAttempt) error {
+	ret := _m.Called(ctx, a)
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, models.UpgradeAttempt) error); ok {
+		r0 = rf(ctx, a)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// SetUpgradeAttemptStatus provides a mock function with given fields: ctx, itemKey, status, reason
+func (_m *Repository) SetUpgradeAttemptStatus(ctx context.Context, itemKey string, status string, reason string) error {
+	ret := _m.Called(ctx, itemKey, status, reason)
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string) error); ok {
+		r0 = rf(ctx, itemKey, status, reason)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}

@@ -50,9 +50,19 @@ type RelayCfg struct {
 	HealthInterval time.Duration
 }
 
+// UpgradesCfg holds the upgrade pass defaults the Settings page can override,
+// plus how often it runs.
+type UpgradesCfg struct {
+	Enabled       bool
+	Cutoff        string
+	Batch         int
+	CheckInterval time.Duration
+}
+
 type TorrenterConf struct {
 	Downloads DownloadsCfg
 	Relay     RelayCfg
+	Upgrades  UpgradesCfg
 	Prowlarr  ProwlarrCfg
 	Qbitt     QbittCfg
 	Ui        UiCfg

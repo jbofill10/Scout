@@ -135,3 +135,11 @@ func (fs *FsSvc) Exists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
 }
+
+// Remove deletes one file; a path that is already gone is not an error.
+func (fs *FsSvc) Remove(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove %s: %w", path, err)
+	}
+	return nil
+}

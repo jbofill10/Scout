@@ -127,3 +127,17 @@ func NewFileSystem(t interface {
 
 	return mock
 }
+
+// Remove provides a mock function with given fields: path
+func (_m *FileSystem) Remove(path string) error {
+	ret := _m.Called(path)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(string) error); ok {
+		r0 = rf(path)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
