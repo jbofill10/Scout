@@ -144,46 +144,21 @@ Required secrets:
 - Prowlarr (indexer management)
 
 ## 📁 Project Structure
-
 ```
-Scout/
-├── webserver/                    # Central coordinator service (Go)
-│   ├── cmd/webserver/            # Entry point
-│   │   └── main.go
-│   └── internal/                 # Private packages
-│       ├── handlers/             # HTTP handlers
-│       ├── interactors/          # Business logic
-│       ├── clients/              # Service clients
-│       ├── repository/           # Database layer
-│       ├── scheduler/            # Episode scheduler
-│       └── config/               # Configuration
-├── torrenter/                    # Download processor (Go)
-│   ├── cmd/torrenter/            # Entry point
-│   │   └── main.go
-│   └── internal/                 # Private packages
-│       ├── handlers/             # HTTP handlers
-│       ├── interactors/          # Business logic
-│       ├── service/              # Domain services (torrent, plex, media processor)
-│       ├── repository/           # Database layer
-│       ├── models/               # Data structures
-│       └── config/               # Configuration
-├── tvdb_proxy/                   # TVDB API proxy (Go)
-│   └── main.go                   # Single file service
-├── ui/                           # React frontend
-│   ├── src/
-│   │   ├── components/           # React components
-│   │   ├── App.tsx
-│   │   └── main.tsx
-│   └── package.json
-├── shared/                       # Shared Go modules
-│   ├── media/                    # TVDB data structures
-│   ├── status/                   # Download status types
-│   └── telemetry/                # OpenTelemetry tracing utilities
-├── sql/                          # Fresh-database bootstrap (setup-postgres.sql)
-├── nginx/                        # Nginx reverse proxy configuration
-├── docker-compose.yml            # Docker Compose orchestration
-├── .env.template                 # Environment variables template
-└── compose-deploy.sh             # Deployment and management script
+├── backend/                      # One Go module for the three services
+│   ├── cmd/{webserver,torrenter,tvdb-proxy}/   # Entry points (wiring only)
+│   ├── internal/webserver/       # handlers, interactors, clients, repository, scheduler, outbound
+│   ├── internal/torrenter/       # handlers, interactors, service (search, picker, monitor, packs,
+│   │                             #   upgrades, indexer health), repository, settings, clients
+│   ├── internal/tvdbproxy/       # config, tvdb client, genres, search, handlers
+│   ├── pkg/                      # shared: media types, dlstatus, controls, settings, notifications,
+│   │                             #   library, search parser, telemetry, dbmigrate (+ migrations)
+│   └── Dockerfile.<service>
+├── ui/                           # React 19 + MUI v7 + Vite frontend (Vitest tests)
+├── tools/relay-agent/            # Host-side Mullvad relay agent (Python, systemd user unit)
+├── openspec/                     # Specs and change proposals
+├── sql/setup-postgres.sql        # Fresh-database bootstrap
+├── nginx/, docker-compose.yml.template, .env.template, compose-deploy.sh
 ```
 
 ## 🎯 Features
@@ -213,16 +188,16 @@ The repository includes:
 
 ## 📚 Documentation
 
-- [Deployment Guide](DEPLOYMENT.md) - Docker Compose setup, LAN access, troubleshooting
-- [Architecture Overview](CLAUDE.md) - Microservices architecture, data flow, development commands
-- [Observability](OBSERVABILITY.md) - OpenTelemetry tracing and structured logging
-- Service READMEs: [webserver](webserver/README.md), [torrenter](torrenter/README.md), [tvdb_proxy](tvdb_proxy/README.md), [ui](ui/README.md)
+- [Specs and change proposals](openspec/) - what each capability does, requirement by requirement
+- [Migrations](backend/pkg/dbmigrate/README.md) - how schema changes are added and applied
+- [Relay agent](tools/relay-agent/README.md) - Mullvad relay rotation for indexer bans
+- [Security](SECURITY.md)
 
 ## 🤝 Contributing
 
 1. Make changes to a service
 2. Test locally:
-   - Go services: `go run cmd/<service>/main.go` (or `go run main.go` for tvdb_proxy)
+   - Go services: `cd backend && go run ./cmd/<service>` and `go test ./...`
    - UI: `npm run dev`
 3. Test with Docker Compose: `./compose-deploy.sh rebuild <service>`
 4. Check logs: `./compose-deploy.sh logs <service>`
