@@ -23,6 +23,24 @@ func Load() (models.TorrenterConf, error) {
 		return cfg, fmt.Errorf("invalid MIN_FREE_SPACE_GB value: %s", minFree)
 	}
 
+	// Search pacing defaults (the Settings page can override them)
+	for _, p := range []struct {
+		env  string
+		def  string
+		dest *int
+	}{
+		{"SEARCH_RATE_PER_MINUTE", "6", &cfg.Downloads.SearchRatePerMinute},
+		{"SEARCH_BURST", "3", &cfg.Downloads.SearchBurst},
+		{"BULK_REQUEST_BATCH", "10", &cfg.Downloads.BulkRequestBatch},
+	} {
+		raw := getEnv(p.env, p.def)
+		val, err := strconv.Atoi(raw)
+		if err != nil || val < 1 {
+			return cfg, fmt.Errorf("invalid %s value: %s", p.env, raw)
+		}
+		*p.dest = val
+	}
+
 	// Upgrade pass defaults (the Settings page can override the first three)
 	cfg.Upgrades.Enabled = getEnv("UPGRADES_ENABLED", "false") == "true"
 	cfg.Upgrades.Cutoff = getEnv("UPGRADE_CUTOFF", "1080p")

@@ -115,7 +115,7 @@ func (m *MissingInteractor) FillMissing(ctx context.Context, tvdbID string) (Dow
 		return summary, nil
 	}
 
-	media := tvdb.Media{Id: tvdbID, Name: show.Title, Category: "series"}
+	media := tvdb.Media{Id: tvdbID, Name: show.Title, Category: "series", Source: "missing"}
 	media.Metadata.Episodes = episodes
 	result, err := m.requester.DownloadShow(ctx, media)
 	if err != nil {

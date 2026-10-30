@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	"github.com/jbofill10/scout/backend/internal/torrenter/searchgate"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
@@ -40,6 +41,20 @@ const prowlarrSearchTimeout = 45 * time.Second
 const episodeSearchDeadline = 5 * time.Minute
 
 func (q *QbittHandler) searchProwlarr(ctx context.Context, query, category string, indexerIDs []int64) ([]*prowlarr.Search, error) {
+	// Every search waits its turn: one at a time per indexer, within that
+	// indexer's rate, people before automation. A paused indexer (disabled
+	// by Prowlarr, usually a ban) is dropped from the search so the caller
+	// falls through to its fallback tier instead of waiting out the ban.
+	if q.gate != nil {
+		prio, label := searchgate.FromContext(ctx)
+		granted, release, err := q.gate.Acquire(ctx, indexerIDs, prio, label)
+		if err != nil {
+			q.logger.InfoContext(ctx, "Search not run", "query", query, "indexer_ids", indexerIDs, "reason", err.Error())
+			return nil, err
+		}
+		defer release()
+		indexerIDs = granted
+	}
 	q.logger.InfoContext(ctx, "Searching Prowlarr", "query", query, "category", category, "indexer_ids", indexerIDs)
 
 	input := prowlarr.SearchInput{

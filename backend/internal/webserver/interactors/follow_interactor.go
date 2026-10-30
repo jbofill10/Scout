@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"time"
 
@@ -42,10 +43,11 @@ type followScheduler interface {
 type CheckResult struct {
 	TvdbID    string    `json:"tvdb_id"`
 	Title     string    `json:"title"`
-	Listed    int       `json:"listed"`     // episodes TVDB lists
-	New       int       `json:"new"`        // episodes handed to the request path
-	QueuedNow int       `json:"queued_now"` // of those, searched for right away
-	Scheduled int       `json:"scheduled"`  // of those, scheduled for release
+	Listed    int       `json:"listed"`             // episodes TVDB lists
+	New       int       `json:"new"`                // episodes handed to the request path
+	Deferred  int       `json:"deferred,omitempty"` // wanted episodes left for a later check by the per-run budget
+	QueuedNow int       `json:"queued_now"`         // of those, searched for right away
+	Scheduled int       `json:"scheduled"`          // of those, scheduled for release
 	Error     string    `json:"error,omitempty"`
 	CheckedAt time.Time `json:"checked_at"`
 }
@@ -76,6 +78,9 @@ type FollowInteractor struct {
 	interval  time.Duration
 	logger    *slog.Logger
 	now       func() time.Time
+	// bulkBatch is how many episodes one scheduled check may request across
+	// all shows (0 = no limit); it follows the bulk_request_batch setting.
+	bulkBatch func(ctx context.Context) int
 	// firstRunDelay lets the other services come up before the start-up check.
 	firstRunDelay time.Duration
 }
@@ -101,6 +106,7 @@ func NewFollowInteractor(
 		logger:        logger,
 		now:           time.Now,
 		firstRunDelay: 2 * time.Minute,
+		bulkBatch:     func(context.Context) int { return 0 },
 	}
 }
 
@@ -132,7 +138,7 @@ func (f *FollowInteractor) Follow(ctx context.Context, media tvdb.Media, include
 		show = *stored
 	}
 
-	result := f.checkShow(ctx, show)
+	result := f.checkShow(ctx, show, -1)
 	if stored, err := f.repo.Get(ctx, media.Id); err == nil && stored != nil {
 		show = *stored
 	}
@@ -159,7 +165,7 @@ func (f *FollowInteractor) CheckOne(ctx context.Context, tvdbID string) (CheckRe
 	if show == nil {
 		return CheckResult{}, ErrNothingToControl
 	}
-	return f.checkShow(ctx, *show), nil
+	return f.checkShow(ctx, *show, -1), nil
 }
 
 // CheckAll re-checks every followed show now.
@@ -168,12 +174,30 @@ func (f *FollowInteractor) CheckAll(ctx context.Context) (CheckReport, error) {
 	if err != nil {
 		return CheckReport{}, err
 	}
+	// Least recently checked first, so a budget that runs out leaves the
+	// shows that waited longest at the front next time.
+	sort.SliceStable(shows, func(i, j int) bool {
+		a, b := shows[i].LastCheckedAt, shows[j].LastCheckedAt
+		switch {
+		case a == nil:
+			return b != nil
+		case b == nil:
+			return false
+		default:
+			return a.Before(*b)
+		}
+	})
+	budget := f.bulkBatch(ctx)
 	report := CheckReport{Results: []CheckResult{}}
 	for _, show := range shows {
 		if ctx.Err() != nil {
 			break
 		}
-		result := f.checkShow(ctx, show)
+		limit := -1
+		if budget > 0 {
+			limit = max(budget-report.Added, 0)
+		}
+		result := f.checkShow(ctx, show, limit)
 		report.Checked++
 		report.Added += result.New
 		report.Results = append(report.Results, result)
@@ -213,7 +237,16 @@ func (f *FollowInteractor) Start(ctx context.Context) {
 
 // checkShow fetches the show's episodes, drops everything Scout already
 // handles, and requests the rest through the normal show request path.
-func (f *FollowInteractor) checkShow(ctx context.Context, show repository.FollowedShow) CheckResult {
+// SetBulkBatch sets where the per-check episode budget comes from.
+func (f *FollowInteractor) SetBulkBatch(fn func(ctx context.Context) int) {
+	if fn != nil {
+		f.bulkBatch = fn
+	}
+}
+
+// checkShow requests what the show is missing. limit caps how many episodes
+// this check may hand over (-1 for no cap); the rest wait for a later check.
+func (f *FollowInteractor) checkShow(ctx context.Context, show repository.FollowedShow, limit int) CheckResult {
 	result := CheckResult{TvdbID: show.TvdbID, Title: show.Title, CheckedAt: f.now()}
 	fail := func(err error) CheckResult {
 		result.Error = err.Error()
@@ -270,6 +303,10 @@ func (f *FollowInteractor) checkShow(ctx context.Context, show repository.Follow
 		}
 		fresh = append(fresh, ep)
 	}
+	if limit >= 0 && len(fresh) > limit {
+		result.Deferred = len(fresh) - limit
+		fresh = fresh[:limit] // TVDB order: the oldest wanted episodes go first
+	}
 	result.New = len(fresh)
 
 	if len(fresh) > 0 {
@@ -277,6 +314,7 @@ func (f *FollowInteractor) checkShow(ctx context.Context, show repository.Follow
 		media.Id = show.TvdbID
 		media.Name = show.Title
 		media.Category = "series"
+		media.Source = "follow"
 		media.Metadata.Episodes = fresh
 		summary, err := f.requester.DownloadShow(ctx, media)
 		if err != nil {

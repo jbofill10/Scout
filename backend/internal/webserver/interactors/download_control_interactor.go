@@ -199,6 +199,9 @@ func (c *DownloadControlInteractor) ListReleases(ctx context.Context, itemKey st
 // would: timers released, rows completed.
 func (c *DownloadControlInteractor) Grab(ctx context.Context, itemKey string, sel controls.ReleaseSelection) (dlstatus.EpisodeResult, error) {
 	media, rows, err := c.mediaFor(ctx, itemKey)
+	if media != nil {
+		media.Source = "manual" // the user is waiting on this
+	}
 	if err != nil {
 		return dlstatus.EpisodeResult{}, err
 	}

@@ -4,9 +4,9 @@ import (
 	"log/slog"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jbofill10/scout/backend/internal/webserver/interactors"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
-	"github.com/jbofill10/scout/backend/internal/webserver/interactors"
 )
 
 type DownloadHandler struct {
@@ -33,6 +33,7 @@ func (h *DownloadHandler) DownloadShow(c *gin.Context) {
 
 	// Extract context for trace propagation and logging
 	ctx := c.Request.Context()
+	req.Source = "manual" // a person asked: ahead of every automated search
 
 	summary, err := h.interactor.DownloadShow(ctx, req)
 	if err != nil {
@@ -69,6 +70,7 @@ func (h *DownloadHandler) DownloadMovie(c *gin.Context) {
 		return
 	}
 
+	req.Source = "manual"
 	summary, err := h.interactor.DownloadMovie(ctx, req)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "Failed to download movie",

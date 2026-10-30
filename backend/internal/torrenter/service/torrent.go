@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	"github.com/jbofill10/scout/backend/internal/torrenter/searchgate"
 	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/notifications"
@@ -45,6 +46,13 @@ type QbittHandler struct {
 	inflight *inflightRegistry
 	// settings, when set, overrides minQualityTier with the runtime setting.
 	settings QualitySettings
+	// gate paces and orders every Prowlarr search; nil means unpaced (tests).
+	gate *searchgate.Gate
+}
+
+// SetGate routes every indexer search through g.
+func (q *QbittHandler) SetGate(g *searchgate.Gate) {
+	q.gate = g
 }
 
 // QualitySettings is the slice of the runtime settings the picker needs.
@@ -161,6 +169,8 @@ func (q *QbittHandler) retryLogin() {
 
 func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done chan<- models.TorrentCompleteEvent) ([]dlstatus.EpisodeResult, error) {
 	results := []dlstatus.EpisodeResult{}
+	// Who asked decides where this request's searches queue behind others.
+	ctx = searchgate.WithRequest(ctx, searchgate.PriorityFor(req.Source), req.Name)
 
 	// Handle movies: check if movie already exists in Plex
 	if req.Category == "movie" {
@@ -307,6 +317,10 @@ func (q *QbittHandler) processEpisodeDownload(
 	done chan<- models.TorrentCompleteEvent,
 	wg *sync.WaitGroup,
 ) dlstatus.EpisodeResult {
+	if len(strategies) > 0 {
+		prio, _ := searchgate.FromContext(ctx)
+		ctx = searchgate.WithRequest(ctx, prio, searchLabel(req, strategies[0]))
+	}
 	// Create episode-level parent span
 	episodeCtx, episodeSpan := torrentTracer.Start(ctx, "searchEpisode")
 
@@ -448,4 +462,13 @@ func (q *QbittHandler) initiateDownloadAndMonitor(
 		Episode: ss.Episode,
 		Outcome: dlstatus.OutcomeDownloading,
 	}
+}
+
+// searchLabel is the short name of what a search is for, shown in the
+// indexer queue: "Severance S01E04", or the title for a movie.
+func searchLabel(req *tvdb.Media, ss *models.SearchStrategy) string {
+	if ss == nil || ss.IsMovie || ss.EpisodeMeta == nil {
+		return req.Name
+	}
+	return fmt.Sprintf("%s S%02dE%02d", req.Name, ss.Season, ss.Episode)
 }

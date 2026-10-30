@@ -14,6 +14,7 @@ import (
 	"github.com/jbofill10/scout/backend/internal/torrenter/handlers"
 	"github.com/jbofill10/scout/backend/internal/torrenter/interactors"
 	"github.com/jbofill10/scout/backend/internal/torrenter/repository"
+	"github.com/jbofill10/scout/backend/internal/torrenter/searchgate"
 	"github.com/jbofill10/scout/backend/internal/torrenter/service"
 	torrsettings "github.com/jbofill10/scout/backend/internal/torrenter/settings"
 	"github.com/jbofill10/scout/backend/pkg/dbmigrate"
@@ -140,9 +141,22 @@ func main() {
 		UpgradesEnabled:      cfg.Upgrades.Enabled,
 		UpgradeCutoff:        cfg.Upgrades.Cutoff,
 		UpgradeBatch:         cfg.Upgrades.Batch,
+		SearchRatePerMinute:  cfg.Downloads.SearchRatePerMinute,
+		SearchBurst:          cfg.Downloads.SearchBurst,
+		BulkRequestBatch:     cfg.Downloads.BulkRequestBatch,
 	}, logger)
 	settingsResolver.FreeSpace = service.DownloadsFreeSpace
 	qbitt.SetSettings(settingsResolver)
+
+	// Every indexer search is paced (per-indexer rate, one at a time) and
+	// ordered (people before automation) by one gate; limits follow the
+	// Settings page without a restart.
+	gate := searchgate.New(func(id int64) searchgate.Limits {
+		perMinute, burst := settingsResolver.SearchLimits(id)
+		return searchgate.Limits{PerMinute: float64(perMinute), Burst: burst}
+	})
+	qbitt.SetGate(gate)
+	logger.Info("Search gate enabled", "rate_per_minute", cfg.Downloads.SearchRatePerMinute, "burst", cfg.Downloads.SearchBurst)
 	if subSvc, ok := subs.(*service.SubtitleSvc); ok && subSvc != nil {
 		subSvc.SetSettings(settingsResolver)
 	}
@@ -160,6 +174,7 @@ func main() {
 	healthMonitor := service.NewIndexerHealthMonitor(
 		prowlarr.New(starr.New(cfg.Prowlarr.Key, cfg.Prowlarr.Host, 60*time.Hour)).APIer,
 		relayAgent, settingsResolver, cfg.Relay.RotateCooldown, cfg.Relay.HealthInterval, logger)
+	healthMonitor.SetPauser(gate)
 	healthMonitor.Start(context.Background())
 	logger.Info("Indexer health monitor started", "relay_agent", relayAgent.Configured(),
 		"rotate_cooldown", cfg.Relay.RotateCooldown.String(), "interval", cfg.Relay.HealthInterval.String())
@@ -178,7 +193,7 @@ func main() {
 	downloadHandler := handlers.NewDownloadHandler(downloadInteractor, logger)
 	controlHandler := handlers.NewControlHandler(downloadInteractor, logger)
 	settingsHandler := handlers.NewSettingsHandler(settingsResolver, repo, logger)
-	indexerHandler := handlers.NewIndexerHandler(healthMonitor, logger)
+	indexerHandler := handlers.NewIndexerHandler(healthMonitor, gate, logger)
 	upgradeHandler := handlers.NewUpgradeHandler(upgradeInteractor, logger)
 	mediaHandler := handlers.NewMediaHandler(mediaInteractor, logger)
 	statusHandler := handlers.NewStatusHandler(statusInteractor, logger)

@@ -32,6 +32,20 @@ export interface HealthEvent {
   ok: boolean;
 }
 
+/** One indexer's search queue: what is running, what waits, and at what rate. */
+export interface IndexerQueueStats {
+  id: number;
+  limits: { per_minute: number; burst: number };
+  tokens: number;
+  in_flight?: string;
+  queued: number;
+  queued_by_priority?: Record<string, number>;
+  waiting?: string[];
+  searches_last_minute: number;
+  paused_until?: string;
+  pause_reason?: string;
+}
+
 export interface IndexerHealthSnapshot {
   indexers: IndexerState[];
   relay: RelayInfo;
@@ -39,6 +53,28 @@ export interface IndexerHealthSnapshot {
   auto_rotate: boolean;
   checked_at?: string;
   check_error?: string;
+  /** Per-indexer search queue, lowest id first; absent on older servers. */
+  queue?: IndexerQueueStats[];
+}
+
+/** "Searching Severance S01E04 · 3 waiting (manual 1, follow 2) · 2/6 per min". */
+export function describeQueue(q: IndexerQueueStats): string {
+  const parts: string[] = [];
+  if (q.in_flight) parts.push(`searching ${q.in_flight}`);
+  if (q.queued > 0) {
+    const by = q.queued_by_priority
+      ? ` (${Object.entries(q.queued_by_priority)
+          .map(([k, v]) => `${k} ${v}`)
+          .join(", ")})`
+      : "";
+    parts.push(`${q.queued} waiting${by}`);
+  }
+  parts.push(`${q.searches_last_minute}/${q.limits.per_minute} per min`);
+  if (q.paused_until) {
+    const until = new Date(q.paused_until);
+    parts.push(`paused until ${until.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}${q.pause_reason ? ` (${q.pause_reason})` : ""}`);
+  }
+  return parts.join(" · ");
 }
 
 export const INDEXER_HEALTH_QUERY_KEY = ["indexers", "health"] as const;

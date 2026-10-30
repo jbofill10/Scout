@@ -8,6 +8,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	"github.com/jbofill10/scout/backend/internal/torrenter/searchgate"
 	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
@@ -51,6 +52,7 @@ func (q *QbittHandler) DownloadUpgrade(
 		return dlstatus.EpisodeResult{TvdbID: itemID, Outcome: dlstatus.OutcomeDownloading}, nil
 	}
 
+	ctx = searchgate.WithRequest(ctx, searchgate.Upgrade, searchLabel(media, strategies[0]))
 	ctx, span := torrentTracer.Start(ctx, "upgradeItem")
 	defer span.End()
 	span.SetAttributes(

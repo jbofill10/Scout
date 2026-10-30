@@ -142,6 +142,17 @@ func main() {
 		followRepo, schedulerRepo, notificationRepo, tvdbClient, torrenterClient, downloadInteractor,
 		cfg.FollowCheckInterval, logger,
 	)
+	// A scheduled check hands over at most bulk_request_batch episodes per
+	// run (a Settings page value owned by the torrenter), so a big back
+	// catalogue trickles in instead of hitting the indexers all at once.
+	followInteractor.SetBulkBatch(func(ctx context.Context) int {
+		view, err := torrenterClient.Settings(ctx)
+		if err != nil {
+			logger.WarnContext(ctx, "Could not read bulk_request_batch, using 10", "error", err)
+			return 10
+		}
+		return view.Values.BulkRequestBatch
+	})
 	followCtx, stopFollows := context.WithCancel(context.Background())
 	defer stopFollows()
 	followInteractor.Start(followCtx)

@@ -125,3 +125,40 @@ func TestResolver_ApplyWritesNormalisedValuesAndResets(t *testing.T) {
 	assert.True(t, view.Options.SubtitlesEnabled)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestResolver_SearchLimitsAndBulkBatch(t *testing.T) {
+	r, mock, _ := newTestResolver(t)
+	r.defaults.SearchRatePerMinute, r.defaults.SearchBurst, r.defaults.BulkRequestBatch = 6, 3, 10
+	mock.ExpectQuery(`SELECT key, value FROM Settings`).WillReturnRows(settingsRows(
+		api.KeySearchBurst, `5`,
+		api.KeyIndexerRateLimits, `{"2":{"per_minute":4,"burst":2}}`,
+	))
+
+	perMinute, burst := r.SearchLimits(2)
+	assert.Equal(t, 4, perMinute, "1337x has its own allowance")
+	assert.Equal(t, 2, burst)
+	perMinute, burst = r.SearchLimits(1)
+	assert.Equal(t, 6, perMinute, "an indexer without an override gets the global rate")
+	assert.Equal(t, 5, burst, "and the overridden global burst")
+	assert.Equal(t, 10, r.BulkRequestBatch())
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestResolver_ApplyValidatesSearchPacing(t *testing.T) {
+	r, mock, _ := newTestResolver(t)
+	bad := []api.Update{
+		{SearchRatePerMinute: intPtr(0)},
+		{SearchBurst: intPtr(31)},
+		{BulkRequestBatch: intPtr(0)},
+		{IndexerRateLimits: &map[string]api.RateLimit{"x": {PerMinute: 4, Burst: 2}}},
+		{IndexerRateLimits: &map[string]api.RateLimit{"2": {PerMinute: 4, Burst: 0}}},
+	}
+	for _, upd := range bad {
+		_, err := r.Apply(context.Background(), upd)
+		var verr *ValidationError
+		assert.ErrorAs(t, err, &verr, "%+v", upd)
+	}
+	assert.NoError(t, mock.ExpectationsWereMet(), "nothing is written when validation fails")
+}
+
+func intPtr(n int) *int { return &n }

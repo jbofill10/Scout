@@ -23,7 +23,9 @@ import {
   useUploaderPreferences,
   type SettingsView,
   type UploaderPreference,
+  type RateLimit,
 } from "../hooks/useSettings";
+import { useIndexerHealth } from "../hooks/useIndexerHealth";
 import { durationError, invalidLanguage, parseLanguages, tidyDuration } from "../utils/settingsForm";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
@@ -475,6 +477,137 @@ const UpgradesSection: React.FC<{ view: SettingsView }> = ({ view }) => {
   );
 };
 
+const SearchPacingSection: React.FC<{ view: SettingsView }> = ({ view }) => {
+  const update = useUpdateSettings();
+  const { data: health } = useIndexerHealth(true);
+  const [rate, setRate] = useState(String(view.values.search_rate_per_minute));
+  const [burst, setBurst] = useState(String(view.values.search_burst));
+  const [batch, setBatch] = useState(String(view.values.bulk_request_batch));
+  const [overrides, setOverrides] = useState<Record<string, { per_minute: string; burst: string }>>({});
+  useEffect(() => setRate(String(view.values.search_rate_per_minute)), [view.values.search_rate_per_minute]);
+  useEffect(() => setBurst(String(view.values.search_burst)), [view.values.search_burst]);
+  useEffect(() => setBatch(String(view.values.bulk_request_batch)), [view.values.bulk_request_batch]);
+  useEffect(() => {
+    const next: Record<string, { per_minute: string; burst: string }> = {};
+    for (const [id, l] of Object.entries(view.values.indexer_rate_limits ?? {})) next[id] = { per_minute: String(l.per_minute), burst: String(l.burst) };
+    setOverrides(next);
+  }, [view.values.indexer_rate_limits]);
+
+  const intIn = (raw: string, lo: number, hi: number) => {
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= lo && n <= hi ? n : null;
+  };
+  const rateNum = intIn(rate, 1, 120);
+  const burstNum = intIn(burst, 1, 30);
+  const batchNum = intIn(batch, 1, 500);
+  const globalDirty = (rateNum !== null && rateNum !== view.values.search_rate_per_minute) || (burstNum !== null && burstNum !== view.values.search_burst);
+  const batchDirty = batchNum !== null && batchNum !== view.values.bulk_request_batch;
+
+  const indexers = (health?.indexers ?? []).filter((i) => i.enabled);
+  const overridesValid = Object.values(overrides).every((o) => (o.per_minute === "" && o.burst === "") || (intIn(o.per_minute, 1, 120) !== null && intIn(o.burst, 1, 30) !== null));
+  const saveOverrides = () => {
+    const limits: Record<string, RateLimit> = {};
+    for (const [id, o] of Object.entries(overrides)) {
+      const pm = intIn(o.per_minute, 1, 120);
+      const b = intIn(o.burst, 1, 30);
+      if (pm !== null && b !== null) limits[id] = { per_minute: pm, burst: b };
+    }
+    update.mutate({ indexer_rate_limits: limits });
+  };
+
+  return (
+    <SettingCard
+      title="Search pacing"
+      description="Every indexer search waits its turn: one at a time per indexer, within a sustained rate with a small burst, and a person's request ahead of follow checks, missing-episode fills and upgrades. Public indexers ban the exit IP after a burst of searches; the defaults are safe for 1337x. An indexer Prowlarr has disabled is skipped until it is healthy again."
+    >
+      <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <TextField
+          size="small"
+          label="Searches per minute per indexer"
+          value={rate}
+          onChange={(e) => setRate(e.target.value)}
+          error={rateNum === null}
+          helperText={rateNum === null ? "Whole number between 1 and 120" : `Default ${view.defaults.search_rate_per_minute}`}
+          slotProps={{ htmlInput: { inputMode: "numeric", pattern: "[0-9]*" } }}
+          sx={{ width: 260 }}
+        />
+        <TextField
+          size="small"
+          label="Burst"
+          value={burst}
+          onChange={(e) => setBurst(e.target.value)}
+          error={burstNum === null}
+          helperText={burstNum === null ? "Whole number between 1 and 30" : `Default ${view.defaults.search_burst}`}
+          slotProps={{ htmlInput: { inputMode: "numeric", pattern: "[0-9]*" } }}
+          sx={{ width: 160 }}
+        />
+        <Button
+          variant="contained"
+          size="small"
+          disabled={!globalDirty || update.isPending}
+          onClick={() => update.mutate({ ...(rateNum !== null ? { search_rate_per_minute: rateNum } : {}), ...(burstNum !== null ? { search_burst: burstNum } : {}) })}
+          sx={{ mt: 0.5 }}
+        >
+          Save
+        </Button>
+      </Box>
+      <DefaultHint
+        defaultLabel={`${view.defaults.search_rate_per_minute}/min, burst ${view.defaults.search_burst}`}
+        overridden={!!view.overridden.search_rate_per_minute || !!view.overridden.search_burst}
+        onReset={() => update.mutate({ reset: ["search_rate_per_minute", "search_burst"] })}
+        busy={update.isPending}
+      />
+
+      {indexers.length > 0 && (
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            Per-indexer overrides (blank uses the values above)
+          </Typography>
+          {indexers.map((ix) => {
+            const o = overrides[String(ix.id)] ?? { per_minute: "", burst: "" };
+            const set = (field: "per_minute" | "burst", value: string) => setOverrides((prev) => ({ ...prev, [String(ix.id)]: { ...(prev[String(ix.id)] ?? { per_minute: "", burst: "" }), [field]: value } }));
+            return (
+              <Box key={ix.id} sx={{ display: "flex", gap: 2, alignItems: "center", mb: 1, flexWrap: "wrap" }}>
+                <Typography variant="body2" sx={{ width: 120 }}>
+                  {ix.name}
+                </Typography>
+                <TextField size="small" label="Per minute" value={o.per_minute} onChange={(e) => set("per_minute", e.target.value)} slotProps={{ htmlInput: { inputMode: "numeric" } }} sx={{ width: 130 }} />
+                <TextField size="small" label="Burst" value={o.burst} onChange={(e) => set("burst", e.target.value)} slotProps={{ htmlInput: { inputMode: "numeric" } }} sx={{ width: 110 }} />
+              </Box>
+            );
+          })}
+          <Button variant="outlined" size="small" disabled={!overridesValid || update.isPending} onClick={saveOverrides}>
+            Save overrides
+          </Button>
+          <DefaultHint defaultLabel="none" overridden={!!view.overridden.indexer_rate_limits} onReset={() => update.mutate({ reset: ["indexer_rate_limits"] })} busy={update.isPending} />
+        </Box>
+      )}
+
+      <Box sx={{ mt: 2, display: "flex", gap: 2, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <TextField
+          size="small"
+          label="Episodes a follow check may request per run"
+          value={batch}
+          onChange={(e) => setBatch(e.target.value)}
+          error={batchNum === null}
+          helperText={batchNum === null ? "Whole number between 1 and 500" : "A big back catalogue trickles in over several checks; Check now is never capped"}
+          slotProps={{ htmlInput: { inputMode: "numeric", pattern: "[0-9]*" } }}
+          sx={{ width: 420, maxWidth: "100%" }}
+        />
+        <Button variant="contained" size="small" disabled={!batchDirty || update.isPending} onClick={() => update.mutate({ bulk_request_batch: batchNum ?? undefined })} sx={{ mt: 0.5 }}>
+          Save
+        </Button>
+      </Box>
+      <DefaultHint
+        defaultLabel={String(view.defaults.bulk_request_batch)}
+        overridden={!!view.overridden.bulk_request_batch}
+        onReset={() => update.mutate({ reset: ["bulk_request_batch"] })}
+        busy={update.isPending}
+      />
+    </SettingCard>
+  );
+};
+
 const IndexersSection: React.FC<{ view: SettingsView }> = ({ view }) => {
   const update = useUpdateSettings();
   const configured = view.options.relay_agent_configured;
@@ -795,6 +928,7 @@ const Settings: React.FC = () => {
             <SeasonPacksSection view={data} />
             <UpgradesSection view={data} />
             <IndexersSection view={data} />
+            <SearchPacingSection view={data} />
             <NotificationsSection />
           </>
         )}
