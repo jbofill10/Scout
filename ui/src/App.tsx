@@ -23,6 +23,7 @@ const Movies = lazy(() => import('./pages/Movies'));
 const Search = lazy(() => import('./pages/Search'));
 const Library = lazy(() => import('./pages/Library'));
 const Activity = lazy(() => import('./pages/Activity'));
+const Settings = lazy(() => import('./pages/Settings'));
 
 /** Shown while a page chunk is downloading; sized so the layout does not jump. */
 function RouteFallback() {
@@ -73,6 +74,7 @@ function App() {
                       <Route path="/activity" element={<ErrorBoundary><Activity /></ErrorBoundary>} />
                       <Route path="/search" element={<ErrorBoundary><Search /></ErrorBoundary>} />
                       <Route path="/library" element={<ErrorBoundary><Library /></ErrorBoundary>} />
+                      <Route path="/settings" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
                     </Routes>
                   </Suspense>
                 </Box>

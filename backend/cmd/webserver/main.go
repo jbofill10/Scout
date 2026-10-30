@@ -165,6 +165,7 @@ func main() {
 	activityHandler := handlers.NewActivityHandler(activityInteractor, logger)
 	controlInteractor := interactors.NewDownloadControlInteractor(schedulerRepo, notificationRepo, sched, torrenterClient, logger)
 	controlHandler := handlers.NewDownloadControlHandler(controlInteractor, logger)
+	settingsHandler := handlers.NewSettingsHandler(torrenterClient, logger)
 
 	// Setup routes
 	r := gin.Default()
@@ -207,6 +208,13 @@ func main() {
 	r.POST("/downloads/:id/retry", controlHandler.RetryNow)
 	r.GET("/downloads/:id/releases", controlHandler.ListReleases)
 	r.POST("/downloads/:id/releases", controlHandler.Grab)
+
+	// Runtime settings, relayed to the torrenter which owns them
+	r.GET("/settings", settingsHandler.Get)
+	r.PUT("/settings", settingsHandler.Update)
+	r.GET("/settings/uploaders", settingsHandler.ListUploaders)
+	r.POST("/settings/uploaders", settingsHandler.AddUploader)
+	r.DELETE("/settings/uploaders/:id", settingsHandler.DeleteUploader)
 
 	// TVDB routes
 	r.POST("/tvdb/batch/episodes", tvdbHandler.GetEpisodesBatch)

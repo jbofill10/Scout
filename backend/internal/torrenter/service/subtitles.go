@@ -46,6 +46,14 @@ type SubtitleSvc struct {
 	// the daily download limit is reached; it resets on the next UTC day.
 	quotaExhaustedUntil time.Time
 	now                 func() time.Time
+	// settings, when set, overrides cfg.Languages and cfg.PreferSDH at runtime.
+	settings SubtitleSettings
+}
+
+// SubtitleSettings is the slice of the runtime settings subtitle fetching needs.
+type SubtitleSettings interface {
+	SubtitleLanguages() []string
+	SubtitlePreferSDH() bool
 }
 
 func NewSubtitleSvc(cfg *models.SubtitlesCfg, provider SubtitleProvider, fs FileSystem, plex PlexRefresher,
@@ -53,12 +61,31 @@ func NewSubtitleSvc(cfg *models.SubtitlesCfg, provider SubtitleProvider, fs File
 	return &SubtitleSvc{cfg: cfg, provider: provider, fs: fs, plex: plex, logger: logger, now: time.Now}
 }
 
+// SetSettings makes language and SDH choices follow the runtime settings.
+func (s *SubtitleSvc) SetSettings(settings SubtitleSettings) {
+	s.settings = settings
+}
+
+func (s *SubtitleSvc) languages() []string {
+	if s.settings != nil {
+		return s.settings.SubtitleLanguages()
+	}
+	return s.cfg.Languages
+}
+
+func (s *SubtitleSvc) preferSDH() bool {
+	if s.settings != nil {
+		return s.settings.SubtitlePreferSDH()
+	}
+	return s.cfg.PreferSDH
+}
+
 // Fetch finds and writes one subtitle per configured language for req.
 // Languages that already have a file beside the video are left alone. The
 // returned error covers only failures that stopped the whole fetch; a
 // language with no acceptable candidate is logged and skipped.
 func (s *SubtitleSvc) Fetch(ctx context.Context, req models.SubtitleRequest) ([]models.SubtitleResult, error) {
-	if len(s.cfg.Languages) == 0 {
+	if len(s.languages()) == 0 {
 		return nil, nil
 	}
 	if until := s.quotaExhaustedUntil; !until.IsZero() && s.now().Before(until) {
@@ -92,7 +119,7 @@ func (s *SubtitleSvc) Fetch(ctx context.Context, req models.SubtitleRequest) ([]
 
 	var results []models.SubtitleResult
 	for _, lang := range wanted {
-		ranked := rankCandidates(candidates, req, lang, s.cfg.PreferSDH)
+		ranked := rankCandidates(candidates, req, lang, s.preferSDH())
 		if len(ranked) == 0 {
 			s.logger.WarnContext(ctx, "No subtitle candidates for language", "language", lang, "title", req.Title,
 				"season", req.Season, "episode", req.Episode)
@@ -124,7 +151,7 @@ func (s *SubtitleSvc) Fetch(ctx context.Context, req models.SubtitleRequest) ([]
 // beside the video yet, in either plain or SDH form.
 func (s *SubtitleSvc) languagesMissing(libraryPath string) []string {
 	var missing []string
-	for _, lang := range s.cfg.Languages {
+	for _, lang := range s.languages() {
 		if s.fs.Exists(subtitlePath(libraryPath, lang, false)) || s.fs.Exists(subtitlePath(libraryPath, lang, true)) {
 			continue
 		}

@@ -81,12 +81,13 @@ func (q *QbittHandler) scoreMatch(
 	// how well seeded. Rejecting here (rather than scoring low) means an
 	// indexer with only sub-floor releases yields no match, so the search
 	// moves on to the fallback indexer tier instead of settling.
-	if q.minQualityTier > 0 && qualityTier < q.minQualityTier {
+	floor := q.qualityFloor()
+	if floor > 0 && qualityTier < floor {
 		q.logger.WarnContext(ctx, "Torrent below minimum quality, skipping",
 			"torrent_title", match.Torrent.Title,
 			"quality", quality,
 			"quality_tier", qualityTier,
-			"min_quality_tier", q.minQualityTier)
+			"min_quality_tier", floor)
 		shown := quality
 		if shown == "" {
 			shown = "unknown resolution"

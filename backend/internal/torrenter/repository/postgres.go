@@ -13,12 +13,15 @@ import (
 	"github.com/jbofill10/scout/backend/pkg/notifications"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
+	"errors"
 	"github.com/XSAM/otelsql"
+	"github.com/jbofill10/scout/backend/pkg/settings"
 	"github.com/lib/pq"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"strings"
 )
 
 var (
@@ -70,6 +73,12 @@ type Repo struct {
 // Ping checks database connectivity with the given context.
 func (r *Repo) Ping(ctx context.Context) error {
 	return r.db.PingContext(ctx)
+}
+
+// DB exposes the connection pool for packages that keep their own small
+// tables alongside the repository (runtime settings).
+func (r *Repo) DB() *sql.DB {
+	return r.db
 }
 
 func NewRepo(logger *slog.Logger, connStr string) (*Repo, error) {
@@ -1050,4 +1059,59 @@ func (r *Repo) GetAllMovies(ctx context.Context) ([]library.LibraryMovie, error)
 	span.SetAttributes(attribute.Int("movie_count", len(movies)))
 	span.SetStatus(codes.Ok, "Movies retrieved successfully")
 	return movies, nil
+}
+
+// ErrDuplicateUploader is returned when an uploader is already preferred for
+// the same media type and anime flag.
+var ErrDuplicateUploader = errors.New("uploader already preferred for this media type")
+
+// ListUploaderPreferences returns every preferred uploader, grouped by media
+// type and anime flag.
+func (r *Repo) ListUploaderPreferences(ctx context.Context) ([]settings.UploaderPreference, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, mediaType, isAnime, uploaderName FROM UploaderPreferences ORDER BY mediaType, isAnime, lower(uploaderName)`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list uploader preferences: %w", err)
+	}
+	defer rows.Close()
+
+	out := []settings.UploaderPreference{}
+	for rows.Next() {
+		var p settings.UploaderPreference
+		if err := rows.Scan(&p.ID, &p.MediaType, &p.IsAnime, &p.Uploader); err != nil {
+			return nil, fmt.Errorf("failed to scan uploader preference: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// AddUploaderPreference stores a preferred uploader and returns it with its id.
+func (r *Repo) AddUploaderPreference(ctx context.Context, p settings.NewUploaderPreference) (settings.UploaderPreference, error) {
+	var id int
+	err := r.db.QueryRowContext(ctx,
+		`INSERT INTO UploaderPreferences (mediaType, isAnime, uploaderName) VALUES ($1, $2, $3) RETURNING id`,
+		p.MediaType, p.IsAnime, strings.TrimSpace(p.Uploader)).Scan(&id)
+	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			return settings.UploaderPreference{}, ErrDuplicateUploader
+		}
+		return settings.UploaderPreference{}, fmt.Errorf("failed to add uploader preference: %w", err)
+	}
+	return settings.UploaderPreference{ID: id, MediaType: p.MediaType, IsAnime: p.IsAnime, Uploader: strings.TrimSpace(p.Uploader)}, nil
+}
+
+// DeleteUploaderPreference removes a preferred uploader by id, reporting
+// whether a row existed.
+func (r *Repo) DeleteUploaderPreference(ctx context.Context, id int) (bool, error) {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM UploaderPreferences WHERE id = $1`, id)
+	if err != nil {
+		return false, fmt.Errorf("failed to delete uploader preference: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }

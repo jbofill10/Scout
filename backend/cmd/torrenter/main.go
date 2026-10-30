@@ -15,6 +15,7 @@ import (
 	"github.com/jbofill10/scout/backend/internal/torrenter/interactors"
 	"github.com/jbofill10/scout/backend/internal/torrenter/repository"
 	"github.com/jbofill10/scout/backend/internal/torrenter/service"
+	torrsettings "github.com/jbofill10/scout/backend/internal/torrenter/settings"
 	"github.com/jbofill10/scout/backend/pkg/dbmigrate"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
@@ -122,11 +123,27 @@ func main() {
 		logger.Info("Subtitle fetching disabled: OPENSUBTITLES_API_KEY not set")
 	}
 
+	// Runtime settings: the environment supplies defaults, the Settings page
+	// overrides them, and the services read the effective value as they go.
+	settingsResolver := torrsettings.NewResolver(torrsettings.NewStore(repo.DB()), torrsettings.Defaults{
+		MinQuality:        cfg.Downloads.MinQuality,
+		SubtitleLanguages: cfg.Subtitles.Languages,
+		SubtitlePreferSDH: cfg.Subtitles.PreferSDH,
+		PlexSyncDelay:     cfg.Plex.SyncDelay,
+		PlexSyncInterval:  cfg.Plex.SyncInterval,
+		SubtitlesEnabled:  cfg.Subtitles.APIKey != "",
+	}, logger)
+	qbitt.SetSettings(settingsResolver)
+	if subSvc, ok := subs.(*service.SubtitleSvc); ok && subSvc != nil {
+		subSvc.SetSettings(settingsResolver)
+	}
+
 	mp := service.NewMediaProcessSvc(logger, repo, fs, subs)
 	plex := service.NewPlexHandler(repo, logger, &cfg.Plex, mp)
 	// Keeps the database mirror of Plex current: at start, after downloads
 	// land, and on a timer.
 	plexSync := service.NewPlexSyncScheduler(plex, cfg.Plex.SyncDelay, cfg.Plex.SyncInterval, logger)
+	plexSync.SetSettings(settingsResolver)
 
 	// Initialize interactors
 	downloadInteractor := interactors.NewDownloadInteractor(qbitt, mp, repo, plexSync, logger)
@@ -137,6 +154,7 @@ func main() {
 	// Initialize handlers
 	downloadHandler := handlers.NewDownloadHandler(downloadInteractor, logger)
 	controlHandler := handlers.NewControlHandler(downloadInteractor, logger)
+	settingsHandler := handlers.NewSettingsHandler(settingsResolver, repo, logger)
 	mediaHandler := handlers.NewMediaHandler(mediaInteractor, logger)
 	statusHandler := handlers.NewStatusHandler(statusInteractor, logger)
 	libraryHandler := handlers.NewLibraryHandler(libraryInteractor, logger)
@@ -169,6 +187,13 @@ func main() {
 	r.POST("/downloads/cancel", controlHandler.Cancel)
 	r.POST("/releases", controlHandler.ListReleases)
 	r.POST("/downloads/manual", controlHandler.ManualDownload)
+
+	// Runtime settings and the picker's preferred uploaders
+	r.GET("/settings", settingsHandler.Get)
+	r.PUT("/settings", settingsHandler.Update)
+	r.GET("/settings/uploaders", settingsHandler.ListUploaders)
+	r.POST("/settings/uploaders", settingsHandler.AddUploader)
+	r.DELETE("/settings/uploaders/:id", settingsHandler.DeleteUploader)
 	r.GET("/media/:hash", mediaHandler.MediaExists)
 	r.POST("/media/exists", mediaHandler.MediaExistsBatch)
 	r.POST("/status/batch", statusHandler.BatchStatus)

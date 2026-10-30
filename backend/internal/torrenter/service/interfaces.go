@@ -9,6 +9,7 @@ import (
 	"github.com/jbofill10/scout/backend/pkg/library"
 	"github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/notifications"
+	"github.com/jbofill10/scout/backend/pkg/settings"
 )
 
 // TorrentService handles torrent search and download operations
@@ -54,6 +55,9 @@ type Repository interface {
 	InsertDownloadHistory(ctx context.Context, mediaTitle string, season, episode, absoluteEpisode int, torrentHash, status, reason string) error
 	UpdateDownloadHistoryStatus(ctx context.Context, torrentHash, status, reason string) error
 	GetPreferredUploaders(ctx context.Context, mediaType string, isAnime bool) ([]string, error)
+	ListUploaderPreferences(ctx context.Context) ([]settings.UploaderPreference, error)
+	AddUploaderPreference(ctx context.Context, p settings.NewUploaderPreference) (settings.UploaderPreference, error)
+	DeleteUploaderPreference(ctx context.Context, id int) (bool, error)
 
 	// In-flight torrent tracking, so completion monitors survive a restart
 	InsertActiveTorrent(ctx context.Context, at *models.ActiveTorrent) error

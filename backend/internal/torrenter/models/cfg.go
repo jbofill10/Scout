@@ -33,7 +33,14 @@ type RefreshCfg struct {
 	RefreshInterval time.Duration
 }
 
+// DownloadsCfg holds the environment defaults the Settings page can override.
+type DownloadsCfg struct {
+	// MinQuality is the resolution floor label (480p, 720p, 1080p, 2160p).
+	MinQuality string
+}
+
 type TorrenterConf struct {
+	Downloads DownloadsCfg
 	Prowlarr  ProwlarrCfg
 	Qbitt     QbittCfg
 	Ui        UiCfg
