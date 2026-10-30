@@ -73,6 +73,7 @@ type Repository interface {
 	GetAllShows(ctx context.Context) ([]library.LibraryShow, error)
 	GetAllMovies(ctx context.Context) ([]library.LibraryMovie, error)
 	GetShowEpisodesWithStatus(ctx context.Context, tvdbId string) ([]library.EpisodeWithStatus, error)
+	GetMissingEpisodes(ctx context.Context) ([]library.MissingShow, error)
 	UpsertTvdbEpisodes(ctx context.Context, seriesTvdbId string, episodes []library.TvdbEpisode) error
 	GetTvdbMetadataStatus(ctx context.Context, tvdbId string) (tvdbCount int, plexCount int, err error)
 }

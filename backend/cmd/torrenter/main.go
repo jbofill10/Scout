@@ -200,6 +200,7 @@ func main() {
 
 	// Library routes
 	r.GET("/library/shows", libraryHandler.GetShows)
+	r.GET("/library/missing", libraryHandler.GetMissingEpisodes)
 	r.GET("/library/shows/:tvdbId/episodes", libraryHandler.GetShowEpisodes)
 	r.GET("/library/shows/:tvdbId/metadata-status", libraryHandler.GetShowMetadataStatus)
 	r.GET("/library/movies", libraryHandler.GetMovies)
