@@ -50,6 +50,8 @@ type QbittHandler struct {
 // QualitySettings is the slice of the runtime settings the picker needs.
 type QualitySettings interface {
 	MinQuality() string
+	// MinFreeSpaceBytes is kept free on the downloads volume.
+	MinFreeSpaceBytes() uint64
 }
 
 // SetSettings makes the picker read its quality floor from the runtime
@@ -356,6 +358,17 @@ func (q *QbittHandler) initiateDownloadAndMonitor(
 	wg *sync.WaitGroup,
 ) dlstatus.EpisodeResult {
 	ss := match.Strategy
+
+	// A release that would fill the disk is not started; the retry engine
+	// comes back to it once space may have been freed.
+	if verdict := q.checkDiskSpace(ctx, match.Torrent.Size); !verdict.fits {
+		q.logger.WarnContext(ctx, "Not enough free disk space for this release, not adding it",
+			telemetry.WithTraceContext(ctx, "torrent_title", match.Torrent.Title, "size_bytes", match.Torrent.Size,
+				"free_bytes", verdict.free, "reserve_bytes", verdict.reserve)...)
+		q.applyFailureNotification(ctx, ss.EpisodeTvdbID, dlstatus.CodeInsufficientDiskSpace)
+		return q.failedResult(ss, dlstatus.CodeInsufficientDiskSpace)
+	}
+
 	infoHash, trackingUUID, err := q.downloadTorrent(ctx, match.Torrent)
 	if err != nil {
 		if ctx.Err() != nil {
