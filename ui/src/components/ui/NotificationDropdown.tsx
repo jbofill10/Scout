@@ -345,9 +345,11 @@ export default function NotificationDropdown() {
   const notificationGroups = groupedNotifications.data
     ? Object.values(groupedNotifications.data)
     : [];
-  // Only completed and failed items can be cleared; in-flight work always stays
+  // Only finished items (completed, failed, cancelled) can be cleared; in-flight work always stays
   const hasFinished = notificationGroups.some((group) =>
-    group.notifications.some((n) => n.status === "completed" || n.status === "failed"),
+    group.notifications.some(
+      (n) => n.status === "completed" || n.status === "failed" || n.status === "cancelled",
+    ),
   );
 
   return (

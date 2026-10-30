@@ -27,6 +27,10 @@ export interface ActivityItem {
   schedule_status?: string;
   last_failure_code?: string;
   last_failure_reason?: string;
+  /** What the user can do to the item right now; see useDownloadControls. */
+  can_cancel?: boolean;
+  can_retry?: boolean;
+  can_pick_release?: boolean;
 }
 
 export interface ActivitySnapshot {

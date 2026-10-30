@@ -30,6 +30,10 @@ type ActivityItem struct {
 	ScheduleStatus    string     `json:"schedule_status,omitempty"`
 	LastFailureCode   string     `json:"last_failure_code,omitempty"`
 	LastFailureReason string     `json:"last_failure_reason,omitempty"`
+	// What the user can do to the item right now (see download controls).
+	CanCancel      bool `json:"can_cancel"`
+	CanRetry       bool `json:"can_retry"`
+	CanPickRelease bool `json:"can_pick_release"`
 }
 
 // ActivitySnapshot splits recent download work into what is still in flight and
@@ -70,7 +74,10 @@ func (a *ActivityInteractor) GetActivity(ctx context.Context, limit int) (Activi
 		return ActivitySnapshot{}, err
 	}
 
-	meta, err := a.schedulerRepo.GetPendingScheduleMeta(ctx)
+	// Failed rows are included so a permanently failed item still shows its
+	// attempt count and can offer Retry.
+	meta, err := a.schedulerRepo.GetScheduleMetaByStatus(ctx,
+		repository.StatusPending, repository.StatusQueued, repository.StatusFailed)
 	if err != nil {
 		a.logger.ErrorContext(ctx, "Failed to load schedule metadata for activity", "error", err)
 		meta = map[string]repository.ScheduleMeta{}
@@ -84,7 +91,8 @@ func (a *ActivityInteractor) GetActivity(ctx context.Context, limit int) (Activi
 
 	for _, n := range notifs {
 		item := ActivityItem{Notification: n}
-		if m, ok := meta[n.TvdbID]; ok {
+		m, hasRow := meta[n.TvdbID]
+		if hasRow {
 			item.Attempts = m.Attempts
 			item.ScheduleStatus = m.ScheduleStatus
 			item.LastFailureCode = m.LastFailureCode
@@ -93,6 +101,10 @@ func (a *ActivityInteractor) GetActivity(ctx context.Context, limit int) (Activi
 			item.ReleaseTime = &releaseTime
 			item.NextAttemptAt = m.NextAttemptAt
 		}
+		item.CanCancel = activeStatuses[n.Status]
+		item.CanRetry = hasRow && (n.Status == notifications.StatusFailed ||
+			(m.ScheduleStatus == repository.StatusPending && m.NextAttemptAt != nil))
+		item.CanPickRelease = hasRow || n.Status == notifications.StatusDownloading
 
 		snapshot.Counts[string(n.Status)]++
 		if activeStatuses[n.Status] {

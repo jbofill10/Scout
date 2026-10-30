@@ -355,7 +355,7 @@ func (s *NotificationRepoTestSuite) TestDismiss_NotFound() {
 
 func (s *NotificationRepoTestSuite) TestDismissFinished_Success() {
 	s.mock.ExpectExec(`UPDATE Notifications SET auto_dismissed = true, updated_at = \$1`).
-		WithArgs(sqlmock.AnyArg(), "completed", "failed", pq.Array([]string{"42", "43"})).
+		WithArgs(sqlmock.AnyArg(), "completed", "failed", pq.Array([]string{"42", "43"}), "cancelled").
 		WillReturnResult(sqlmock.NewResult(0, 7))
 
 	count, err := s.repo.DismissFinished(context.Background(), []string{"42", "43"})
@@ -367,7 +367,7 @@ func (s *NotificationRepoTestSuite) TestDismissFinished_Success() {
 
 func (s *NotificationRepoTestSuite) TestDismissFinished_NilKeepListDismissesEveryFailure() {
 	s.mock.ExpectExec(`UPDATE Notifications SET auto_dismissed = true`).
-		WithArgs(sqlmock.AnyArg(), "completed", "failed", pq.Array([]string{})).
+		WithArgs(sqlmock.AnyArg(), "completed", "failed", pq.Array([]string{}), "cancelled").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	count, err := s.repo.DismissFinished(context.Background(), nil)
@@ -379,7 +379,7 @@ func (s *NotificationRepoTestSuite) TestDismissFinished_NilKeepListDismissesEver
 
 func (s *NotificationRepoTestSuite) TestDismissFinished_DBError() {
 	s.mock.ExpectExec(`UPDATE Notifications SET auto_dismissed = true`).
-		WithArgs(sqlmock.AnyArg(), "completed", "failed", sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), "completed", "failed", sqlmock.AnyArg(), "cancelled").
 		WillReturnError(sql.ErrConnDone)
 
 	count, err := s.repo.DismissFinished(context.Background(), []string{"1"})

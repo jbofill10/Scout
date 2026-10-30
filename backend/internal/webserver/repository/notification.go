@@ -227,8 +227,8 @@ func (r *NotificationRepo) Dismiss(ctx context.Context, id int) error {
 	return nil
 }
 
-// DismissFinished soft-deletes completed notifications and failed ones the
-// scheduler has given up on. Scheduled, searching and downloading rows are left
+// DismissFinished soft-deletes completed and cancelled notifications, and failed
+// ones the scheduler has given up on. Scheduled, searching and downloading rows are left
 // alone, and so is a failed row whose tvdb id is in keepTvdbIDs: a retry is
 // still pending for it, and the retry needs a visible row to update.
 // Nothing to dismiss is not an error; the caller gets a zero count.
@@ -242,9 +242,10 @@ func (r *NotificationRepo) DismissFinished(ctx context.Context, keepTvdbIDs []st
 
 	stmt := `UPDATE Notifications SET auto_dismissed = true, updated_at = $1
 		WHERE auto_dismissed = false
-		AND (status = $2 OR (status = $3 AND NOT (tvdb_id = ANY($4))))`
+		AND (status = $2 OR status = $5 OR (status = $3 AND NOT (tvdb_id = ANY($4))))`
 	result, err := r.db.ExecContext(ctx, stmt, time.Now(),
-		string(notifications.StatusCompleted), string(notifications.StatusFailed), pq.Array(keepTvdbIDs))
+		string(notifications.StatusCompleted), string(notifications.StatusFailed), pq.Array(keepTvdbIDs),
+		string(notifications.StatusCancelled))
 	if err != nil {
 		r.logger.ErrorContext(ctx, "Failed to dismiss finished notifications", "error", err)
 		return 0, fmt.Errorf("failed to dismiss finished notifications: %w", err)

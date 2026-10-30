@@ -147,6 +147,13 @@ func (i *DownloadInteractor) processDueItem(item repository.DueItem) {
 		reason = code.HumanReason()
 	}
 
+	if code == dlstatus.CodeCancelled {
+		// The user cancelled the item while it was being dispatched; the row
+		// and the notification already say so, and no retry is wanted.
+		i.logger.InfoContext(ctx, "Scheduled download was cancelled during dispatch", "media", media.Name)
+		return
+	}
+
 	if code.Category() == dlstatus.CategoryPermanent {
 		i.handlePermanentRowFailure(ctx, item, *failed, reason, traceID, spanID)
 		return
@@ -633,6 +640,11 @@ func (i *DownloadInteractor) handleImmediateShowFailures(
 			reason = r.Code.HumanReason()
 		}
 
+		if r.Code == dlstatus.CodeCancelled {
+			// Cancelled by the user mid-search: nothing to retry or surface.
+			continue
+		}
+
 		if r.Code.Category() == dlstatus.CategoryPermanent {
 			i.surfacePermanentFailure(ctx, payload.Name, r, reason, traceID, spanID)
 			continue
@@ -701,6 +713,11 @@ func (i *DownloadInteractor) handleImmediateMovieFailure(
 	reason := failed.Reason
 	if reason == "" {
 		reason = failed.Code.HumanReason()
+	}
+
+	if failed.Code == dlstatus.CodeCancelled {
+		// Cancelled by the user mid-search: nothing to retry or surface.
+		return true, nil
 	}
 
 	if failed.Code.Category() == dlstatus.CategoryPermanent {

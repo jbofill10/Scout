@@ -24,10 +24,12 @@ type SchedulerRepository interface {
 type Scheduler struct {
 	repo         SchedulerRepository
 	logger       *slog.Logger
-	scheduledMap map[string]bool // content_hash -> scheduled
-	mu           sync.Mutex      // protects scheduledMap
-	stopChan     chan struct{}   // signals shutdown
-	stopOnce     sync.Once       // ensures Stop() is idempotent
+	scheduledMap map[string]bool     // content_hash -> scheduled
+	timers       map[int]*armedTimer // row id -> armed timer, so a row can be cancelled or re-armed
+	kick         chan struct{}       // wakes the poll loop early (buffered 1)
+	mu           sync.Mutex          // protects scheduledMap and timers
+	stopChan     chan struct{}       // signals shutdown
+	stopOnce     sync.Once           // ensures Stop() is idempotent
 	tracer       trace.Tracer
 }
 
@@ -36,9 +38,42 @@ func NewScheduler(repo SchedulerRepository, logger *slog.Logger) *Scheduler {
 		repo:         repo,
 		logger:       logger,
 		scheduledMap: make(map[string]bool),
+		timers:       make(map[int]*armedTimer),
+		kick:         make(chan struct{}, 1),
 		stopChan:     make(chan struct{}),
 		tracer:       otel.Tracer("webserver"),
 	}
+}
+
+// armedTimer is a timer waiting to dispatch one row.
+type armedTimer struct {
+	cancel chan struct{}
+	hash   string
+}
+
+// Kick asks the poll loop to run now instead of at the next tick, so a row that
+// was just re-armed is dispatched within moments. Never blocks.
+func (s *Scheduler) Kick() {
+	select {
+	case s.kick <- struct{}{}:
+	default:
+	}
+}
+
+// CancelTimer stops the armed timer for a row, if any, and frees its dedupe
+// slot so a later poll can arm the row again. Reports whether a timer was armed.
+func (s *Scheduler) CancelTimer(id int) bool {
+	s.mu.Lock()
+	armed, ok := s.timers[id]
+	if ok {
+		delete(s.timers, id)
+		delete(s.scheduledMap, armed.hash)
+	}
+	s.mu.Unlock()
+	if ok {
+		close(armed.cancel)
+	}
+	return ok
 }
 
 // Stop gracefully shuts down the scheduler by closing stopChan. Safe to call multiple times.
@@ -62,6 +97,8 @@ func (s *Scheduler) Start(queue chan<- repository.DueItem) {
 		for {
 			select {
 			case <-ticker.C:
+				s.pollAndSchedule(queue)
+			case <-s.kick:
 				s.pollAndSchedule(queue)
 			case <-s.stopChan:
 				s.logger.Info("Scheduler polling stopped")
@@ -167,6 +204,11 @@ func (s *Scheduler) markQueued(ctx context.Context, id int) {
 
 // scheduleTimer creates a timer that sends the due item to the queue when it fires
 func (s *Scheduler) scheduleTimer(item repository.DueItem, duration time.Duration, queue chan<- repository.DueItem, contentHash string) {
+	armed := &armedTimer{cancel: make(chan struct{}), hash: contentHash}
+	s.mu.Lock()
+	s.timers[item.ID] = armed
+	s.mu.Unlock()
+
 	timer := time.NewTimer(duration)
 	defer timer.Stop()
 
@@ -184,7 +226,14 @@ func (s *Scheduler) scheduleTimer(item repository.DueItem, duration time.Duratio
 		// Remove from scheduled map (cleanup)
 		s.mu.Lock()
 		delete(s.scheduledMap, contentHash)
+		if s.timers[item.ID] == armed {
+			delete(s.timers, item.ID)
+		}
 		s.mu.Unlock()
+
+	case <-armed.cancel:
+		// CancelTimer already released the dedupe slot and the timers entry.
+		s.logger.Info("Timer cancelled", "media", item.Media.Name, "id", item.ID)
 
 	case <-s.stopChan:
 		// Scheduler stopped before timer fired
@@ -193,6 +242,9 @@ func (s *Scheduler) scheduleTimer(item repository.DueItem, duration time.Duratio
 		// Remove from scheduled map
 		s.mu.Lock()
 		delete(s.scheduledMap, contentHash)
+		if s.timers[item.ID] == armed {
+			delete(s.timers, item.ID)
+		}
 		s.mu.Unlock()
 	}
 }

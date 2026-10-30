@@ -3,7 +3,8 @@
  *
  * A request travels: scheduled (waiting for release) → searching (looking for a
  * torrent, including retries) → downloading (in qBittorrent) → completed, or
- * failed at any point. The notification bell and the Activity page both render
+ * failed at any point; the user can also cancel it at any point before it
+ * completes. The notification bell and the Activity page both render
  * these stages, so the labels and colours live here.
  */
 
@@ -12,7 +13,8 @@ export type DownloadStage =
   | "searching"
   | "downloading"
   | "completed"
-  | "failed";
+  | "failed"
+  | "cancelled";
 
 /** Stages that mean work is still in flight. */
 export const ACTIVE_STAGES: DownloadStage[] = [
@@ -27,6 +29,7 @@ const STAGE_COLORS: Record<DownloadStage, string> = {
   downloading: "#8B5CF6", // purple
   completed: "#10B981", // green
   failed: "#EF4444", // red
+  cancelled: "#64748B", // slate: stopped on purpose, not broken
 };
 
 const STAGE_DESCRIPTIONS: Record<DownloadStage, string> = {
@@ -35,6 +38,7 @@ const STAGE_DESCRIPTIONS: Record<DownloadStage, string> = {
   downloading: "Downloading",
   completed: "In your library",
   failed: "Gave up",
+  cancelled: "Cancelled",
 };
 
 const FALLBACK_COLOR = "#9CA3AF"; // gray

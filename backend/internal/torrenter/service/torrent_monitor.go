@@ -159,6 +159,14 @@ func (q *QbittHandler) monitorTorrentCompletion(
 	)
 	defer monitorSpan.End()
 
+	// Registered so a user can stop the download; the entry also tells
+	// CancelItem which torrent to delete.
+	monitorCtx, stopMonitor := context.WithCancel(monitorCtx)
+	defer stopMonitor()
+	work := &inflightWork{cancel: stopMonitor, infoHash: infoHash, title: match.Torrent.Title}
+	unregister := q.inflight.add(match.Strategy.EpisodeTvdbID, work)
+	defer unregister()
+
 	start := effectiveStart(startedAt)
 	timeout := monitorTimeout()
 	q.logger.InfoContext(monitorCtx, "Starting torrent monitor",
@@ -194,7 +202,12 @@ func (q *QbittHandler) monitorTorrentCompletion(
 			return
 		}
 
-		time.Sleep(nextPollInterval(elapsed))
+		if !sleepCtx(monitorCtx, nextPollInterval(elapsed)) {
+			q.logger.InfoContext(monitorCtx, "Torrent monitor stopped: download cancelled",
+				telemetry.WithTraceContext(monitorCtx, "torrent_title", match.Torrent.Title, "torrent_hash", infoHash)...)
+			monitorSpan.SetStatus(codes.Ok, "cancelled")
+			return
+		}
 		q.logger.InfoContext(monitorCtx, "Monitoring torrent status",
 			telemetry.WithTraceContext(monitorCtx,
 				"torrent_title", match.Torrent.Title,
@@ -207,6 +220,10 @@ func (q *QbittHandler) monitorTorrentCompletion(
 
 		torrents, err := q.queryQbittorrentWithRetries(monitorCtx, filter, 6, 10*time.Second)
 		if err != nil {
+			if work.cancelled.Load() {
+				monitorSpan.SetStatus(codes.Ok, "cancelled")
+				return
+			}
 			q.logger.WarnContext(monitorCtx, "Failed to monitor torrent after retries, marking failed",
 				telemetry.WithTraceContext(monitorCtx,
 					"torrent_title", match.Torrent.Title,

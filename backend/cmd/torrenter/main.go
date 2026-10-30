@@ -136,6 +136,7 @@ func main() {
 
 	// Initialize handlers
 	downloadHandler := handlers.NewDownloadHandler(downloadInteractor, logger)
+	controlHandler := handlers.NewControlHandler(downloadInteractor, logger)
 	mediaHandler := handlers.NewMediaHandler(mediaInteractor, logger)
 	statusHandler := handlers.NewStatusHandler(statusInteractor, logger)
 	libraryHandler := handlers.NewLibraryHandler(libraryInteractor, logger)
@@ -163,6 +164,11 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 	r.POST("/download", downloadHandler.DownloadTorrent)
+	// Download controls: stop an item, see what the indexers have for it, grab
+	// one release by hand.
+	r.POST("/downloads/cancel", controlHandler.Cancel)
+	r.POST("/releases", controlHandler.ListReleases)
+	r.POST("/downloads/manual", controlHandler.ManualDownload)
 	r.GET("/media/:hash", mediaHandler.MediaExists)
 	r.POST("/media/exists", mediaHandler.MediaExistsBatch)
 	r.POST("/status/batch", statusHandler.BatchStatus)

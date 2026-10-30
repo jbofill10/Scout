@@ -157,20 +157,7 @@ func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.To
 		"is_anime", isAnime,
 		"torrents", formatTorrentMatches(matches))
 
-	// Get preferred uploaders
-	preferred, err := q.repo.GetPreferredUploaders(ctx, mediaType, isAnime)
-	if err != nil {
-		q.logger.ErrorContext(ctx, "Error querying uploader preferences", "error", err)
-	}
-
-	if isAnime {
-		preferred = append(preferred, "SubsPlease", "Erai-raws")
-	}
-
-	if mediaType == "movie" {
-		preferred = append(preferred, "QxR", "YIFY", "GalaxyRG")
-	}
-
+	preferred := q.preferredUploaders(ctx, mediaType, isAnime)
 	q.logger.InfoContext(ctx, "Using preferred uploaders", "uploaders", preferred)
 
 	// Score each match
@@ -202,101 +189,20 @@ func (q *QbittHandler) pickBestTorrent(ctx context.Context, matches []*models.To
 			continue // Skip invalid matches
 		}
 
-		// Relaxation guardrail: broad (RelaxLevel >= 2) queries cast a wide net, so
-		// require a higher minimum confidence before accepting their matches. The
-		// validators above stay authoritative; this is an extra confidence gate.
-		minConfidence := relaxConfidenceCutoff(match.Strategy)
-		if validationResult.Confidence < minConfidence {
-			q.logger.WarnContext(ctx, "Torrent below relax-level confidence cutoff, skipping",
-				"torrent_title", match.Torrent.Title,
-				"confidence", validationResult.Confidence,
-				"min_confidence", minConfidence,
-				"relax_level", relaxLevelOf(match.Strategy))
-			continue
-		}
-
-		// Calculate final score with quality as highest priority
-		finalScore := validationResult.Confidence
-
-		// Quality boost (highest priority) - year-aware quality selection
-		// Recognizes that 4K didn't exist before 2012, prefers native HD for older content
-		qualityBoost := 0.0
-		qualityTier := 0
-		quality := ""
-
-		// Get quality from the appropriate parsed object
-		if validationResult.ParsedMovie != nil {
-			qualityTier = validationResult.ParsedMovie.GetQualityTier()
-			quality = validationResult.ParsedMovie.Quality
-		} else if validationResult.Parsed != nil {
-			qualityTier = validationResult.Parsed.GetQualityTier()
-			quality = validationResult.Parsed.Quality
-		}
-
-		// Resolution floor: anything below it, including a title whose
-		// resolution could not be parsed, is not an acceptable copy no matter
-		// how well seeded. Rejecting here (rather than scoring low) means an
-		// indexer with only sub-floor releases yields no match, so the search
-		// moves on to the fallback indexer tier instead of settling.
-		if q.minQualityTier > 0 && qualityTier < q.minQualityTier {
+		// The selection rules proper (confidence cutoff, quality floor, boosts)
+		// live in scoreMatch so the release listing reaches the same verdicts.
+		verdict := q.scoreMatch(ctx, match, validationResult, preferred)
+		if verdict.belowFloor {
 			belowFloor++
-			q.logger.WarnContext(ctx, "Torrent below minimum quality, skipping",
-				"torrent_title", match.Torrent.Title,
-				"quality", quality,
-				"quality_tier", qualityTier,
-				"min_quality_tier", q.minQualityTier)
+		}
+		if verdict.rejection != "" {
 			continue
 		}
-
-		// Calculate year-aware quality boost
-		releaseYear := ""
-		if match.Strategy != nil {
-			releaseYear = match.Strategy.ReleaseYear
-		}
-		qualityBoost = calculateYearAwareQualityBoost(qualityTier, releaseYear)
-		finalScore += qualityBoost
-
-		q.logger.InfoContext(ctx, "Calculated year-aware quality boost",
-			"torrent_title", match.Torrent.Title,
-			"quality", quality,
-			"quality_tier", qualityTier,
-			"release_year", releaseYear,
-			"quality_boost", qualityBoost,
-			"confidence", validationResult.Confidence)
-
-		// Uploader preference boost (second priority) - reduced weight to prioritize quality
-		uploaderBoost := 0.0
-		matchedUploader := ""
-		for i, uploader := range preferred {
-			if strings.Contains(strings.ToLower(match.Torrent.Title), strings.ToLower(uploader)) {
-				// Higher boost for earlier uploaders in the list
-				uploaderBoost = 0.25 * (1.0 - float64(i)*0.1)
-				if uploaderBoost < 0.1 {
-					uploaderBoost = 0.1
-				}
-				matchedUploader = uploader
-				break
-			}
-		}
-		finalScore += uploaderBoost
-
-		// Swarm health. Without this a 1080p listing with two seeders beat a
-		// 720p one with two hundred, and the pick sat in qBittorrent at 0%.
-		seedBoost := seederBoost(match.Torrent.Seeders)
-		finalScore += seedBoost
-
-		q.logger.InfoContext(ctx, "Calculated final score",
-			"torrent_title", match.Torrent.Title,
-			"final_score", finalScore,
-			"uploader_boost", uploaderBoost,
-			"matched_uploader", matchedUploader,
-			"seeders", match.Torrent.Seeders,
-			"seeder_boost", seedBoost)
 
 		scoredMatches = append(scoredMatches, &TorrentMatchWithScore{
 			TorrentMatch:     match,
 			ValidationResult: validationResult,
-			FinalScore:       finalScore,
+			FinalScore:       verdict.score,
 		})
 	}
 

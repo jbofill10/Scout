@@ -41,6 +41,8 @@ type QbittHandler struct {
 	// minQualityTier is the lowest resolution tier pickBestTorrent will accept
 	// (see QualityTier). Zero disables the floor.
 	minQualityTier int
+	// inflight is the searches and monitors a user can cancel, by item id.
+	inflight *inflightRegistry
 }
 
 const (
@@ -77,6 +79,7 @@ func NewQbittHandler(qCfg *models.QbittCfg, pCfg *models.ProwlarrCfg, repo Repos
 		repo:           repo,
 		parser:         NewTorrentParser(),
 		minQualityTier: minQualityTier(),
+		inflight:       newInflightRegistry(),
 	}
 	logger.Info("Torrent quality floor", "min_quality_tier", q.minQualityTier)
 
@@ -258,6 +261,16 @@ func (q *QbittHandler) processEpisodeDownload(
 	episodeCtx, cancel := context.WithTimeout(episodeCtx, episodeSearchDeadline)
 	defer cancel()
 
+	// Registered so a user can abort the search; see CancelItem.
+	episodeCtx, abortSearch := context.WithCancel(episodeCtx)
+	defer abortSearch()
+	var search *inflightWork
+	if len(strategies) > 0 {
+		search = &inflightWork{cancel: abortSearch}
+		unregister := q.inflight.add(strategies[0].EpisodeTvdbID, search)
+		defer unregister()
+	}
+
 	if len(strategies) > 0 {
 		episodeSpan.SetAttributes(
 			attribute.Int("episode_index", episodeIdx),
@@ -273,6 +286,14 @@ func (q *QbittHandler) processEpisodeDownload(
 		excluded = q.loadExcludedTorrents(episodeCtx, req.Id, strategies[0].Season, strategies[0].Episode)
 	}
 	outcome := q.searchForMatch(episodeCtx, strategies, req, excluded)
+
+	if search != nil && search.cancelled.Load() {
+		ss := strategies[0]
+		q.logger.InfoContext(episodeCtx, "Search cancelled by user", "media", req.Name, "tvdb_id", ss.EpisodeTvdbID)
+		episodeSpan.SetStatus(codes.Ok, "cancelled")
+		episodeSpan.End()
+		return q.failedResult(ss, dlstatus.CodeCancelled)
+	}
 
 	// If every strategy actually attempted (across all tried tiers) errored against
 	// Prowlarr, the indexers are unreachable.
@@ -313,6 +334,12 @@ func (q *QbittHandler) initiateDownloadAndMonitor(
 	ss := match.Strategy
 	infoHash, trackingUUID, err := q.downloadTorrent(ctx, match.Torrent)
 	if err != nil {
+		if ctx.Err() != nil {
+			// The search context was cancelled underneath the add (a user cancel,
+			// or the caller gave up); neither wants a retry scheduled from here.
+			q.logger.InfoContext(ctx, "Torrent add abandoned: context cancelled", "error", err)
+			return q.failedResult(ss, dlstatus.CodeCancelled)
+		}
 		q.logger.ErrorContext(ctx, "Failed to download torrent", "error", err)
 		// Transient torrent-client error: keep the notification searching for the retry engine.
 		q.applyFailureNotification(ctx, ss.EpisodeTvdbID, dlstatus.CodeTorrentClientError)

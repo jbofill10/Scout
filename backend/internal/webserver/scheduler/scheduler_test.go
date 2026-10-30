@@ -147,7 +147,9 @@ func (s *SchedulerTestSuite) TestStart_MixedDueAndFutureMedia() {
 
 	mediaList := []repository.DueItem{
 		dueItem("Already Due", time.Now().AddDate(0, 0, -1).Format("2006-01-02")),
-		dueItem("Future", time.Now().AddDate(0, 0, 1).Format("2006-01-02")),
+		// Two days out: dueItem parses the date at midnight UTC, so "tomorrow"
+		// is already due during the evening in timezones west of UTC.
+		dueItem("Future", time.Now().AddDate(0, 0, 2).Format("2006-01-02")),
 	}
 
 	mockRepo.On("ResetStaleQueued", mock.Anything, mock.Anything).Return(int64(0), nil)

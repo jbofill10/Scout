@@ -4,6 +4,7 @@ import {
   Search as SearchingIcon,
   Schedule as ScheduledIcon,
   Error as FailedIcon,
+  Block as CancelledIcon,
 } from "@mui/icons-material";
 
 /**
@@ -20,6 +21,8 @@ export function getStageIcon(stage: string | undefined, fontSize = 18) {
       return <ScheduledIcon sx={{ fontSize }} />;
     case "failed":
       return <FailedIcon sx={{ fontSize }} />;
+    case "cancelled":
+      return <CancelledIcon sx={{ fontSize }} />;
     case "searching":
     default:
       return <SearchingIcon sx={{ fontSize }} />;
