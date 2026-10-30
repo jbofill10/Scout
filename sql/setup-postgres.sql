@@ -247,3 +247,14 @@ CREATE INDEX IF NOT EXISTS idx_notifications_is_read ON Notifications(is_read);
 -- Note: After running this script on a fresh database or applying migrations,
 -- restart the torrenter service to trigger syncPlexLibrary() which will
 -- populate the tvdb_id values from Plex's external metadata.
+
+-- Runtime settings edited from the Settings page; each row overrides one
+-- environment default. See backend/pkg/dbmigrate/migrations/009.
+CREATE TABLE IF NOT EXISTS Settings (
+    key TEXT PRIMARY KEY,
+    value JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_uploader_preferences_unique
+ON UploaderPreferences (mediaType, isAnime, lower(uploaderName));

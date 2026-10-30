@@ -9,6 +9,8 @@ import (
 	library "github.com/jbofill10/scout/backend/pkg/library"
 	media "github.com/jbofill10/scout/backend/pkg/media"
 	notifications "github.com/jbofill10/scout/backend/pkg/notifications"
+	settings "github.com/jbofill10/scout/backend/pkg/settings"
+
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -713,4 +715,67 @@ func NewRepository(t interface {
 	t.Cleanup(func() { mock.AssertExpectations(t) })
 
 	return mock
+}
+
+// ListUploaderPreferences provides a mock function with given fields: ctx
+func (_m *Repository) ListUploaderPreferences(ctx context.Context) ([]settings.UploaderPreference, error) {
+	ret := _m.Called(ctx)
+
+	var r0 []settings.UploaderPreference
+	if rf, ok := ret.Get(0).(func(context.Context) []settings.UploaderPreference); ok {
+		r0 = rf(ctx)
+	} else if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]settings.UploaderPreference)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = rf(ctx)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// AddUploaderPreference provides a mock function with given fields: ctx, p
+func (_m *Repository) AddUploaderPreference(ctx context.Context, p settings.NewUploaderPreference) (settings.UploaderPreference, error) {
+	ret := _m.Called(ctx, p)
+
+	var r0 settings.UploaderPreference
+	if rf, ok := ret.Get(0).(func(context.Context, settings.NewUploaderPreference) settings.UploaderPreference); ok {
+		r0 = rf(ctx, p)
+	} else {
+		r0 = ret.Get(0).(settings.UploaderPreference)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context, settings.NewUploaderPreference) error); ok {
+		r1 = rf(ctx, p)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// DeleteUploaderPreference provides a mock function with given fields: ctx, id
+func (_m *Repository) DeleteUploaderPreference(ctx context.Context, id int) (bool, error) {
+	ret := _m.Called(ctx, id)
+
+	var r0 bool
+	if rf, ok := ret.Get(0).(func(context.Context, int) bool); ok {
+		r0 = rf(ctx, id)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context, int) error); ok {
+		r1 = rf(ctx, id)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
 }

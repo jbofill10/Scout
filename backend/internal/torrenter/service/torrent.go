@@ -43,6 +43,30 @@ type QbittHandler struct {
 	minQualityTier int
 	// inflight is the searches and monitors a user can cancel, by item id.
 	inflight *inflightRegistry
+	// settings, when set, overrides minQualityTier with the runtime setting.
+	settings QualitySettings
+}
+
+// QualitySettings is the slice of the runtime settings the picker needs.
+type QualitySettings interface {
+	MinQuality() string
+}
+
+// SetSettings makes the picker read its quality floor from the runtime
+// settings instead of the value fixed at start-up.
+func (q *QbittHandler) SetSettings(s QualitySettings) {
+	q.settings = s
+}
+
+// qualityFloor is the effective resolution floor: the runtime setting when
+// one is wired, else the start-up value.
+func (q *QbittHandler) qualityFloor() int {
+	if q.settings != nil {
+		if label := q.settings.MinQuality(); label != "" {
+			return QualityTier(label)
+		}
+	}
+	return q.minQualityTier
 }
 
 const (

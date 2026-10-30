@@ -25,16 +25,47 @@ type PlexSyncScheduler struct {
 	retry    time.Duration // wait before the start-up sync's one retry
 	requests chan struct{}
 	logger   *slog.Logger
+	// settings, when set, overrides delay and interval at runtime. The
+	// interval is re-read every settingsCheck so a change takes effect
+	// without a restart.
+	settings      SyncSettings
+	settingsCheck time.Duration
+}
+
+// SyncSettings is the slice of the runtime settings the sync scheduler needs.
+type SyncSettings interface {
+	PlexSyncDelay() time.Duration
+	PlexSyncInterval() time.Duration
+}
+
+// SetSettings makes the delay and interval follow the runtime settings.
+func (s *PlexSyncScheduler) SetSettings(settings SyncSettings) {
+	s.settings = settings
+}
+
+func (s *PlexSyncScheduler) currentDelay() time.Duration {
+	if s.settings != nil {
+		return s.settings.PlexSyncDelay()
+	}
+	return s.delay
+}
+
+func (s *PlexSyncScheduler) currentInterval() time.Duration {
+	if s.settings != nil {
+		return s.settings.PlexSyncInterval()
+	}
+	return s.interval
 }
 
 func NewPlexSyncScheduler(plex PlexService, delay, interval time.Duration, logger *slog.Logger) *PlexSyncScheduler {
 	return &PlexSyncScheduler{
-		plex:     plex,
-		delay:    delay,
-		interval: interval,
-		retry:    startupRetryDelay,
-		requests: make(chan struct{}, 1),
-		logger:   logger,
+		plex:          plex,
+		delay:         delay,
+		interval:      interval,
+		retry:         startupRetryDelay,
+		requests:      make(chan struct{}, 1),
+		logger:        logger,
+		settingsCheck: time.Minute,
 	}
 }
 
@@ -50,12 +81,22 @@ func (s *PlexSyncScheduler) RequestSync() {
 
 // Run blocks until ctx is done, so it is started as a goroutine.
 func (s *PlexSyncScheduler) Run(ctx context.Context) {
+	// The periodic ticker follows the effective interval; it is rebuilt when
+	// the setting changes.
 	var tick <-chan time.Time
-	if s.interval > 0 {
-		ticker := time.NewTicker(s.interval)
-		defer ticker.Stop()
+	var ticker *time.Ticker
+	interval := s.currentInterval()
+	if interval > 0 {
+		ticker = time.NewTicker(interval)
 		tick = ticker.C
 	}
+	defer func() {
+		if ticker != nil {
+			ticker.Stop()
+		}
+	}()
+	settingsTicker := time.NewTicker(s.settingsCheck)
+	defer settingsTicker.Stop()
 
 	// Armed by every request, so the sync lands `delay` after the last file did
 	// and Plex has had time to scan it. The ticker bounds how long a steady
@@ -75,7 +116,7 @@ func (s *PlexSyncScheduler) Run(ctx context.Context) {
 			s.logger.InfoContext(ctx, "Plex sync scheduler stopped")
 			return
 		case <-s.requests:
-			pending = time.After(s.delay)
+			pending = time.After(s.currentDelay())
 		case <-pending:
 			pending = nil
 			if err := s.sync(ctx); err != nil {
@@ -84,6 +125,19 @@ func (s *PlexSyncScheduler) Run(ctx context.Context) {
 		case <-tick:
 			if err := s.sync(ctx); err != nil {
 				s.logger.ErrorContext(ctx, "Periodic Plex library sync failed", "error", err)
+			}
+		case <-settingsTicker.C:
+			if next := s.currentInterval(); next != interval {
+				s.logger.InfoContext(ctx, "Plex sync interval changed", "from", interval.String(), "to", next.String())
+				if ticker != nil {
+					ticker.Stop()
+					ticker, tick = nil, nil
+				}
+				interval = next
+				if interval > 0 {
+					ticker = time.NewTicker(interval)
+					tick = ticker.C
+				}
 			}
 		}
 	}

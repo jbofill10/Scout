@@ -8,6 +8,7 @@ import Tooltip from '@mui/material/Tooltip';
 import Box from '@mui/material/Box';
 import Badge from '@mui/material/Badge';
 import SearchIcon from '@mui/icons-material/Search';
+import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
 import { alpha, useTheme } from '@mui/material/styles';
 import NotificationDropdown from './NotificationDropdown';
 import ScoutLogo from './ScoutLogo';
@@ -146,6 +147,25 @@ const Navbar: React.FC<NavbarProps> = ({ onSearchClick }) => {
         {/* Right: Notifications and Search */}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
           <NotificationDropdown />
+
+          <Tooltip title="Settings">
+            <IconButton
+              component={Link}
+              to="/settings"
+              aria-label="Settings"
+              aria-current={isActive('/settings') ? 'page' : undefined}
+              sx={{
+                color: isActive('/settings') ? theme.palette.text.primary : theme.palette.text.secondary,
+                backgroundColor: isActive('/settings') ? alpha(theme.palette.primary.main, 0.22) : 'transparent',
+                '&:hover': {
+                  color: theme.palette.text.primary,
+                  backgroundColor: alpha(theme.palette.primary.main, 0.14),
+                },
+              }}
+            >
+              <SettingsRoundedIcon />
+            </IconButton>
+          </Tooltip>
 
           <Tooltip title="Search">
             <IconButton

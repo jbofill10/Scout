@@ -14,6 +14,9 @@ import (
 func Load() (models.TorrenterConf, error) {
 	var cfg models.TorrenterConf
 
+	// Resolution floor default; the Settings page can override it at runtime.
+	cfg.Downloads.MinQuality = getEnv("MIN_QUALITY", "1080p")
+
 	// Load Prowlarr config
 	cfg.Prowlarr.Host = getEnv("PROWLARR_HOST", "")
 	if cfg.Prowlarr.Host == "" {
