@@ -14,6 +14,7 @@ import (
 	"github.com/jbofill10/scout/backend/internal/webserver/config"
 	"github.com/jbofill10/scout/backend/internal/webserver/handlers"
 	"github.com/jbofill10/scout/backend/internal/webserver/interactors"
+	"github.com/jbofill10/scout/backend/internal/webserver/outbound"
 	"github.com/jbofill10/scout/backend/internal/webserver/repository"
 	"github.com/jbofill10/scout/backend/internal/webserver/scheduler"
 	"github.com/jbofill10/scout/backend/pkg/dbmigrate"
@@ -81,6 +82,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	targetRepo, err := repository.NewTargetRepo(logger, cfg.Database.ConnStr)
+	if err != nil {
+		logger.Error("Failed to init notification target repo", "error", err)
+		os.Exit(1)
+	}
+
 	// Initialize media queue for scheduled downloads
 	queue := make(chan repository.DueItem, 100)
 
@@ -140,6 +147,11 @@ func main() {
 	followInteractor.Start(followCtx)
 	logger.Info("Follow checks scheduled", "interval", cfg.FollowCheckInterval.String())
 
+	// Outbound notifications: deliver finished / failed / cancelled outcomes to
+	// webhooks, ntfy and Discord.
+	dispatcher := outbound.NewDispatcher(notificationRepo, targetRepo, outbound.NewHTTPSender(), 15*time.Second, logger)
+	dispatcher.Start(followCtx)
+
 	// Setup graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -185,6 +197,7 @@ func main() {
 	followHandler := handlers.NewFollowHandler(followInteractor, logger)
 	missingInteractor := interactors.NewMissingInteractor(torrenterClient, schedulerRepo, notificationRepo, downloadInteractor, logger)
 	missingHandler := handlers.NewMissingHandler(missingInteractor, logger)
+	targetHandler := handlers.NewNotificationTargetHandler(targetRepo, dispatcher, logger)
 
 	// Setup routes
 	r := gin.Default()
@@ -234,6 +247,13 @@ func main() {
 	r.GET("/settings/uploaders", settingsHandler.ListUploaders)
 	r.POST("/settings/uploaders", settingsHandler.AddUploader)
 	r.DELETE("/settings/uploaders/:id", settingsHandler.DeleteUploader)
+
+	// Outbound notification targets
+	r.GET("/notification-targets", targetHandler.List)
+	r.POST("/notification-targets", targetHandler.Create)
+	r.PUT("/notification-targets/:id", targetHandler.Update)
+	r.DELETE("/notification-targets/:id", targetHandler.Delete)
+	r.POST("/notification-targets/:id/test", targetHandler.Test)
 
 	// Followed shows
 	r.GET("/follows", followHandler.List)

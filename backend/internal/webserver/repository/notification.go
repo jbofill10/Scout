@@ -339,3 +339,61 @@ func (r *NotificationRepo) ExistingTvdbIDs(ctx context.Context, tvdbIDs []string
 	}
 	return found, rows.Err()
 }
+
+// PendingDeliveries returns notifications in a terminal status that has not
+// been delivered to outbound targets yet, oldest change first.
+func (r *NotificationRepo) PendingDeliveries(ctx context.Context, limit int) ([]notifications.Notification, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, tvdb_id, media_title, category, season, episode, absolute_episode,
+		       COALESCE(poster_url, ''), is_anime, status, COALESCE(reason, ''), created_at, updated_at
+		FROM Notifications
+		WHERE status IN ('completed', 'failed', 'cancelled')
+		  AND notified_status IS DISTINCT FROM status
+		ORDER BY updated_at ASC
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query pending deliveries: %w", err)
+	}
+	defer rows.Close()
+
+	out := []notifications.Notification{}
+	for rows.Next() {
+		var n notifications.Notification
+		var season, episode, absolute sql.NullInt64
+		if err := rows.Scan(&n.ID, &n.TvdbID, &n.MediaTitle, &n.Category, &season, &episode, &absolute,
+			&n.PosterURL, &n.IsAnime, &n.Status, &n.Reason, &n.CreatedAt, &n.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan pending delivery: %w", err)
+		}
+		if season.Valid {
+			v := int(season.Int64)
+			n.Season = &v
+		}
+		if episode.Valid {
+			v := int(episode.Int64)
+			n.Episode = &v
+		}
+		if absolute.Valid {
+			v := int(absolute.Int64)
+			n.AbsoluteEpisode = &v
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// MarkNotified records that status was delivered for a notification. The
+// status guard makes it a no-op when the row has already moved on, so the
+// new status is delivered by a later poll.
+func (r *NotificationRepo) MarkNotified(ctx context.Context, id int, status string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	_, err := r.db.ExecContext(ctx, `UPDATE Notifications SET notified_status = $1 WHERE id = $2 AND status = $1`, status, id)
+	if err != nil {
+		return fmt.Errorf("failed to mark notification delivered: %w", err)
+	}
+	return nil
+}

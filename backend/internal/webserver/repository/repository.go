@@ -26,6 +26,12 @@ type NotificationRepository interface {
 	// notification (any status), so a follow check can skip them
 	ExistingTvdbIDs(ctx context.Context, tvdbIDs []string) (map[string]bool, error)
 
+	// PendingDeliveries returns terminal notifications whose status has not been
+	// delivered to outbound targets yet, oldest change first
+	PendingDeliveries(ctx context.Context, limit int) ([]notifications.Notification, error)
+	// MarkNotified records that status was delivered; a no-op if the status moved on
+	MarkNotified(ctx context.Context, id int, status string) error
+
 	// DismissFinished soft-deletes every visible notification that is done: completed
 	// ones, and failed ones whose tvdb id is not in keepTvdbIDs (the ids the scheduler
 	// still has a pending retry for). In-flight statuses are never touched.
