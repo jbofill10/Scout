@@ -22,8 +22,8 @@ services:
 
   tvdb-proxy:
     build:
-      context: .
-      dockerfile: tvdb_proxy/Dockerfile
+      context: ./backend
+      dockerfile: Dockerfile.tvdb-proxy
     container_name: scout-tvdb-proxy
     environment:
       BIND_ADDRESS: 0.0.0.0:22000
@@ -47,8 +47,8 @@ services:
 
   torrenter:
     build:
-      context: .
-      dockerfile: torrenter/Dockerfile
+      context: ./backend
+      dockerfile: Dockerfile.torrenter
     container_name: scout-torrenter
     environment:
       BIND_ADDRESS: 0.0.0.0:22001
@@ -104,8 +104,8 @@ services:
 
   webserver:
     build:
-      context: .
-      dockerfile: webserver/Dockerfile
+      context: ./backend
+      dockerfile: Dockerfile.webserver
     container_name: scout-webserver
     # So a webhook target can reach services on the host (Home Assistant, ntfy)
     extra_hosts:

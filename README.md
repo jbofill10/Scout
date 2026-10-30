@@ -17,10 +17,22 @@ Over-engineered microservices architecture for automated media torrenting with a
 
 Scout is built as four microservices that work together:
 
-- **webserver** (Go): Central coordinator, REST API, episode scheduling
-- **tvdb_proxy** (Go): TVDB API proxy for media search and metadata
-- **torrenter** (Go): Download processor with qBittorrent and Plex integration
+- **webserver** (Go): Central coordinator, REST API, episode scheduling, followed shows, outbound notifications
+- **tvdb-proxy** (Go): TVDB API proxy for media search and metadata
+- **torrenter** (Go): Download processor with qBittorrent, Prowlarr and Plex integration, runtime settings, indexer health, quality upgrades
 - **ui** (React/TypeScript): Web interface for search and management
+
+The three Go services live in one module under `backend/` (`cmd/<service>` for wiring, `internal/<service>` for the code, `pkg/` for what they share). Schema migrations are embedded in `backend/pkg/dbmigrate` and applied automatically when the webserver or torrenter starts.
+
+## ✨ What it does
+
+- Search TVDB with years, people and filters; request a movie, a season or single episodes; aired episodes are searched for right away and future ones scheduled for release.
+- Picks torrents by quality, seeders and preferred uploaders, with a quality floor, a disk-space guard and dead-swarm replacement; links finished files into Plex and fetches subtitles.
+- **Activity** page: every request's stage, retry schedule and failure reason; cancel an item, retry it now, or pick the release yourself; an Upcoming list of everything scheduled; indexer health with the host's exit relay.
+- **Follow a show** so new seasons are requested automatically; a **Missing** tab lists aired episodes your library lacks with a one-click fill.
+- **Settings** page: quality floor, free-space reserve, preferred uploaders, subtitles, Plex sync timing, season packs, quality upgrades, relay rotation, and notification targets (webhook / Home Assistant, ntfy, Discord), all changeable at runtime.
+- Optional **season packs** (one torrent for a season) and **quality upgrades** (replace copies below a cutoff), both off until enabled.
+- Optional **Mullvad relay rotation**: with `tools/relay-agent` on the host, a Cloudflare ban on an indexer moves the exit IP and re-enables the indexer on its own.
 
 ## 🚀 Quick Start with Docker Compose (Recommended)
 
@@ -62,41 +74,23 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed documentation.
 
 ## 🐳 Running Services Locally (Without Docker)
 
-Each service can run independently for development:
+Each service can run independently for development (all Go commands from `backend/`):
 
-### 1. Start tvdb_proxy
 ```bash
-cd tvdb_proxy
-go run main.go
-# Listens on localhost:22000
-```
+cd backend
+export $(grep -v '^#' ../.env | xargs)
+go run ./cmd/tvdb-proxy    # localhost:22000
+go run ./cmd/torrenter     # localhost:22001
+go run ./cmd/webserver     # 0.0.0.0:22920 (BIND_ADDRESS)
 
-### 2. Start torrenter
-```bash
-cd torrenter
-go run cmd/torrenter/main.go
-# Listens on localhost:22001
-```
-
-### 3. Start webserver
-```bash
-cd webserver
-go run cmd/webserver/main.go
-# Listens on 0.0.0.0:22920 (configurable via BIND_ADDRESS env var)
-```
-
-### 4. Start UI
-```bash
-cd ui
+cd ../ui
 npm install
-npm run dev
-# Listens on localhost:5173
+npm run dev                # localhost:5173, proxies /api to the webserver
 ```
 
-**Configuration Note:** Services will look for configuration in this order:
-1. Environment variables from `.env` file (highest priority)
-2. Local TOML files (tvdb_proxy only, for local development without Docker)
-3. Default values coded in services
+Tests: `cd backend && go test ./...` and `cd ui && npm test`.
+
+**Configuration Note:** Services read environment variables (from `.env` or exported), then defaults coded in the services. The Settings page overrides the download, subtitle, sync, pack, upgrade and relay knobs at runtime without a restart.
 
 ## 📋 Configuration
 
@@ -118,24 +112,18 @@ Required secrets:
 - **Plex** token and library sections - Get token from https://support.plex.tv/articles/204059436
 - **Database** password (optional, has default: scoutpass)
 
-### Local Development (Without Docker)
-
-For running services directly without containers, you can use TOML config files:
-- `tvdb_proxy/api.toml`: TVDB API credentials (optional, can use env vars)
-- `torrenter/config.toml`: Service settings (optional, can use env vars)
-
-Or export environment variables from your `.env` file:
-```bash
-export $(cat .env | xargs)
-```
+### Optional integrations
+- **Subtitles**: `OPENSUBTITLES_API_KEY` (+ account) turns on subtitle fetching.
+- **Relay rotation**: install `tools/relay-agent` on the host and set `RELAY_AGENT_URL` / `RELAY_AGENT_TOKEN`; see `tools/relay-agent/README.md`.
+- **Notifications**: add webhook, ntfy or Discord targets on the Settings page; a Home Assistant webhook URL works as a webhook target.
 
 ## 🔧 Tech Stack
 
 **Backend:**
-- Go 1.23+
+- Go 1.24+
 - Gin web framework
 - PostgreSQL (shared database for all services)
-- TOML configuration
+- OpenTelemetry tracing and logs (SigNoz)
 
 **Frontend:**
 - React 19
