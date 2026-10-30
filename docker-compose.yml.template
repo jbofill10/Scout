@@ -107,6 +107,7 @@ services:
       BIND_ADDRESS: 0.0.0.0:22920
       TVDB_PROXY_HOST: tvdb-proxy:22000
       TORRENTER_HOST: torrenter:22001
+      FOLLOW_CHECK_INTERVAL: ${FOLLOW_CHECK_INTERVAL:-6h}
       DB_HOST: postgres
       DB_USER: ${DB_USER:-scoutuser}
       DB_PASSWORD: ${DB_PASSWORD:-scoutpass}

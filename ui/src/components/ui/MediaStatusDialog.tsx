@@ -23,6 +23,7 @@ import { alpha, useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import { useShowMetadataStatus } from "../../hooks/useLibrary";
 import { useMediaDetails } from "../../hooks/useMediaDetails";
+import FollowButton from "./FollowButton";
 
 export interface MediaStatusDialogProps {
   open: boolean;
@@ -446,6 +447,11 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
         borderTop: `1px solid ${theme.palette.divider}`,
       }}
     >
+      {!isMovie && resolvedTvdbId && (
+        <Box sx={{ mr: "auto" }}>
+          <FollowButton media={{ id: resolvedTvdbId, mediaName, image_url: posterUrl }} size="small" />
+        </Box>
+      )}
       <Button onClick={onClose} variant="text" color="inherit">
         Close
       </Button>

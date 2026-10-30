@@ -314,3 +314,28 @@ func (r *NotificationRepo) CleanupOld(ctx context.Context, retentionDays int) er
 
 	return nil
 }
+
+// ExistingTvdbIDs returns the subset of tvdbIDs that have a notification in
+// any status, dismissed or not.
+func (r *NotificationRepo) ExistingTvdbIDs(ctx context.Context, tvdbIDs []string) (map[string]bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	found := map[string]bool{}
+	if len(tvdbIDs) == 0 {
+		return found, nil
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT DISTINCT tvdb_id FROM Notifications WHERE tvdb_id = ANY($1)`, pq.Array(tvdbIDs))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query existing notifications: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		found[id] = true
+	}
+	return found, rows.Err()
+}

@@ -250,6 +250,27 @@ func (_m *NotificationRepository) CleanupOld(ctx context.Context, retentionDays 
 	return r0
 }
 
+// ExistingTvdbIDs provides a mock function with given fields: ctx, tvdbIDs
+func (_m *NotificationRepository) ExistingTvdbIDs(ctx context.Context, tvdbIDs []string) (map[string]bool, error) {
+	ret := _m.Called(ctx, tvdbIDs)
+
+	var r0 map[string]bool
+	if rf, ok := ret.Get(0).(func(context.Context, []string) map[string]bool); ok {
+		r0 = rf(ctx, tvdbIDs)
+	} else if ret.Get(0) != nil {
+		r0 = ret.Get(0).(map[string]bool)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context, []string) error); ok {
+		r1 = rf(ctx, tvdbIDs)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // NewNotificationRepository creates a new instance of NotificationRepository
 func NewNotificationRepository(t interface {
 	mock.TestingT

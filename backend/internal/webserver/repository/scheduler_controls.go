@@ -187,3 +187,35 @@ func (r *SchedulerRepo) GetUpcoming(ctx context.Context) ([]UpcomingItem, error)
 	}
 	return items, nil
 }
+
+// TrackedItemKeys returns the notification key of every scheduled row, in any
+// status. Cancelled and completed rows count: a follow check must not bring
+// back an episode the user stopped or already has.
+func (r *SchedulerRepo) TrackedItemKeys(ctx context.Context) (map[string]bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	rows, err := r.db.QueryContext(ctx, `SELECT media FROM ScheduledDownloads`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query tracked items: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			r.logger.ErrorContext(ctx, "Failed to close rows", "error", err)
+		}
+	}()
+
+	keys := map[string]bool{}
+	for rows.Next() {
+		var mediaJSON []byte
+		if err := rows.Scan(&mediaJSON); err != nil {
+			return nil, fmt.Errorf("failed to scan tracked item: %w", err)
+		}
+		var media tvdb.Media
+		if err := json.Unmarshal(mediaJSON, &media); err != nil {
+			continue
+		}
+		keys[NotificationKey(media)] = true
+	}
+	return keys, rows.Err()
+}

@@ -494,3 +494,15 @@ func (s *SchedulerRepoTestSuite) TestSchedule_RevivesCancelledRow() {
 		"a cancelled row is revived and reported as newly scheduled")
 	s.NoError(s.mock.ExpectationsWereMet())
 }
+
+func (s *SchedulerRepoTestSuite) TestTrackedItemKeys_EveryStatus() {
+	ep, _ := json.Marshal(tvdb.Media{Id: "900", Metadata: tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{{Id: 55}}}})
+	movie, _ := json.Marshal(tvdb.Media{Id: "77", Category: "movie"})
+	s.mock.ExpectQuery(`SELECT media FROM ScheduledDownloads`).
+		WillReturnRows(sqlmock.NewRows([]string{"media"}).AddRow(ep).AddRow(movie).AddRow([]byte("not json")))
+
+	keys, err := s.repo.TrackedItemKeys(context.Background())
+
+	s.Require().NoError(err)
+	s.Equal(map[string]bool{"55": true, "77": true}, keys)
+}

@@ -444,3 +444,19 @@ func (s *NotificationRepoTestSuite) TestCleanupOld_NoRecordsToClean() {
 	s.NoError(err)
 	s.NoError(s.mock.ExpectationsWereMet())
 }
+
+func (s *NotificationRepoTestSuite) TestExistingTvdbIDs() {
+	s.mock.ExpectQuery(`SELECT DISTINCT tvdb_id FROM Notifications WHERE tvdb_id = ANY\(\$1\)`).
+		WithArgs(pq.Array([]string{"1", "2", "3"})).
+		WillReturnRows(sqlmock.NewRows([]string{"tvdb_id"}).AddRow("2"))
+
+	found, err := s.repo.ExistingTvdbIDs(context.Background(), []string{"1", "2", "3"})
+
+	s.NoError(err)
+	s.Equal(map[string]bool{"2": true}, found)
+
+	empty, err := s.repo.ExistingTvdbIDs(context.Background(), nil)
+	s.NoError(err)
+	s.Empty(empty)
+	s.NoError(s.mock.ExpectationsWereMet())
+}

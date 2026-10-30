@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 )
 
 // Config holds the webserver configuration
@@ -11,6 +12,8 @@ type Config struct {
 	BindAddress   string
 	TVDBProxyHost string
 	TorrenterHost string
+	// FollowCheckInterval is how often followed shows are re-checked against TVDB.
+	FollowCheckInterval time.Duration
 }
 
 // DatabaseConfig holds database connection settings
@@ -46,6 +49,14 @@ func Load() (Config, error) {
 
 	// Server configuration
 	cfg.BindAddress = getEnv("BIND_ADDRESS", "0.0.0.0:22920")
+
+	// Followed shows
+	followInterval := getEnv("FOLLOW_CHECK_INTERVAL", "6h")
+	d, err := time.ParseDuration(followInterval)
+	if err != nil || d < time.Minute {
+		return cfg, fmt.Errorf("invalid FOLLOW_CHECK_INTERVAL value: %s (want a duration of at least 1m)", followInterval)
+	}
+	cfg.FollowCheckInterval = d
 
 	return cfg, nil
 }

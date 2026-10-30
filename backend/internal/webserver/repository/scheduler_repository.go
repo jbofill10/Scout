@@ -82,6 +82,9 @@ type SchedulerRepository interface {
 	CancelRow(ctx context.Context, id int) error
 	RearmRow(ctx context.Context, id int, resetAttempts bool) error
 	GetUpcoming(ctx context.Context) ([]UpcomingItem, error)
+	// TrackedItemKeys is the item key of every row in any status, so a follow
+	// check never re-requests something Scout already handled or the user cancelled.
+	TrackedItemKeys(ctx context.Context) (map[string]bool, error)
 }
 
 type SchedulerRepo struct {
