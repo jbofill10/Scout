@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +32,12 @@ type fakeQbittorrent struct {
 	deleted []string
 	// addStatus is what /torrents/add answers; 0 means 200.
 	addStatus int
+	// info, when set, answers /torrents/info; it is called once per poll with
+	// the poll number so a test can script progress over time.
+	info  func(poll int) []map[string]any
+	polls int
+	// rechecked collects the hashes sent to /torrents/recheck.
+	rechecked []string
 }
 
 func (f *fakeQbittorrent) handler() http.HandlerFunc {
@@ -50,6 +57,24 @@ func (f *fakeQbittorrent) handler() http.HandlerFunc {
 				http.Error(w, "add failed", f.addStatus)
 				return
 			}
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			f.mu.Lock()
+			f.polls++
+			poll := f.polls
+			fn := f.info
+			f.mu.Unlock()
+			if fn == nil {
+				_, _ = w.Write([]byte("[]"))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(fn(poll))
+		case "/api/v2/torrents/recheck":
+			_ = r.ParseForm()
+			f.mu.Lock()
+			f.rechecked = append(f.rechecked, r.Form.Get("hashes"))
+			f.mu.Unlock()
 			_, _ = w.Write([]byte("Ok."))
 		default:
 			http.NotFound(w, r)

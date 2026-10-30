@@ -91,6 +91,9 @@ func (c *DownloadControlInteractor) Cancel(ctx context.Context, itemKey string) 
 		return out, fmt.Errorf("find rows: %w", err)
 	}
 	for _, row := range rows {
+		if row.ScheduleStatus == repository.StatusCompleted {
+			continue // history, not work: nothing to cancel
+		}
 		if c.timers.CancelTimer(row.ID) {
 			out.TimersCancelled++
 		}
@@ -142,9 +145,26 @@ func (c *DownloadControlInteractor) RetryNow(ctx context.Context, itemKey string
 		}
 	}
 
-	for _, row := range rows {
+	// Live rows (pending, failed) are re-armed as they are. When the item only
+	// has completed rows, the download it started was lost later on; the
+	// newest completed row carries the payload to retry from.
+	live := rows[:0:0]
+	var lastCompleted *repository.ScheduledRow
+	for idx := range rows {
+		row := rows[idx]
+		if row.ScheduleStatus == repository.StatusCompleted {
+			lastCompleted = &rows[idx]
+			continue
+		}
+		live = append(live, row)
+	}
+	if len(live) == 0 && lastCompleted != nil {
+		live = append(live, *lastCompleted)
+	}
+
+	for _, row := range live {
 		c.timers.CancelTimer(row.ID)
-		if err := c.repo.RearmRow(ctx, row.ID, row.ScheduleStatus == repository.StatusFailed); err != nil {
+		if err := c.repo.RearmRow(ctx, row.ID, row.ScheduleStatus != repository.StatusPending); err != nil {
 			c.logger.ErrorContext(ctx, "Failed to re-arm scheduled row", "error", err, "id", row.ID, "tvdb_id", itemKey)
 			continue
 		}

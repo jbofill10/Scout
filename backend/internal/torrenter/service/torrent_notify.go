@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 
+	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	"github.com/jbofill10/scout/backend/pkg/notifications"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 )
@@ -10,6 +11,18 @@ import (
 // updateNotificationStatus updates a notification with the given status and reason
 // This is a generalized function used by all notification update operations to reduce code duplication
 func (q *QbittHandler) updateNotificationStatus(ctx context.Context, tvdbId, reason string, status notifications.NotificationStatus) {
+	q.setNotification(ctx, tvdbId, status, reason, "")
+}
+
+// failNotification marks an item failed with the machine-readable code behind
+// the reason. The webserver reads the code to decide whether a failure the
+// torrenter reported on its own (a lost monitor, a dead swarm, a torrent that
+// vanished from qBittorrent) is transient and deserves a retry.
+func (q *QbittHandler) failNotification(ctx context.Context, tvdbId string, code dlstatus.FailureCode, reason string) {
+	q.setNotification(ctx, tvdbId, notifications.StatusFailed, reason, string(code))
+}
+
+func (q *QbittHandler) setNotification(ctx context.Context, tvdbId string, status notifications.NotificationStatus, reason, failureCode string) {
 	notification, err := q.repo.GetNotification(ctx, tvdbId)
 
 	if err != nil {
@@ -32,6 +45,9 @@ func (q *QbittHandler) updateNotificationStatus(ctx context.Context, tvdbId, rea
 	// Update notification fields
 	notification.Status = status
 	notification.Reason = reason
+	// A code only means something on a failed row; every other transition
+	// clears whatever an earlier failure left behind.
+	notification.FailureCode = failureCode
 
 	err = q.repo.UpdateNotification(ctx, notification)
 	if err != nil {

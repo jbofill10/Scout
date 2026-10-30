@@ -170,6 +170,49 @@ func TestControlRetryNow(t *testing.T) {
 		assert.Equal(t, []int{1, 2}, timers.cancelled)
 		assert.Equal(t, 1, timers.kicks)
 	})
+
+	t.Run("only completed rows: the newest is re-armed with a fresh budget", func(t *testing.T) {
+		repo := &fakeControlRepo{rows: []repository.ScheduledRow{row(1, repository.StatusCompleted), row(2, repository.StatusCompleted)}}
+		notifs := repoMocks.NewNotificationRepository(t)
+		notifs.On("GetNotification", mock.Anything, "55").Return(&notifications.Notification{ID: 3, TvdbID: "55", Status: notifications.StatusFailed}, nil)
+		notifs.On("UpdateNotification", mock.Anything, mock.Anything).Return(nil)
+
+		c := NewDownloadControlInteractor(repo, notifs, &fakeTimers{}, &fakeControlTorrenter{}, testLogger())
+		out, err := c.RetryNow(context.Background(), "55")
+
+		require.NoError(t, err)
+		assert.Equal(t, 1, out.Rearmed)
+		assert.Equal(t, map[int]bool{2: true}, repo.rearmed, "history rows other than the newest stay as they are")
+	})
+
+	t.Run("live rows win over completed ones", func(t *testing.T) {
+		repo := &fakeControlRepo{rows: []repository.ScheduledRow{row(1, repository.StatusCompleted), row(2, repository.StatusFailed)}}
+		notifs := repoMocks.NewNotificationRepository(t)
+		notifs.On("GetNotification", mock.Anything, "55").Return(&notifications.Notification{ID: 3, TvdbID: "55"}, nil)
+		notifs.On("UpdateNotification", mock.Anything, mock.Anything).Return(nil)
+
+		c := NewDownloadControlInteractor(repo, notifs, &fakeTimers{}, &fakeControlTorrenter{}, testLogger())
+		out, err := c.RetryNow(context.Background(), "55")
+
+		require.NoError(t, err)
+		assert.Equal(t, 1, out.Rearmed)
+		assert.Equal(t, map[int]bool{2: true}, repo.rearmed)
+	})
+}
+
+// Completed rows are history: cancelling an item never touches them.
+func TestControlCancel_SkipsCompletedRows(t *testing.T) {
+	repo := &fakeControlRepo{rows: []repository.ScheduledRow{row(1, repository.StatusCompleted), row(2, repository.StatusPending)}}
+	notifs := repoMocks.NewNotificationRepository(t)
+	notifs.On("GetNotification", mock.Anything, "55").Return(&notifications.Notification{ID: 3, TvdbID: "55"}, nil).Maybe()
+	notifs.On("UpdateNotification", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	c := NewDownloadControlInteractor(repo, notifs, &fakeTimers{}, &fakeControlTorrenter{}, testLogger())
+	out, err := c.Cancel(context.Background(), "55")
+
+	require.NoError(t, err)
+	assert.Equal(t, []int{2}, repo.cancelled)
+	assert.Equal(t, 1, out.RowsCancelled)
 }
 
 func TestControlGrab(t *testing.T) {
