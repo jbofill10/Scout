@@ -1,8 +1,9 @@
-package main
+package search
 
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jbofill10/scout/backend/internal/tvdbproxy/config"
+	tvdbclient "github.com/jbofill10/scout/backend/internal/tvdbproxy/tvdb"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/search"
 	"github.com/stretchr/testify/assert"
@@ -20,9 +23,11 @@ import (
 // searchFixture is a fake TVDB that answers /search, /search/remoteid,
 // /people/{id}/extended and the per-series episode endpoint from canned data,
 // recording every request so tests can assert on what the proxy asked for.
+// svc is a search service whose TVDB client points at the fake.
 type searchFixture struct {
 	t        *testing.T
 	srv      *httptest.Server
+	svc      *Service
 	mu       sync.Mutex
 	requests []*url.URL
 	// search hits keyed by "type|query"; a missing key answers with no hits
@@ -47,13 +52,11 @@ func newSearchFixture(t *testing.T) *searchFixture {
 	}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
-	peopleSearchCache.clear()
-	peopleCreditsCache.clear()
-	t.Cleanup(func() {
-		peopleSearchCache.clear()
-		peopleCreditsCache.clear()
-	})
-	useFakeTVDB(t, &fakeTVDB{srv: f.srv}, "token")
+	// A fresh service per fixture also means fresh people caches.
+	client := tvdbclient.NewClient(
+		config.TVDB{Host: f.srv.URL, APIKey: "key", Pin: "pin"}, tvdbclient.NewHTTPClient(), slog.Default(),
+	)
+	f.svc = NewService(client, slog.Default())
 	return f
 }
 
@@ -190,7 +193,7 @@ func TestSearchMedia_YearFilterIsPassedToTVDBAndExactTitleRanksFirst(t *testing.
 		movieHit("3", "Adonis X", "2022", nil),
 	}
 
-	results, err := searchMedia(context.Background(), query("X (2022)"), "movie")
+	results, err := f.svc.Search(context.Background(), query("X (2022)"), "movie")
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"X", "Rubius X", "Adonis X"}, names(results))
@@ -206,7 +209,7 @@ func TestSearchMedia_YearFilterIsPassedToTVDBAndExactTitleRanksFirst(t *testing.
 func TestSearchMedia_EncodesTitleProperly(t *testing.T) {
 	f := newSearchFixture(t)
 
-	_, err := searchMedia(context.Background(), query("Mission: Impossible & more"), "movie")
+	_, err := f.svc.Search(context.Background(), query("Mission: Impossible & more"), "movie")
 
 	require.NoError(t, err)
 	calls := f.searchRequests()
@@ -222,7 +225,7 @@ func TestSearchMedia_TrailingYearAlsoSearchesVerbatimTitle(t *testing.T) {
 		movieHit("2", "Class of 1999", "1990", nil),
 	}
 
-	results, err := searchMedia(context.Background(), query("Class of 1984"), "movie")
+	results, err := f.svc.Search(context.Background(), query("Class of 1984"), "movie")
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Class of 1984", "Class of 1999"}, names(results), "merged and de-duplicated")
@@ -249,7 +252,7 @@ func TestSearchMedia_ExactPersonNameAddsCreditsAfterExactTitles(t *testing.T) {
 		},
 	}
 
-	results, err := searchMedia(context.Background(), query("Mia Goth"), "movie")
+	results, err := f.svc.Search(context.Background(), query("Mia Goth"), "movie")
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"X", "Suspiria", "Mia Goth: A Portrait"}, names(results),
@@ -268,7 +271,7 @@ func TestSearchMedia_InexactPersonNameIsNotExpanded(t *testing.T) {
 	f.hits["movie|Pearl"] = []map[string]any{movieHit("1", "Pearl", "2022", nil)}
 	f.hits["person|Pearl"] = []map[string]any{personHit("5", "Pearl Bailey")}
 
-	results, err := searchMedia(context.Background(), query("Pearl"), "movie")
+	results, err := f.svc.Search(context.Background(), query("Pearl"), "movie")
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Pearl"}, names(results))
@@ -290,7 +293,7 @@ func TestSearchMedia_ExplicitActorReturnsOnlyCreditsNarrowedByTitleAndYear(t *te
 		},
 	}
 
-	results, err := searchMedia(context.Background(), query("X actor:mia goth year:2022"), "movie")
+	results, err := f.svc.Search(context.Background(), query("X actor:mia goth year:2022"), "movie")
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"X", "X-Men Origins"}, names(results),
@@ -307,7 +310,7 @@ func TestSearchMedia_ExplicitPersonTakesTopHitEvenWhenNameDiffers(t *testing.T) 
 		movieCredit(1, "Sunflowers", "1999", "Actor"),
 	}}
 
-	results, err := searchMedia(context.Background(), query("actor:goth"), "movie")
+	results, err := f.svc.Search(context.Background(), query("actor:goth"), "movie")
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Sunflowers"}, names(results))
@@ -324,7 +327,7 @@ func TestSearchMedia_PersonFilterKeepsEveryRole(t *testing.T) {
 		movieCredit(3, "Pearl", "2022", "Writer"),
 	}}
 
-	results, err := searchMedia(context.Background(), query("person:Ti West"), "movie")
+	results, err := f.svc.Search(context.Background(), query("person:Ti West"), "movie")
 
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"You're Next", "X", "Pearl"}, names(results))
@@ -334,7 +337,7 @@ func TestSearchMedia_DirectorOnMoviesUsesTVDBFilter(t *testing.T) {
 	f := newSearchFixture(t)
 	f.hits["movie|X"] = []map[string]any{movieHit("1", "X", "2022", map[string]any{"director": "Ti West"})}
 
-	results, err := searchMedia(context.Background(), query("X director:Ti West"), "movie")
+	results, err := f.svc.Search(context.Background(), query("X director:Ti West"), "movie")
 
 	require.NoError(t, err)
 	require.Len(t, results, 1)
@@ -354,7 +357,7 @@ func TestSearchMedia_DirectorOnSeriesUsesCredits(t *testing.T) {
 	}}
 	f.scores["10"] = 500
 
-	results, err := searchMedia(context.Background(), query("director:David Lynch"), "series")
+	results, err := f.svc.Search(context.Background(), query("director:David Lynch"), "series")
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Twin Peaks"}, names(results))
@@ -376,7 +379,7 @@ func TestSearchMedia_DirectorWithoutTitleUsesCreditsForMovies(t *testing.T) {
 		movieCredit(4, "MaXXXine", "2024", "Director"),
 	}}
 
-	results, err := searchMedia(context.Background(), query("director:Ti West"), "movie")
+	results, err := f.svc.Search(context.Background(), query("director:Ti West"), "movie")
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"MaXXXine", "X", "Pearl"}, names(results), "directing credits only, newest first")
@@ -391,7 +394,7 @@ func TestSearchMedia_StudioFiltersMovieHitsLocally(t *testing.T) {
 		movieHit("4", "Saw X", "2023", nil),
 	}
 
-	results, err := searchMedia(context.Background(), query("X studio:A24"), "movie")
+	results, err := f.svc.Search(context.Background(), query("X studio:A24"), "movie")
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"X", "Pearl"}, names(results))
@@ -405,7 +408,7 @@ func TestSearchMedia_NetworkIsPassedThroughForSeries(t *testing.T) {
 		seriesHit("1", "Succession", "2018", map[string]any{"network": "HBO"}),
 	}
 
-	results, err := searchMedia(context.Background(), query("Succession network:HBO"), "series")
+	results, err := f.svc.Search(context.Background(), query("Succession network:HBO"), "series")
 
 	require.NoError(t, err)
 	require.Len(t, results, 1)
@@ -416,7 +419,7 @@ func TestSearchMedia_NetworkIsPassedThroughForSeries(t *testing.T) {
 func TestSearchMedia_CountryAndLanguagePassThrough(t *testing.T) {
 	f := newSearchFixture(t)
 
-	_, err := searchMedia(context.Background(), query("Dark country:deu lang:deu"), "series")
+	_, err := f.svc.Search(context.Background(), query("Dark country:deu lang:deu"), "series")
 
 	require.NoError(t, err)
 	call := f.searchRequests()[0]
@@ -435,7 +438,7 @@ func TestSearchMedia_SeriesHitsGetEpisodesAndSortByScoreWithinTier(t *testing.T)
 	f.scores["2"] = 900
 	f.scores["3"] = 1
 
-	results, err := searchMedia(context.Background(), query("Office"), "series")
+	results, err := f.svc.Search(context.Background(), query("Office"), "series")
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Office", "The Office (US)", "The Office (UK)"}, names(results),
@@ -451,7 +454,7 @@ func TestSearchMedia_ImdbIDUsesRemoteLookup(t *testing.T) {
 		"movie": map[string]any{"id": 154561, "name": "X", "year": "2022", "slug": "x-2022", "image": "/x.jpg", "score": 5},
 	}}
 
-	results, err := searchMedia(context.Background(), query("https://www.imdb.com/title/tt13560574/"), "movie")
+	results, err := f.svc.Search(context.Background(), query("https://www.imdb.com/title/tt13560574/"), "movie")
 
 	require.NoError(t, err)
 	require.Len(t, results, 1)
@@ -468,7 +471,7 @@ func TestSearchMedia_ImdbIDOfOtherTypeReturnsNothing(t *testing.T) {
 		"movie": map[string]any{"id": 154561, "name": "X", "year": "2022"},
 	}}
 
-	results, err := searchMedia(context.Background(), query("tt13560574"), "series")
+	results, err := f.svc.Search(context.Background(), query("tt13560574"), "series")
 
 	require.NoError(t, err)
 	assert.Empty(t, results)
@@ -478,7 +481,7 @@ func TestSearchMedia_ImdbIDOfOtherTypeReturnsNothing(t *testing.T) {
 func TestSearchMedia_FiltersWithoutTitleReturnNothing(t *testing.T) {
 	f := newSearchFixture(t)
 
-	results, err := searchMedia(context.Background(), query("year:2022"), "movie")
+	results, err := f.svc.Search(context.Background(), query("year:2022"), "movie")
 
 	require.NoError(t, err)
 	assert.Empty(t, results)
@@ -490,7 +493,7 @@ func TestSearchMedia_PeopleLookupFailureKeepsTitleHits(t *testing.T) {
 	f.peopleSearchFails = true
 	f.hits["movie|X"] = []map[string]any{movieHit("1", "X", "2022", nil)}
 
-	results, err := searchMedia(context.Background(), query("X"), "movie")
+	results, err := f.svc.Search(context.Background(), query("X"), "movie")
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"X"}, names(results))
@@ -500,7 +503,7 @@ func TestSearchMedia_TitleSearchFailureIsAnError(t *testing.T) {
 	f := newSearchFixture(t)
 	f.srv.Close()
 
-	_, err := searchMedia(context.Background(), query("X"), "movie")
+	_, err := f.svc.Search(context.Background(), query("X"), "movie")
 
 	assert.Error(t, err)
 }
@@ -512,9 +515,9 @@ func TestSearchMedia_PeopleLookupsAreCached(t *testing.T) {
 		movieCredit(1, "X", "2022", "Actor"),
 	}}
 
-	_, err := searchMedia(context.Background(), query("actor:Mia Goth"), "movie")
+	_, err := f.svc.Search(context.Background(), query("actor:Mia Goth"), "movie")
 	require.NoError(t, err)
-	_, err = searchMedia(context.Background(), query("actor:mia goth"), "movie")
+	_, err = f.svc.Search(context.Background(), query("actor:mia goth"), "movie")
 	require.NoError(t, err)
 
 	paths := f.requestPaths()
@@ -531,7 +534,7 @@ func TestSearchMedia_CapsResultsAndCreditsPerPerson(t *testing.T) {
 	f.hits["person|Prolific Star"] = []map[string]any{personHit("1", "Prolific Star")}
 	f.people["1"] = map[string]any{"id": 1, "name": "Prolific Star", "characters": credits}
 
-	results, err := searchMedia(context.Background(), query("actor:Prolific Star"), "movie")
+	results, err := f.svc.Search(context.Background(), query("actor:Prolific Star"), "movie")
 
 	require.NoError(t, err)
 	assert.Len(t, results, maxCreditsPerPerson)
@@ -558,7 +561,7 @@ func TestSearchMedia_ImplicitLookupRanksMainActingWorkBeforeSideDirecting(t *tes
 	f.scores["73838"] = 100
 	f.scores["301"] = 50
 
-	results, err := searchMedia(context.Background(), query("Bryan Cranston"), "series")
+	results, err := f.svc.Search(context.Background(), query("Bryan Cranston"), "series")
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Breaking Bad", "Malcolm in the Middle", "Some Cameo", "Modern Family"}, names(results),
@@ -577,7 +580,7 @@ func TestSearchMedia_ImplicitLookupOfADirectorLeadsWithTheirFilms(t *testing.T) 
 		movieCredit(340093, "MaXXXine", "2024", "Director"),
 	}}
 
-	results, err := searchMedia(context.Background(), query("Ti West"), "movie")
+	results, err := f.svc.Search(context.Background(), query("Ti West"), "movie")
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"MaXXXine", "X", "Pearl", "You're Next"}, names(results),
