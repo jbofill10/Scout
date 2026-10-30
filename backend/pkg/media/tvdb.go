@@ -86,6 +86,10 @@ type Media struct {
 	// Why a search returned this item when it was not a title match, e.g.
 	// "Mia Goth · Actor". Empty for ordinary title hits.
 	MatchedVia string `json:"matchedVia,omitempty"`
+	// Source says who asked for a download: "manual" (a person, the default),
+	// "scheduled" (an air-date dispatch), "follow", "missing" or "upgrade".
+	// The torrenter orders its indexer searches by it.
+	Source string `json:"source,omitempty"`
 	// Information about series, such as episodes, date aired, etc.
 	Metadata TVDBSeriesMetadata `json:"metadata"`
 }

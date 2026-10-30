@@ -15,6 +15,7 @@ import (
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 	repomocks "github.com/jbofill10/scout/backend/internal/torrenter/repository/mocks"
+	"github.com/jbofill10/scout/backend/internal/torrenter/searchgate"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 
 	"github.com/stretchr/testify/assert"
@@ -260,4 +261,48 @@ func TestSearchForMatch_WeaklySeededPickWhenFallbackHasNothing(t *testing.T) {
 	want := append(repeat(ONE337x_ID, strict), repeat(TPB_ID, len(strategies))...)
 	assert.Equal(t, want, fake.indexersQueried(),
 		"the fallback indexer exhausts every relax tier before the weak pick is accepted")
+}
+
+// An indexer the health monitor has paused (Prowlarr disabled it, usually a
+// ban) is not searched at all: the request falls through to the fallback
+// tier at once instead of burning queries on a dead exit.
+func TestSearchForMatch_PausedPreferredIndexerFallsThroughImmediately(t *testing.T) {
+	fake := &fakeProwlarr{t: t, results: map[int64][]*prowlarr.Search{
+		ONE337x_ID: {hitFrom(ONE337x_ID, "Some Show S01E05 1080p WEB h264-NTb")},
+		TPB_ID:     {hitFrom(TPB_ID, "Some Show S01E05 1080p WEB h264-GRACE")},
+	}}
+	q := newFallbackTestHandler(t, fake)
+	q.gate = searchgate.New(nil)
+	q.gate.Pause(ONE337x_ID, time.Now().Add(time.Hour), "Cloudflare 1006")
+	req, strategies := someShowStrategies(q)
+
+	outcome := q.searchForMatch(context.Background(), strategies, req, nil)
+
+	require.NotNil(t, outcome.match)
+	assert.Equal(t, TPB_ID, outcome.match.Torrent.IndexerID)
+	for _, ids := range fake.requested {
+		assert.NotContains(t, ids, ONE337x_ID, "the paused indexer must not be queried")
+	}
+	assert.False(t, outcome.erroredAll)
+}
+
+// With the gate in place every search still reaches Prowlarr, in order, and
+// the gate's snapshot accounts for them.
+func TestSearchForMatch_GateCountsSearches(t *testing.T) {
+	fake := &fakeProwlarr{t: t, results: map[int64][]*prowlarr.Search{
+		ONE337x_ID: {hitFrom(ONE337x_ID, "Some Show S01E05 1080p WEB h264-NTb")},
+	}}
+	q := newFallbackTestHandler(t, fake)
+	q.gate = searchgate.New(func(int64) searchgate.Limits { return searchgate.Limits{PerMinute: 600, Burst: 10} })
+	req, strategies := someShowStrategies(q)
+	ctx := searchgate.WithRequest(context.Background(), searchgate.Follow, "Some Show S01E05")
+
+	outcome := q.searchForMatch(ctx, strategies, req, nil)
+
+	require.NotNil(t, outcome.match)
+	snap := q.gate.Snapshot()
+	require.NotEmpty(t, snap)
+	assert.Equal(t, ONE337x_ID, snap[0].ID)
+	assert.Equal(t, len(fake.requested), snap[0].SearchesLastMinute)
+	assert.Empty(t, snap[0].InFlight, "every search released its slot")
 }

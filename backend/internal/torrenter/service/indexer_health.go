@@ -73,6 +73,13 @@ type RotateSettings interface {
 	AutoRotateRelay() bool
 }
 
+// searchPauser is the search gate's view of indexer health: a disabled
+// indexer is paused so queued searches skip it instead of waiting out a ban.
+type searchPauser interface {
+	Pause(id int64, until time.Time, reason string)
+	Resume(id int64)
+}
+
 // ErrNoAgent is returned by RotateNow when no relay agent is configured.
 var ErrNoAgent = errors.New("no relay agent configured")
 
@@ -90,6 +97,7 @@ const (
 // disabled by an IP block and a relay agent is available, rotates the host's
 // relay and re-tests the indexer so Prowlarr re-enables it.
 type IndexerHealthMonitor struct {
+	pauser   searchPauser
 	api      starr.APIer
 	agent    relayAgent
 	settings RotateSettings
@@ -186,6 +194,30 @@ type prowlarrHealth struct {
 }
 
 // Check refreshes the indexer and relay state once, rotating when warranted.
+// SetPauser makes the monitor pause and resume indexers on the search gate
+// as Prowlarr disables and re-enables them.
+func (m *IndexerHealthMonitor) SetPauser(p searchPauser) {
+	m.pauser = p
+}
+
+// syncPauses mirrors Prowlarr's disabled state onto the search gate.
+func (m *IndexerHealthMonitor) syncPauses(states []IndexerState) {
+	if m.pauser == nil {
+		return
+	}
+	for _, s := range states {
+		if s.Enabled && !s.Healthy {
+			until := m.now().Add(2 * m.interval)
+			if s.DisabledTill != nil && s.DisabledTill.After(until) {
+				until = *s.DisabledTill
+			}
+			m.pauser.Pause(s.ID, until, s.Failure)
+		} else {
+			m.pauser.Resume(s.ID)
+		}
+	}
+}
+
 func (m *IndexerHealthMonitor) Check(ctx context.Context) {
 	states, err := m.fetchIndexers(ctx)
 	now := m.now()
@@ -200,6 +232,7 @@ func (m *IndexerHealthMonitor) Check(ctx context.Context) {
 	m.checkErr = ""
 	m.indexers = states
 	m.mu.Unlock()
+	m.syncPauses(states)
 
 	m.refreshRelay(ctx)
 
@@ -292,6 +325,7 @@ func (m *IndexerHealthMonitor) rotate(ctx context.Context, reason string) (Healt
 		m.mu.Lock()
 		m.indexers = states
 		m.mu.Unlock()
+		m.syncPauses(states)
 	}
 	return ev, nil
 }

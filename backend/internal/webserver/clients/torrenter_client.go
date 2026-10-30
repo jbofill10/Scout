@@ -13,6 +13,7 @@ import (
 	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	"github.com/jbofill10/scout/backend/pkg/library"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
+	"github.com/jbofill10/scout/backend/pkg/settings"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
@@ -426,4 +427,29 @@ func (c *TorrenterClient) SyncEpisodes(ctx context.Context, seriesTvdbId string,
 	}
 
 	return nil
+}
+
+// Settings fetches the torrenter's effective runtime settings.
+func (c *TorrenterClient) Settings(ctx context.Context) (settings.View, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s/settings", c.Host), nil)
+	if err != nil {
+		return settings.View{}, err
+	}
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return settings.View{}, err
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.WarnContext(ctx, "Failed to close response body", "error", cerr)
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		return settings.View{}, fmt.Errorf("torrenter returned status %d", resp.StatusCode)
+	}
+	var view settings.View
+	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+		return settings.View{}, err
+	}
+	return view, nil
 }

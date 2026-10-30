@@ -39,6 +39,10 @@ type DownloadsCfg struct {
 	MinQuality string
 	// MinFreeSpaceGB is kept free on the downloads volume.
 	MinFreeSpaceGB int
+	// Search pacing defaults (the Settings page can override them).
+	SearchRatePerMinute int
+	SearchBurst         int
+	BulkRequestBatch    int
 }
 
 // RelayCfg points at the host relay agent (tools/relay-agent); an empty URL

@@ -20,6 +20,17 @@ export interface SettingsValues {
   /** Season packs: one torrent for a season when a request covers enough of it. */
   season_packs: boolean;
   season_pack_min_episodes: number;
+  /** Search pacing: per-indexer sustained rate and burst, optional per-indexer overrides keyed by Prowlarr id. */
+  search_rate_per_minute: number;
+  search_burst: number;
+  indexer_rate_limits: Record<string, RateLimit>;
+  /** Episodes a scheduled follow check may request per run. */
+  bulk_request_batch: number;
+}
+
+export interface RateLimit {
+  per_minute: number;
+  burst: number;
 }
 
 export type SettingKey = keyof SettingsValues;

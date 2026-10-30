@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	"github.com/jbofill10/scout/backend/internal/torrenter/searchgate"
 	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	"github.com/jbofill10/scout/backend/pkg/notifications"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
@@ -305,7 +306,7 @@ func (q *QbittHandler) monitorTorrentCompletion(
 						"torrent_title", match.Torrent.Title,
 						"torrent_hash", infoHash,
 						"progress", torrent.Progress*100,
-						"state", torrent.State,
+						"state", string(torrent.State),
 						"stalled_for", stalledFor.Round(time.Second).String())...)
 				reason := fmt.Sprintf("no progress for %s", stalledFor.Round(time.Minute))
 				q.giveUpOnTorrent(monitorCtx, match, infoHash, reason)
@@ -319,7 +320,7 @@ func (q *QbittHandler) monitorTorrentCompletion(
 					"title", match.Torrent.Title,
 					"torrent_hash", infoHash,
 					"progress", torrent.Progress*100,
-					"state", torrent.State,
+					"state", string(torrent.State),
 					"seeds", torrent.NumSeeds,
 					"dlspeed", torrent.DlSpeed,
 					"stalled_for", stalledFor.Round(time.Second).String())...)
@@ -399,6 +400,7 @@ func (q *QbittHandler) replaceDeadTorrent(
 
 	searchCtx, cancel := context.WithTimeout(ctx, episodeSearchDeadline)
 	defer cancel()
+	searchCtx = searchgate.WithRequest(searchCtx, searchgate.PriorityFor(media.Source), searchLabel(&media, strategies[0]))
 	excluded := q.loadExcludedTorrents(searchCtx, media.Id, ss.Season, ss.Episode)
 	outcome := q.searchForMatch(searchCtx, strategies, &media, excluded)
 	if outcome.match == nil {
@@ -413,7 +415,7 @@ func (q *QbittHandler) replaceDeadTorrent(
 }
 
 func (q *QbittHandler) didTorrentComplete(torrent *qbittorrent.Torrent) bool {
-	q.logger.Debug("torrent state", "state", torrent.State, "progress", torrent.Progress)
+	q.logger.Debug("torrent state", "state", string(torrent.State), "progress", torrent.Progress)
 	// Complete if fully downloaded (progress == 1.0) OR the original stalled-upload
 	// condition. Using progress catches terminal states other than "stalledUP"
 	// (e.g. uploading / pausedUP) that would otherwise be missed.

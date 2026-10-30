@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/clients"
+	"github.com/jbofill10/scout/backend/internal/torrenter/searchgate"
 	"github.com/jbofill10/scout/backend/internal/torrenter/service"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 )
@@ -20,18 +21,35 @@ type indexerHealth interface {
 	TestIndexer(ctx context.Context, id int64) error
 }
 
-// IndexerHandler serves indexer health and relay rotation.
+// searchQueue is the search gate's per-indexer view: what is running, what
+// is waiting and at what rate.
+type searchQueue interface {
+	Snapshot() []searchgate.IndexerStats
+}
+
+// IndexerHandler serves indexer health, the search queue and relay rotation.
 type IndexerHandler struct {
 	monitor indexerHealth
+	queue   searchQueue
 	logger  *slog.Logger
 }
 
-func NewIndexerHandler(monitor indexerHealth, logger *slog.Logger) *IndexerHandler {
-	return &IndexerHandler{monitor: monitor, logger: logger}
+func NewIndexerHandler(monitor indexerHealth, queue searchQueue, logger *slog.Logger) *IndexerHandler {
+	return &IndexerHandler{monitor: monitor, queue: queue, logger: logger}
+}
+
+// healthResponse is the health snapshot plus the search queue per indexer.
+type healthResponse struct {
+	service.IndexerHealthSnapshot
+	Queue []searchgate.IndexerStats `json:"queue"`
 }
 
 func (h *IndexerHandler) Health(c *gin.Context) {
-	c.JSON(http.StatusOK, h.monitor.Snapshot())
+	resp := healthResponse{IndexerHealthSnapshot: h.monitor.Snapshot(), Queue: []searchgate.IndexerStats{}}
+	if h.queue != nil {
+		resp.Queue = h.queue.Snapshot()
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // Rotate: 200 with the event; 409 when the agent refuses (cooldown, nothing

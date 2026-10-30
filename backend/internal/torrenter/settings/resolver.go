@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,10 @@ type Defaults struct {
 	// Season pack defaults.
 	SeasonPacks           bool
 	SeasonPackMinEpisodes int
+	// Search pacing defaults.
+	SearchRatePerMinute int
+	SearchBurst         int
+	BulkRequestBatch    int
 }
 
 // qualityOptions are the accepted quality floor labels, lowest first.
@@ -149,6 +154,37 @@ func (r *Resolver) Apply(ctx context.Context, upd api.Update) (api.View, error) 
 			return api.View{}, &ValidationError{Field: api.KeySeasonPackMin, Msg: "must be between 2 and 100"}
 		}
 		writes[api.KeySeasonPackMin] = *upd.SeasonPackMin
+	}
+	if upd.SearchRatePerMinute != nil {
+		if *upd.SearchRatePerMinute < 1 || *upd.SearchRatePerMinute > 120 {
+			return api.View{}, &ValidationError{Field: api.KeySearchRatePerMinute, Msg: "must be between 1 and 120"}
+		}
+		writes[api.KeySearchRatePerMinute] = *upd.SearchRatePerMinute
+	}
+	if upd.SearchBurst != nil {
+		if *upd.SearchBurst < 1 || *upd.SearchBurst > 30 {
+			return api.View{}, &ValidationError{Field: api.KeySearchBurst, Msg: "must be between 1 and 30"}
+		}
+		writes[api.KeySearchBurst] = *upd.SearchBurst
+	}
+	if upd.IndexerRateLimits != nil {
+		limits := map[string]api.RateLimit{}
+		for id, l := range *upd.IndexerRateLimits {
+			if _, err := strconv.ParseInt(id, 10, 64); err != nil {
+				return api.View{}, &ValidationError{Field: api.KeyIndexerRateLimits, Msg: "indexer ids must be numbers"}
+			}
+			if l.PerMinute < 1 || l.PerMinute > 120 || l.Burst < 1 || l.Burst > 30 {
+				return api.View{}, &ValidationError{Field: api.KeyIndexerRateLimits, Msg: "per_minute must be 1-120 and burst 1-30"}
+			}
+			limits[id] = l
+		}
+		writes[api.KeyIndexerRateLimits] = limits
+	}
+	if upd.BulkRequestBatch != nil {
+		if *upd.BulkRequestBatch < 1 || *upd.BulkRequestBatch > 500 {
+			return api.View{}, &ValidationError{Field: api.KeyBulkRequestBatch, Msg: "must be between 1 and 500"}
+		}
+		writes[api.KeyBulkRequestBatch] = *upd.BulkRequestBatch
 	}
 	if upd.PlexSyncDelay != nil {
 		d, err := parseDuration(api.KeyPlexSyncDelay, *upd.PlexSyncDelay, 0, 24*time.Hour)
@@ -309,6 +345,51 @@ func (r *Resolver) SeasonPackMinEpisodes() int {
 	return r.defaults.SeasonPackMinEpisodes
 }
 
+// SearchRatePerMinute is the sustained search rate every indexer gets unless
+// overridden; SearchBurst how many may be spent at once.
+func (r *Resolver) SearchRatePerMinute() int {
+	return r.positiveInt(api.KeySearchRatePerMinute, r.defaults.SearchRatePerMinute)
+}
+
+func (r *Resolver) SearchBurst() int {
+	return r.positiveInt(api.KeySearchBurst, r.defaults.SearchBurst)
+}
+
+// IndexerRateLimits is the per-indexer override map, keyed by indexer id.
+func (r *Resolver) IndexerRateLimits() map[string]api.RateLimit {
+	if v, ok := r.override(api.KeyIndexerRateLimits); ok {
+		var m map[string]api.RateLimit
+		if json.Unmarshal(v, &m) == nil && m != nil {
+			return m
+		}
+	}
+	return map[string]api.RateLimit{}
+}
+
+// SearchLimits is the effective allowance for one indexer: its override when
+// there is one, else the global rate and burst.
+func (r *Resolver) SearchLimits(indexerID int64) (perMinute, burst int) {
+	if l, ok := r.IndexerRateLimits()[strconv.FormatInt(indexerID, 10)]; ok && l.PerMinute > 0 && l.Burst > 0 {
+		return l.PerMinute, l.Burst
+	}
+	return r.SearchRatePerMinute(), r.SearchBurst()
+}
+
+// BulkRequestBatch is how many episodes a follow check may request per run.
+func (r *Resolver) BulkRequestBatch() int {
+	return r.positiveInt(api.KeyBulkRequestBatch, r.defaults.BulkRequestBatch)
+}
+
+func (r *Resolver) positiveInt(key string, def int) int {
+	if v, ok := r.override(key); ok {
+		var n int
+		if json.Unmarshal(v, &n) == nil && n >= 1 {
+			return n
+		}
+	}
+	return def
+}
+
 // PlexSyncDelay is the effective quiet period before a post-download sync.
 func (r *Resolver) PlexSyncDelay() time.Duration {
 	return r.duration(api.KeyPlexSyncDelay, r.defaults.PlexSyncDelay)
@@ -394,6 +475,10 @@ func (r *Resolver) view() api.View {
 			UpgradeBatch:          r.UpgradeBatch(),
 			SeasonPacks:           r.SeasonPacks(),
 			SeasonPackMinEpisodes: r.SeasonPackMinEpisodes(),
+			SearchRatePerMinute:   r.SearchRatePerMinute(),
+			SearchBurst:           r.SearchBurst(),
+			IndexerRateLimits:     r.IndexerRateLimits(),
+			BulkRequestBatch:      r.BulkRequestBatch(),
 		},
 		Defaults: api.Values{
 			MinQuality:            r.defaults.MinQuality,
@@ -408,6 +493,10 @@ func (r *Resolver) view() api.View {
 			UpgradeBatch:          r.defaults.UpgradeBatch,
 			SeasonPacks:           r.defaults.SeasonPacks,
 			SeasonPackMinEpisodes: r.defaults.SeasonPackMinEpisodes,
+			SearchRatePerMinute:   r.defaults.SearchRatePerMinute,
+			SearchBurst:           r.defaults.SearchBurst,
+			IndexerRateLimits:     map[string]api.RateLimit{},
+			BulkRequestBatch:      r.defaults.BulkRequestBatch,
 		},
 		Overridden: overridden,
 		Options: api.Options{

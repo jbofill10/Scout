@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/clients"
+	"github.com/jbofill10/scout/backend/internal/torrenter/searchgate"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -191,4 +192,36 @@ func TestIndexerHealth_ManualRotationAndRefusal(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, "rotation", m.Snapshot().Events[0].Kind)
 	assert.False(t, m.Snapshot().Events[0].OK)
+}
+
+// Prowlarr's disabled state is mirrored onto the search gate: a disabled
+// indexer is paused (so queued searches skip it) and resumed once healthy.
+func TestIndexerHealth_PausesDisabledIndexersOnTheGate(t *testing.T) {
+	fake := &fakeProwlarrAdmin{disabled: map[int64]time.Time{2: time.Now().Add(time.Hour)},
+		health: []map[string]string{{"source": "IndexerStatusCheck", "message": "Indexers unavailable due to failures: 1337x"}}}
+	m := newHealthTest(t, fake, &fakeAgent{configured: false}, true)
+	gate := searchgate.New(nil)
+	m.SetPauser(gate)
+
+	m.Check(context.Background())
+	snap := gate.Snapshot()
+	require.Len(t, snap, 3, "every indexer Prowlarr lists is known to the gate")
+	var paused *searchgate.IndexerStats
+	for i := range snap {
+		if snap[i].ID == 2 {
+			paused = &snap[i]
+		}
+	}
+	require.NotNil(t, paused)
+	require.NotNil(t, paused.PausedUntil, "the disabled indexer is paused")
+	assert.Contains(t, paused.PauseReason, "Disabled by Prowlarr")
+
+	fake.mu.Lock()
+	delete(fake.disabled, 2)
+	fake.health = nil
+	fake.mu.Unlock()
+	m.Check(context.Background())
+	for _, st := range gate.Snapshot() {
+		assert.Nil(t, st.PausedUntil, "indexer %d resumed once healthy", st.ID)
+	}
 }

@@ -13,6 +13,7 @@ import (
 	"golift.io/starr/prowlarr"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	"github.com/jbofill10/scout/backend/internal/torrenter/searchgate"
 	"github.com/jbofill10/scout/backend/pkg/controls"
 	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
@@ -103,6 +104,8 @@ func (q *QbittHandler) ListReleases(ctx context.Context, itemID string, media *t
 
 	excluded := q.loadExcludedTorrents(ctx, media.Id, first.Season, first.Episode)
 	preferred := q.preferredUploaders(ctx, media.Category, media.Anime)
+	// A person is waiting on this listing: it goes ahead of everything queued.
+	ctx = searchgate.WithRequest(ctx, searchgate.Manual, searchLabel(media, first))
 
 	seen := map[string]bool{}
 	for _, indexerIDs := range q.indexerTiers(media.Category, media.Anime) {

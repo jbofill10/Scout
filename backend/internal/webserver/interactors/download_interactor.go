@@ -125,6 +125,11 @@ func (i *DownloadInteractor) processDueItem(item repository.DueItem) {
 	defer span.End()
 
 	i.logger.InfoContext(ctx, "Processing due media", "media", media.Name, "attempts", item.Attempts)
+	// An episode dispatched on its air date is wanted now whoever set it up;
+	// retries keep the priority of the request they came from.
+	if item.Attempts == 0 && media.Source != "" && media.Source != "manual" {
+		media.Source = "scheduled"
+	}
 
 	traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
 

@@ -214,3 +214,47 @@ func TestUnfollow(t *testing.T) {
 	ok, _ = f.Unfollow(context.Background(), "900")
 	assert.False(t, ok)
 }
+
+// A scheduled check hands over at most bulk_request_batch episodes across all
+// shows, oldest wanted episodes first, and reports what it left for next time.
+func TestCheckAll_BudgetCapsEpisodesPerRun(t *testing.T) {
+	deps := &fakeFollowDeps{episodes: []tvdb.Episode{
+		ep(11, 1, 1, "2024-01-01"), ep(12, 1, 2, "2024-01-08"), ep(13, 1, 3, "2024-01-15"), ep(14, 1, 4, "2024-01-22"),
+	}}
+	f, repo := newFollowTest(t, deps)
+	earlier := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	repo.shows["900"] = repository.FollowedShow{TvdbID: "900", Title: "Old Check", IncludeMissing: true, FollowedAt: earlier, LastCheckedAt: &earlier}
+	repo.shows["901"] = repository.FollowedShow{TvdbID: "901", Title: "Never Checked", IncludeMissing: true, FollowedAt: earlier}
+	f.SetBulkBatch(func(context.Context) int { return 3 })
+
+	report, err := f.CheckAll(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, 3, report.Added, "the budget bounds the whole run")
+	require.Len(t, deps.requested, 1, "the budget ran out before the second show")
+	assert.Equal(t, "901", deps.requested[0].Id, "the show never checked goes first")
+	assert.Equal(t, "follow", deps.requested[0].Source)
+	assert.Equal(t, []int{11, 12, 13}, []int{deps.requested[0].Metadata.Episodes[0].Id, deps.requested[0].Metadata.Episodes[1].Id, deps.requested[0].Metadata.Episodes[2].Id}, "oldest first")
+	byShow := map[string]CheckResult{}
+	for _, r := range report.Results {
+		byShow[r.TvdbID] = r
+	}
+	assert.Equal(t, 1, byShow["901"].Deferred)
+	assert.Equal(t, 4, byShow["900"].Deferred, "nothing left for the second show this run")
+	assert.Equal(t, 0, byShow["900"].New)
+}
+
+// A person's own check (Check now, Follow) is never capped.
+func TestCheckOne_IgnoresBudget(t *testing.T) {
+	deps := &fakeFollowDeps{episodes: []tvdb.Episode{ep(11, 1, 1, "2024-01-01"), ep(12, 1, 2, "2024-01-08")}}
+	f, repo := newFollowTest(t, deps)
+	earlier := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	repo.shows["900"] = repository.FollowedShow{TvdbID: "900", Title: "Show", IncludeMissing: true, FollowedAt: earlier}
+	f.SetBulkBatch(func(context.Context) int { return 1 })
+
+	result, err := f.CheckOne(context.Background(), "900")
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.New)
+	assert.Equal(t, 0, result.Deferred)
+}
