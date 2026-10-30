@@ -168,7 +168,11 @@ func (i *DownloadInteractor) handleDownloadCompletion(ctx context.Context, dlCom
 		}
 
 		// Update notification to completed
-		i.updateNotificationCompleted(eventCtx, &event)
+		if event.Req != nil && event.Req.Pack != nil {
+			i.settlePackNotifications(eventCtx, &event)
+		} else {
+			i.updateNotificationCompleted(eventCtx, &event)
+		}
 		if event.Req != nil && event.Req.Upgrade != nil {
 			if uerr := i.repo.SetUpgradeAttemptStatus(eventCtx, event.Req.EpisodeTvdbID, "completed", ""); uerr != nil {
 				i.logger.ErrorContext(eventCtx, "Failed to record upgrade completion", "error", uerr)
@@ -291,4 +295,30 @@ func (i *DownloadInteractor) updateNotificationFailed(ctx context.Context, event
 		"notification_id", notification.ID,
 		"status", "failed",
 		"reason", reason)
+}
+
+// settlePackNotifications marks each episode of a season pack by what the
+// processor found in the torrent: linked ones complete, the rest fail with
+// the reason, so a pack that was short an episode is visible per episode.
+func (i *DownloadInteractor) settlePackNotifications(ctx context.Context, event *models.TorrentCompleteEvent) {
+	for _, id := range event.Req.Pack.EpisodeIDs() {
+		outcome := event.PackResults[id]
+		n, err := i.repo.GetNotification(ctx, id)
+		if err != nil || n == nil {
+			continue
+		}
+		if outcome == "linked" {
+			n.Status = notifications.StatusCompleted
+			n.Reason = ""
+		} else {
+			n.Status = notifications.StatusFailed
+			if outcome == "" {
+				outcome = "not in the season pack"
+			}
+			n.Reason = outcome
+		}
+		if err := i.repo.UpdateNotification(ctx, n); err != nil {
+			i.logger.ErrorContext(ctx, "Failed to settle pack episode notification", "error", err, "tvdb_id", id)
+		}
+	}
 }

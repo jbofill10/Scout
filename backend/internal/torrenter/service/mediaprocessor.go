@@ -105,7 +105,24 @@ func (mp *MediaProcessSvc) StartCacheCleanup(ctx context.Context) {
 
 func (mp *MediaProcessSvc) ProcessDownloadedTorrent(ctx context.Context, media *models.TorrentCompleteEvent) error {
 	mp.Logger.InfoContext(ctx, "Processing downloaded torrent", "media", media.Req.MediaName)
+	if media.Req != nil && media.Req.Pack != nil && len(media.Req.Pack.Episodes) > 0 {
+		return mp.processPack(ctx, media)
+	}
 
+	// Get the media file from the torrent download. The path is relative to the
+	// save path and may include the torrent's own root folder.
+	relFilePath, err := mp.getFile(media.SavePath)
+	if err != nil {
+		return fmt.Errorf("failed to get file: %v", err)
+	}
+	return mp.linkFile(ctx, media, relFilePath)
+}
+
+// linkFile places one video file of a finished torrent into the library:
+// it works out the Plex name and folder, removes copies an upgrade replaces,
+// hard-links the file and fetches subtitles. relFilePath is relative to the
+// torrent's save path.
+func (mp *MediaProcessSvc) linkFile(ctx context.Context, media *models.TorrentCompleteEvent, relFilePath string) error {
 	// Create DownloadRequest from SearchStrategy
 	req := &models.DownloadRequest{
 		MediaName:   media.Req.MediaName,
@@ -126,13 +143,6 @@ func (mp *MediaProcessSvc) ProcessDownloadedTorrent(ctx context.Context, media *
 			req.Season = fmt.Sprint(media.Req.Season)
 			req.Episode = fmt.Sprint(media.Req.Episode)
 		}
-	}
-
-	// Get the media file from the torrent download. The path is relative to the
-	// save path and may include the torrent's own root folder.
-	relFilePath, err := mp.getFile(media.SavePath)
-	if err != nil {
-		return fmt.Errorf("failed to get file: %v", err)
 	}
 	originalFileName := filepath.Base(relFilePath)
 

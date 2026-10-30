@@ -17,6 +17,9 @@ export interface SettingsValues {
   upgrades_enabled: boolean;
   upgrade_cutoff: string;
   upgrade_batch: number;
+  /** Season packs: one torrent for a season when a request covers enough of it. */
+  season_packs: boolean;
+  season_pack_min_episodes: number;
 }
 
 export type SettingKey = keyof SettingsValues;

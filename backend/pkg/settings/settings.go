@@ -16,10 +16,12 @@ const (
 	KeyUpgradesEnabled   = "upgrades_enabled"
 	KeyUpgradeCutoff     = "upgrade_cutoff"
 	KeyUpgradeBatch      = "upgrade_batch"
+	KeySeasonPacks       = "season_packs"
+	KeySeasonPackMin     = "season_pack_min_episodes"
 )
 
 // Keys lists every settable key, in display order.
-var Keys = []string{KeyMinQuality, KeyMinFreeSpaceGB, KeySubtitleLanguages, KeySubtitlePreferSDH, KeyPlexSyncDelay, KeyPlexSyncInterval, KeyAutoRotateRelay, KeyUpgradesEnabled, KeyUpgradeCutoff, KeyUpgradeBatch}
+var Keys = []string{KeyMinQuality, KeyMinFreeSpaceGB, KeySubtitleLanguages, KeySubtitlePreferSDH, KeyPlexSyncDelay, KeyPlexSyncInterval, KeyAutoRotateRelay, KeyUpgradesEnabled, KeyUpgradeCutoff, KeyUpgradeBatch, KeySeasonPacks, KeySeasonPackMin}
 
 // Values are the settings as the API presents them. Durations are Go
 // duration strings ("2m", "30m"); "0s" disables the periodic sync.
@@ -40,6 +42,10 @@ type Values struct {
 	UpgradesEnabled bool   `json:"upgrades_enabled"`
 	UpgradeCutoff   string `json:"upgrade_cutoff"`
 	UpgradeBatch    int    `json:"upgrade_batch"`
+	// SeasonPacks: when a request covers at least SeasonPackMinEpisodes of a
+	// season, look for one pack before searching per episode.
+	SeasonPacks           bool `json:"season_packs"`
+	SeasonPackMinEpisodes int  `json:"season_pack_min_episodes"`
 }
 
 // Update is the body of PUT /settings: any subset of keys to override, plus
@@ -56,6 +62,8 @@ type Update struct {
 	UpgradesEnabled   *bool     `json:"upgrades_enabled,omitempty"`
 	UpgradeCutoff     *string   `json:"upgrade_cutoff,omitempty"`
 	UpgradeBatch      *int      `json:"upgrade_batch,omitempty"`
+	SeasonPacks       *bool     `json:"season_packs,omitempty"`
+	SeasonPackMin     *int      `json:"season_pack_min_episodes,omitempty"`
 	Reset             []string  `json:"reset,omitempty"`
 }
 

@@ -78,6 +78,11 @@ func (q *QbittHandler) inFlightTvdbIDs(ctx context.Context) map[string]bool {
 		if at.Strategy != nil && at.Strategy.EpisodeTvdbID != "" {
 			ids[at.Strategy.EpisodeTvdbID] = true
 		}
+		if at.Strategy != nil {
+			for _, id := range at.Strategy.Pack.EpisodeIDs() {
+				ids[id] = true
+			}
+		}
 	}
 	return ids
 }

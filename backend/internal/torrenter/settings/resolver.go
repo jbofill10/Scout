@@ -32,6 +32,9 @@ type Defaults struct {
 	UpgradesEnabled bool
 	UpgradeCutoff   string
 	UpgradeBatch    int
+	// Season pack defaults.
+	SeasonPacks           bool
+	SeasonPackMinEpisodes int
 }
 
 // qualityOptions are the accepted quality floor labels, lowest first.
@@ -75,6 +78,9 @@ func NewResolver(store *Store, defaults Defaults, logger *slog.Logger) *Resolver
 	}
 	if defaults.UpgradeBatch <= 0 {
 		defaults.UpgradeBatch = 3
+	}
+	if defaults.SeasonPackMinEpisodes <= 0 {
+		defaults.SeasonPackMinEpisodes = 4
 	}
 	return &Resolver{store: store, defaults: defaults, logger: logger, now: time.Now}
 }
@@ -134,6 +140,15 @@ func (r *Resolver) Apply(ctx context.Context, upd api.Update) (api.View, error) 
 			return api.View{}, &ValidationError{Field: api.KeyUpgradeBatch, Msg: "must be between 1 and 50"}
 		}
 		writes[api.KeyUpgradeBatch] = *upd.UpgradeBatch
+	}
+	if upd.SeasonPacks != nil {
+		writes[api.KeySeasonPacks] = *upd.SeasonPacks
+	}
+	if upd.SeasonPackMin != nil {
+		if *upd.SeasonPackMin < 2 || *upd.SeasonPackMin > 100 {
+			return api.View{}, &ValidationError{Field: api.KeySeasonPackMin, Msg: "must be between 2 and 100"}
+		}
+		writes[api.KeySeasonPackMin] = *upd.SeasonPackMin
 	}
 	if upd.PlexSyncDelay != nil {
 		d, err := parseDuration(api.KeyPlexSyncDelay, *upd.PlexSyncDelay, 0, 24*time.Hour)
@@ -271,6 +286,29 @@ func (r *Resolver) UpgradeBatch() int {
 	return r.defaults.UpgradeBatch
 }
 
+// SeasonPacks is whether season packs are tried before per-episode searches.
+func (r *Resolver) SeasonPacks() bool {
+	if v, ok := r.override(api.KeySeasonPacks); ok {
+		var b bool
+		if json.Unmarshal(v, &b) == nil {
+			return b
+		}
+	}
+	return r.defaults.SeasonPacks
+}
+
+// SeasonPackMinEpisodes is how many episodes of one season a request needs
+// before a pack is tried.
+func (r *Resolver) SeasonPackMinEpisodes() int {
+	if v, ok := r.override(api.KeySeasonPackMin); ok {
+		var n int
+		if json.Unmarshal(v, &n) == nil && n >= 2 {
+			return n
+		}
+	}
+	return r.defaults.SeasonPackMinEpisodes
+}
+
 // PlexSyncDelay is the effective quiet period before a post-download sync.
 func (r *Resolver) PlexSyncDelay() time.Duration {
 	return r.duration(api.KeyPlexSyncDelay, r.defaults.PlexSyncDelay)
@@ -344,28 +382,32 @@ func (r *Resolver) view() api.View {
 
 	return api.View{
 		Values: api.Values{
-			MinQuality:        r.MinQuality(),
-			MinFreeSpaceGB:    r.MinFreeSpaceGB(),
-			SubtitleLanguages: nonNil(r.SubtitleLanguages()),
-			SubtitlePreferSDH: r.SubtitlePreferSDH(),
-			PlexSyncDelay:     r.PlexSyncDelay().String(),
-			PlexSyncInterval:  r.PlexSyncInterval().String(),
-			AutoRotateRelay:   r.AutoRotateRelay(),
-			UpgradesEnabled:   r.UpgradesEnabled(),
-			UpgradeCutoff:     r.UpgradeCutoff(),
-			UpgradeBatch:      r.UpgradeBatch(),
+			MinQuality:            r.MinQuality(),
+			MinFreeSpaceGB:        r.MinFreeSpaceGB(),
+			SubtitleLanguages:     nonNil(r.SubtitleLanguages()),
+			SubtitlePreferSDH:     r.SubtitlePreferSDH(),
+			PlexSyncDelay:         r.PlexSyncDelay().String(),
+			PlexSyncInterval:      r.PlexSyncInterval().String(),
+			AutoRotateRelay:       r.AutoRotateRelay(),
+			UpgradesEnabled:       r.UpgradesEnabled(),
+			UpgradeCutoff:         r.UpgradeCutoff(),
+			UpgradeBatch:          r.UpgradeBatch(),
+			SeasonPacks:           r.SeasonPacks(),
+			SeasonPackMinEpisodes: r.SeasonPackMinEpisodes(),
 		},
 		Defaults: api.Values{
-			MinQuality:        r.defaults.MinQuality,
-			MinFreeSpaceGB:    r.defaults.MinFreeSpaceGB,
-			SubtitleLanguages: nonNil(r.defaults.SubtitleLanguages),
-			SubtitlePreferSDH: r.defaults.SubtitlePreferSDH,
-			PlexSyncDelay:     r.defaults.PlexSyncDelay.String(),
-			PlexSyncInterval:  r.defaults.PlexSyncInterval.String(),
-			AutoRotateRelay:   r.defaults.AutoRotateRelay,
-			UpgradesEnabled:   r.defaults.UpgradesEnabled,
-			UpgradeCutoff:     r.defaults.UpgradeCutoff,
-			UpgradeBatch:      r.defaults.UpgradeBatch,
+			MinQuality:            r.defaults.MinQuality,
+			MinFreeSpaceGB:        r.defaults.MinFreeSpaceGB,
+			SubtitleLanguages:     nonNil(r.defaults.SubtitleLanguages),
+			SubtitlePreferSDH:     r.defaults.SubtitlePreferSDH,
+			PlexSyncDelay:         r.defaults.PlexSyncDelay.String(),
+			PlexSyncInterval:      r.defaults.PlexSyncInterval.String(),
+			AutoRotateRelay:       r.defaults.AutoRotateRelay,
+			UpgradesEnabled:       r.defaults.UpgradesEnabled,
+			UpgradeCutoff:         r.defaults.UpgradeCutoff,
+			UpgradeBatch:          r.defaults.UpgradeBatch,
+			SeasonPacks:           r.defaults.SeasonPacks,
+			SeasonPackMinEpisodes: r.defaults.SeasonPackMinEpisodes,
 		},
 		Overridden: overridden,
 		Options: api.Options{
