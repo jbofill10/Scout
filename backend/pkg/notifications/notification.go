@@ -33,6 +33,7 @@ type Notification struct {
 	IsAnime         bool               `json:"is_anime"`                   // Whether media is anime
 	Status          NotificationStatus `json:"status"`                     // 'scheduled', 'searching', 'downloading', 'completed', 'failed'
 	Reason          string             `json:"reason,omitempty"`           // Error message, failure reason, or success details
+	FailureCode     string             `json:"failure_code,omitempty"`     // dlstatus code behind a failed status, "" otherwise
 	IsRead          bool               `json:"is_read"`                    // Whether user has read the notification
 	AutoDismissed   bool               `json:"auto_dismissed"`             // Whether notification was auto-dismissed
 	TraceID         string             `json:"trace_id"`                   // OpenTelemetry trace ID

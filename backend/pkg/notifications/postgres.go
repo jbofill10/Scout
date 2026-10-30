@@ -42,9 +42,9 @@ func (r *PostgresRepository) CreateNotification(ctx context.Context, notificatio
 	stmt := `
 		INSERT INTO Notifications (
 			tvdb_id, media_title, category, season, episode, absolute_episode,
-			poster_url, is_anime, status, reason,
+			poster_url, is_anime, status, reason, failure_code,
 			is_read, auto_dismissed, trace_id, span_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		RETURNING id, created_at, updated_at
 	`
 
@@ -59,6 +59,7 @@ func (r *PostgresRepository) CreateNotification(ctx context.Context, notificatio
 		notification.IsAnime,
 		notification.Status,
 		notification.Reason,
+		notification.FailureCode,
 		notification.IsRead,
 		notification.AutoDismissed,
 		notification.TraceID,
@@ -93,7 +94,7 @@ func (r *PostgresRepository) GetNotification(ctx context.Context, tvdbID string)
 
 	query := `
 		SELECT id, tvdb_id, media_title, category, season, episode, absolute_episode,
-			poster_url, is_anime, status, reason,
+			poster_url, is_anime, status, reason, failure_code,
 			is_read, auto_dismissed, trace_id, span_id, created_at, updated_at
 		FROM Notifications
 		WHERE tvdb_id = $1 AND auto_dismissed = false
@@ -104,7 +105,7 @@ func (r *PostgresRepository) GetNotification(ctx context.Context, tvdbID string)
 	var n Notification
 	err := r.db.QueryRowContext(ctx, query, tvdbID).Scan(
 		&n.ID, &n.TvdbID, &n.MediaTitle, &n.Category, &n.Season, &n.Episode, &n.AbsoluteEpisode,
-		&n.PosterURL, &n.IsAnime, &n.Status, &n.Reason,
+		&n.PosterURL, &n.IsAnime, &n.Status, &n.Reason, &n.FailureCode,
 		&n.IsRead, &n.AutoDismissed, &n.TraceID, &n.SpanID, &n.CreatedAt, &n.UpdatedAt,
 	)
 
@@ -133,14 +134,15 @@ func (r *PostgresRepository) UpdateNotification(ctx context.Context, notificatio
 
 	stmt := `
 		UPDATE Notifications
-		SET status = $1, reason = $2,
-		    is_read = $3, auto_dismissed = $4, updated_at = $5
-		WHERE id = $6
+		SET status = $1, reason = $2, failure_code = $3,
+		    is_read = $4, auto_dismissed = $5, updated_at = $6
+		WHERE id = $7
 	`
 
 	result, err := r.db.ExecContext(ctx, stmt,
 		notification.Status,
 		notification.Reason,
+		notification.FailureCode,
 		notification.IsRead,
 		notification.AutoDismissed,
 		time.Now(),

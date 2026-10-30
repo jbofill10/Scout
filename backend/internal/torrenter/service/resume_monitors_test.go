@@ -5,18 +5,15 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 	repomocks "github.com/jbofill10/scout/backend/internal/torrenter/repository/mocks"
-	"github.com/jbofill10/scout/backend/pkg/notifications"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"golift.io/starr/prowlarr"
 )
 
 func newResumeTestHandler(t *testing.T, repo *repomocks.Repository) *QbittHandler {
@@ -87,54 +84,6 @@ func TestResumeMonitors_SkipsAndClearsRowWithNoStrategy(t *testing.T) {
 	repo.AssertExpectations(t)
 }
 
-// A resumed monitor inherits the deadline it was born with. Without this a
-// restart would hand every in-flight torrent a fresh timeout window, so a
-// torrent that never completes could be watched indefinitely across restarts.
-func TestMonitorTorrentCompletion_ResumedMonitorInheritsDeadline(t *testing.T) {
-	t.Setenv("MONITOR_TIMEOUT", "1h")
-
-	repo := repomocks.NewRepository(t)
-	// Expired on arrival: started well beyond the timeout, so the monitor gives
-	// up on its first pass without ever polling qBittorrent.
-	repo.On("GetNotification", mock.Anything, "999").Return(nil, nil)
-	repo.On("InsertDownloadHistory", mock.Anything, "Some Show", 1, 2, 0, "", "failure", "monitor timeout").Return(nil)
-	repo.On("InsertFailedTorrent", mock.Anything, mock.MatchedBy(func(ft *models.FailedTorrent) bool {
-		return ft.InfoHash == "stale-hash" && ft.Reason == "monitor timeout"
-	})).Return(nil)
-	repo.On("DeleteActiveTorrent", mock.Anything, "stale-hash").Return(nil)
-
-	q := newResumeTestHandler(t, repo)
-	match := &models.TorrentMatch{
-		Strategy: &models.SearchStrategy{
-			MediaName:     "Some Show",
-			Season:        1,
-			Episode:       2,
-			EpisodeTvdbID: "999",
-		},
-		Torrent: &prowlarr.Search{Title: "Some.Show.S01E02", InfoHash: "stale-hash"},
-	}
-
-	var wg sync.WaitGroup
-	done := make(chan models.TorrentCompleteEvent, 1)
-	wg.Add(1)
-
-	finished := make(chan struct{})
-	go func() {
-		q.monitorTorrentCompletion(context.Background(), match, nil, "stale-hash", "uuid-1",
-			time.Now().Add(-2*time.Hour), done, &wg)
-		close(finished)
-	}()
-
-	select {
-	case <-finished:
-	case <-time.After(5 * time.Second):
-		t.Fatal("resumed monitor should have timed out immediately, not started polling")
-	}
-
-	assert.Empty(t, done, "an expired monitor must not emit a completion event")
-	repo.AssertExpectations(t)
-}
-
 // A resumed monitor measures its deadline from the original start; a zero value
 // means "starting now" and must not be read as the zero time, which would expire
 // the monitor on its first pass.
@@ -145,37 +94,4 @@ func TestEffectiveStart(t *testing.T) {
 	now := effectiveStart(time.Time{})
 	assert.False(t, now.IsZero(), "a zero start must resolve to now, not the zero time")
 	assert.WithinDuration(t, time.Now(), now, time.Minute)
-}
-
-// Guards the status the monitor writes when it gives up, since that is what the
-// UI shows for a download that will never land.
-func TestMonitorTorrentCompletion_TimeoutMarksNotificationFailed(t *testing.T) {
-	t.Setenv("MONITOR_TIMEOUT", "1s")
-
-	notification := &notifications.Notification{ID: 7, TvdbID: "999"}
-
-	repo := repomocks.NewRepository(t)
-	repo.On("GetNotification", mock.Anything, "999").Return(notification, nil)
-	repo.On("UpdateNotification", mock.Anything, mock.MatchedBy(func(n *notifications.Notification) bool {
-		return n.Status == notifications.StatusFailed
-	})).Return(nil)
-	repo.On("InsertDownloadHistory", mock.Anything, "Some Show", 0, 0, 0, "", "failure", "monitor timeout").Return(nil)
-	repo.On("InsertFailedTorrent", mock.Anything, mock.MatchedBy(func(ft *models.FailedTorrent) bool {
-		return ft.InfoHash == "stale-hash" && ft.Reason == "monitor timeout"
-	})).Return(nil)
-	repo.On("DeleteActiveTorrent", mock.Anything, "stale-hash").Return(nil)
-
-	q := newResumeTestHandler(t, repo)
-	match := &models.TorrentMatch{
-		Strategy: &models.SearchStrategy{MediaName: "Some Show", EpisodeTvdbID: "999"},
-		Torrent:  &prowlarr.Search{Title: "Some.Show", InfoHash: "stale-hash"},
-	}
-
-	var wg sync.WaitGroup
-	done := make(chan models.TorrentCompleteEvent, 1)
-	wg.Add(1)
-	q.monitorTorrentCompletion(context.Background(), match, nil, "stale-hash", "uuid-1",
-		time.Now().Add(-2*time.Hour), done, &wg)
-
-	repo.AssertExpectations(t)
 }

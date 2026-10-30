@@ -92,6 +92,29 @@ type fakeSchedulerRepo struct {
 	retryMedia       []tvdb.Media
 	pendingMeta      map[string]repository.ScheduleMeta
 	pendingMetaErr   error
+	// async failure reconciliation
+	rows            []repository.ScheduledRow
+	dispatched      []tvdb.Media
+	rearmedComplete []int
+	rearmedCode     string
+	rearmedNext     time.Time
+	failedComplete  []int
+	failedCode      string
+}
+
+func (f *fakeSchedulerRepo) RecordDispatched(_ context.Context, media tvdb.Media, _, _ string) error {
+	f.dispatched = append(f.dispatched, media)
+	return nil
+}
+func (f *fakeSchedulerRepo) RearmCompletedRow(_ context.Context, id int, code, _ string, next time.Time) error {
+	f.rearmedComplete = append(f.rearmedComplete, id)
+	f.rearmedCode, f.rearmedNext = code, next
+	return nil
+}
+func (f *fakeSchedulerRepo) FailCompletedRow(_ context.Context, id int, code, _ string) error {
+	f.failedComplete = append(f.failedComplete, id)
+	f.failedCode = code
+	return nil
 }
 
 func (f *fakeSchedulerRepo) MarkCompleted(_ context.Context, id int) error {
@@ -148,7 +171,7 @@ func (f *fakeSchedulerRepo) GetScheduleMetaByStatus(context.Context, ...string) 
 	return f.pendingMeta, f.pendingMetaErr
 }
 func (f *fakeSchedulerRepo) FindRowsByItem(context.Context, string) ([]repository.ScheduledRow, error) {
-	return nil, nil
+	return f.rows, nil
 }
 func (f *fakeSchedulerRepo) CancelRow(context.Context, int) error      { return nil }
 func (f *fakeSchedulerRepo) RearmRow(context.Context, int, bool) error { return nil }

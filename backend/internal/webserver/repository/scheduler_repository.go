@@ -82,6 +82,11 @@ type SchedulerRepository interface {
 	CancelRow(ctx context.Context, id int) error
 	RearmRow(ctx context.Context, id int, resetAttempts bool) error
 	GetUpcoming(ctx context.Context) ([]UpcomingItem, error)
+	// Async failures (see RecordDispatched / RearmCompletedRow): a completed
+	// row keeps the payload of a download the torrenter may still lose.
+	RecordDispatched(ctx context.Context, media tvdb.Media, traceID, spanID string) error
+	RearmCompletedRow(ctx context.Context, id int, code, reason string, nextAttempt time.Time) error
+	FailCompletedRow(ctx context.Context, id int, code, reason string) error
 	// TrackedItemKeys is the item key of every row in any status, so a follow
 	// check never re-requests something Scout already handled or the user cancelled.
 	TrackedItemKeys(ctx context.Context) (map[string]bool, error)
@@ -419,10 +424,13 @@ func (r *SchedulerRepo) GetScheduleMetaByStatus(ctx context.Context, statuses ..
 		args[i] = st
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 	}
+	// Newest row wins per item: a re-requested item's live row shadows the
+	// completed one left by an earlier download.
 	stmt := `SELECT media, release_time, schedule_status, attempts, next_attempt_at,
 			        last_failure_code, last_failure_reason
 			 FROM ScheduledDownloads
-			 WHERE schedule_status IN (` + strings.Join(placeholders, ", ") + `)`
+			 WHERE schedule_status IN (` + strings.Join(placeholders, ", ") + `)
+			 ORDER BY id ASC`
 
 	rows, err := r.db.QueryContext(ctx, stmt, args...)
 	if err != nil {

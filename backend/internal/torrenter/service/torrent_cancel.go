@@ -107,6 +107,7 @@ func (q *QbittHandler) CancelItem(ctx context.Context, itemID string) (controls.
 	} else if n != nil {
 		n.Status = notifications.StatusCancelled
 		n.Reason = "Cancelled"
+		n.FailureCode = ""
 		if err := q.repo.UpdateNotification(ctx, n); err != nil {
 			q.logger.ErrorContext(ctx, "Failed to mark notification cancelled",
 				telemetry.WithTraceContext(ctx, "tvdb_id", itemID, "error", err.Error())...)

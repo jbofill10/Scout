@@ -52,11 +52,11 @@ func (s *NotificationRepoTestSuite) TestGetNotification_Series_Success() {
 
 	rows := sqlmock.NewRows([]string{
 		"id", "tvdb_id", "media_title", "category", "season", "episode", "absolute_episode",
-		"poster_url", "is_anime", "status", "reason",
+		"poster_url", "is_anime", "status", "reason", "failure_code",
 		"is_read", "auto_dismissed", "trace_id", "span_id", "created_at", "updated_at",
 	}).AddRow(
 		1, "123456", "Test Show", "series", &season, &episode, &absoluteEpisode,
-		"https://example.com/poster.jpg", false, "searching", "",
+		"https://example.com/poster.jpg", false, "searching", "", "",
 		false, false, "trace-1", "span-1", now, now,
 	)
 
@@ -106,11 +106,11 @@ func (s *NotificationRepoTestSuite) TestGetNotification_Movie_Success() {
 
 	rows := sqlmock.NewRows([]string{
 		"id", "tvdb_id", "media_title", "category", "season", "episode", "absolute_episode",
-		"poster_url", "is_anime", "status", "reason",
+		"poster_url", "is_anime", "status", "reason", "failure_code",
 		"is_read", "auto_dismissed", "trace_id", "span_id", "created_at", "updated_at",
 	}).AddRow(
 		2, "789012", "Test Movie", "movie", nil, nil, nil,
-		"https://example.com/movie.jpg", true, "searching", "",
+		"https://example.com/movie.jpg", true, "searching", "", "",
 		false, false, "trace-2", "span-2", now, now,
 	)
 
@@ -157,10 +157,11 @@ func (s *NotificationRepoTestSuite) TestUpdateNotification_Success() {
 		Reason:     "",
 	}
 
-	s.mock.ExpectExec(`UPDATE Notifications SET status = (.+), reason = (.+), is_read = (.+), auto_dismissed = (.+), updated_at = (.+) WHERE id = (.+)`).
+	s.mock.ExpectExec(`UPDATE Notifications SET status = (.+), reason = (.+), failure_code = (.+), is_read = (.+), auto_dismissed = (.+), updated_at = (.+) WHERE id = (.+)`).
 		WithArgs(
 			notification.Status,
 			notification.Reason,
+			notification.FailureCode,
 			notification.IsRead,
 			notification.AutoDismissed,
 			sqlmock.AnyArg(), // updated_at
@@ -181,8 +182,8 @@ func (s *NotificationRepoTestSuite) TestUpdateNotification_NotFound() {
 		Reason: "Test error",
 	}
 
-	s.mock.ExpectExec(`UPDATE Notifications SET status = (.+), reason = (.+), is_read = (.+), auto_dismissed = (.+), updated_at = (.+) WHERE id = (.+)`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), notification.ID).
+	s.mock.ExpectExec(`UPDATE Notifications SET status = (.+), reason = (.+), failure_code = (.+), is_read = (.+), auto_dismissed = (.+), updated_at = (.+) WHERE id = (.+)`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), notification.ID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	err := s.repo.UpdateNotification(context.Background(), notification)
@@ -198,8 +199,8 @@ func (s *NotificationRepoTestSuite) TestUpdateNotification_DatabaseError() {
 		Status: notifications.StatusCompleted,
 	}
 
-	s.mock.ExpectExec(`UPDATE Notifications SET status = (.+), reason = (.+), is_read = (.+), auto_dismissed = (.+), updated_at = (.+) WHERE id = (.+)`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), notification.ID).
+	s.mock.ExpectExec(`UPDATE Notifications SET status = (.+), reason = (.+), failure_code = (.+), is_read = (.+), auto_dismissed = (.+), updated_at = (.+) WHERE id = (.+)`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), notification.ID).
 		WillReturnError(sql.ErrConnDone)
 
 	err := s.repo.UpdateNotification(context.Background(), notification)
@@ -224,8 +225,8 @@ func (s *NotificationRepoTestSuite) TestUpdateNotification_FullWorkflow() {
 	// Stage 1: Update to downloading
 	notification.Status = notifications.StatusDownloading
 
-	s.mock.ExpectExec(`UPDATE Notifications SET status = (.+), reason = (.+), is_read = (.+), auto_dismissed = (.+), updated_at = (.+) WHERE id = (.+)`).
-		WithArgs("downloading", "", false, false, sqlmock.AnyArg(), 1).
+	s.mock.ExpectExec(`UPDATE Notifications SET status = (.+), reason = (.+), failure_code = (.+), is_read = (.+), auto_dismissed = (.+), updated_at = (.+) WHERE id = (.+)`).
+		WithArgs("downloading", "", "", false, false, sqlmock.AnyArg(), 1).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := s.repo.UpdateNotification(context.Background(), notification)
@@ -235,8 +236,8 @@ func (s *NotificationRepoTestSuite) TestUpdateNotification_FullWorkflow() {
 	notification.Status = notifications.StatusCompleted
 	notification.Reason = ""
 
-	s.mock.ExpectExec(`UPDATE Notifications SET status = (.+), reason = (.+), is_read = (.+), auto_dismissed = (.+), updated_at = (.+) WHERE id = (.+)`).
-		WithArgs("completed", "", false, false, sqlmock.AnyArg(), 1).
+	s.mock.ExpectExec(`UPDATE Notifications SET status = (.+), reason = (.+), failure_code = (.+), is_read = (.+), auto_dismissed = (.+), updated_at = (.+) WHERE id = (.+)`).
+		WithArgs("completed", "", "", false, false, sqlmock.AnyArg(), 1).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err = s.repo.UpdateNotification(context.Background(), notification)
@@ -257,8 +258,8 @@ func (s *NotificationRepoTestSuite) TestUpdateNotification_FailureWorkflow() {
 	notification.Status = notifications.StatusFailed
 	notification.Reason = "No torrents found matching criteria"
 
-	s.mock.ExpectExec(`UPDATE Notifications SET status = (.+), reason = (.+), is_read = (.+), auto_dismissed = (.+), updated_at = (.+) WHERE id = (.+)`).
-		WithArgs("failed", "No torrents found matching criteria", false, false, sqlmock.AnyArg(), 1).
+	s.mock.ExpectExec(`UPDATE Notifications SET status = (.+), reason = (.+), failure_code = (.+), is_read = (.+), auto_dismissed = (.+), updated_at = (.+) WHERE id = (.+)`).
+		WithArgs("failed", "No torrents found matching criteria", "", false, false, sqlmock.AnyArg(), 1).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := s.repo.UpdateNotification(context.Background(), notification)

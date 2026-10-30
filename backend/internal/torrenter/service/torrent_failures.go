@@ -54,7 +54,7 @@ func (q *QbittHandler) failedResult(ss *models.SearchStrategy, code dlstatus.Fai
 // because the webserver's retry engine (Phase 2) owns the final failure decision.
 func (q *QbittHandler) applyFailureNotification(ctx context.Context, tvdbID string, code dlstatus.FailureCode) {
 	if code.Category() == dlstatus.CategoryPermanent {
-		q.updateNotificationStatus(ctx, tvdbID, code.HumanReason(), notifications.StatusFailed)
+		q.failNotification(ctx, tvdbID, code, code.HumanReason())
 		return
 	}
 	q.updateNotificationStatus(ctx, tvdbID, code.HumanReason(), notifications.StatusSearching)

@@ -234,6 +234,7 @@ func (i *DownloadInteractor) updateNotificationCompleted(ctx context.Context, ev
 	// Update notification fields
 	notification.Status = notifications.StatusCompleted
 	notification.Reason = ""
+	notification.FailureCode = ""
 
 	err = i.repo.UpdateNotification(ctx, notification)
 	if err != nil {
@@ -282,6 +283,8 @@ func (i *DownloadInteractor) updateNotificationFailed(ctx context.Context, event
 	// Update notification fields
 	notification.Status = notifications.StatusFailed
 	notification.Reason = reason
+	// The files are on disk and need a person; the webserver must not retry.
+	notification.FailureCode = string(dlstatus.CodeProcessingError)
 
 	err = i.repo.UpdateNotification(ctx, notification)
 	if err != nil {
@@ -310,12 +313,15 @@ func (i *DownloadInteractor) settlePackNotifications(ctx context.Context, event 
 		if outcome == "linked" {
 			n.Status = notifications.StatusCompleted
 			n.Reason = ""
+			n.FailureCode = ""
 		} else {
 			n.Status = notifications.StatusFailed
 			if outcome == "" {
 				outcome = "not in the season pack"
 			}
 			n.Reason = outcome
+			// Transient: the webserver retries the episode on its own.
+			n.FailureCode = string(dlstatus.CodeNoTorrentFound)
 		}
 		if err := i.repo.UpdateNotification(ctx, n); err != nil {
 			i.logger.ErrorContext(ctx, "Failed to settle pack episode notification", "error", err, "tvdb_id", id)

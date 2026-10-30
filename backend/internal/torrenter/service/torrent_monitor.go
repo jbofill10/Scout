@@ -91,6 +91,9 @@ const (
 	maxMissedPolls = 30
 )
 
+// monitorPoll is the poll cadence in use; tests shorten it.
+var monitorPoll = nextPollInterval
+
 // nextPollInterval returns the poll cadence given elapsed time since monitoring began:
 // 10s for the first 10 minutes, then 60s thereafter.
 func nextPollInterval(elapsed time.Duration) time.Duration {
@@ -124,9 +127,11 @@ func monitorTimeout() time.Duration {
 
 // monitorTorrentCompletion watches a torrent until it completes and sends the completion event.
 //
-// startedAt is when this torrent's monitoring originally began, which is not the
-// same as now for a monitor resumed after a restart — a resumed monitor inherits
-// the deadline it was born with instead of getting a fresh window on every boot.
+// A torrent is given up on when it makes no progress for MONITOR_TIMEOUT, not
+// after a fixed wall-clock budget: a 60 GB remux that is still moving is a
+// slow download, not a lost one. The stall window is measured from when this
+// monitor started (now, also for a monitor resumed after a restart); startedAt
+// is when the download was first watched and only drives the poll cadence.
 func (q *QbittHandler) monitorTorrentCompletion(
 	ctx context.Context,
 	match *models.TorrentMatch,
@@ -187,22 +192,7 @@ func (q *QbittHandler) monitorTorrentCompletion(
 	for {
 		elapsed := time.Since(start)
 
-		// Overall deadline: a torrent that never completes shouldn't be watched forever.
-		if elapsed >= timeout {
-			q.logger.WarnContext(monitorCtx, "Torrent monitor timed out, giving up",
-				telemetry.WithTraceContext(monitorCtx,
-					"torrent_title", match.Torrent.Title,
-					"torrent_hash", infoHash,
-					"timeout", timeout.String())...)
-			q.updateNotificationStatus(monitorCtx, match.Strategy.EpisodeTvdbID, dlstatus.CodeMonitorLost.HumanReason(), notifications.StatusFailed)
-			q.recordStrategyFailure(monitorCtx, match.Strategy, "monitor timeout")
-			q.recordFailedTorrent(monitorCtx, match, infoHash, "monitor timeout")
-			q.clearActiveTorrent(monitorCtx, infoHash)
-			monitorSpan.SetStatus(codes.Error, "monitor timeout")
-			return
-		}
-
-		if !sleepCtx(monitorCtx, nextPollInterval(elapsed)) {
+		if !sleepCtx(monitorCtx, monitorPoll(elapsed)) {
 			q.logger.InfoContext(monitorCtx, "Torrent monitor stopped: download cancelled",
 				telemetry.WithTraceContext(monitorCtx, "torrent_title", match.Torrent.Title, "torrent_hash", infoHash)...)
 			monitorSpan.SetStatus(codes.Ok, "cancelled")
@@ -229,7 +219,7 @@ func (q *QbittHandler) monitorTorrentCompletion(
 					"torrent_title", match.Torrent.Title,
 					"torrent_hash", infoHash,
 					"error", err.Error())...)
-			q.updateNotificationStatus(monitorCtx, match.Strategy.EpisodeTvdbID, dlstatus.CodeMonitorLost.HumanReason(), notifications.StatusFailed)
+			q.failNotification(monitorCtx, match.Strategy.EpisodeTvdbID, dlstatus.CodeMonitorLost, dlstatus.CodeMonitorLost.HumanReason())
 			q.recordStrategyFailure(monitorCtx, match.Strategy, "monitor lost: qbittorrent query exhausted")
 			q.clearActiveTorrent(monitorCtx, infoHash)
 			monitorSpan.SetStatus(codes.Error, "max retries reached")
@@ -248,7 +238,7 @@ func (q *QbittHandler) monitorTorrentCompletion(
 						"torrent_title", match.Torrent.Title,
 						"torrent_hash", infoHash,
 						"missed_polls", missedPolls)...)
-				q.updateNotificationStatus(monitorCtx, match.Strategy.EpisodeTvdbID, dlstatus.CodeMonitorLost.HumanReason(), notifications.StatusFailed)
+				q.failNotification(monitorCtx, match.Strategy.EpisodeTvdbID, dlstatus.CodeMonitorLost, dlstatus.CodeMonitorLost.HumanReason())
 				q.recordStrategyFailure(monitorCtx, match.Strategy, "monitor lost: torrent no longer in qbittorrent")
 				q.recordFailedTorrent(monitorCtx, match, infoHash, "removed from qbittorrent")
 				q.clearActiveTorrent(monitorCtx, infoHash)
@@ -303,11 +293,36 @@ func (q *QbittHandler) monitorTorrentCompletion(
 						"leechers", torrent.NumLeechs)...)
 				reason := fmt.Sprintf("dead swarm: no seeds and no progress for %s", stalledFor.Round(time.Minute))
 				q.giveUpOnTorrent(monitorCtx, match, infoHash, reason)
-				q.replaceDeadTorrent(monitorCtx, request, match.Strategy, done, wg)
+				q.replaceDeadTorrent(monitorCtx, request, match.Strategy, done, wg, "Chosen torrent had no seeds")
 				monitorSpan.SetStatus(codes.Error, "dead swarm")
 				return
 			}
-			q.logger.InfoContext(monitorCtx, "Torrent downloading", "title", match.Torrent.Title, "progress", torrent.Progress*100)
+			// Seeds or not, a download that has not moved in MONITOR_TIMEOUT is
+			// not going to finish; swap it for another copy like a dead swarm.
+			if stalledFor >= timeout {
+				q.logger.WarnContext(monitorCtx, "Torrent has made no progress for too long, giving up on it",
+					telemetry.WithTraceContext(monitorCtx,
+						"torrent_title", match.Torrent.Title,
+						"torrent_hash", infoHash,
+						"progress", torrent.Progress*100,
+						"state", torrent.State,
+						"stalled_for", stalledFor.Round(time.Second).String())...)
+				reason := fmt.Sprintf("no progress for %s", stalledFor.Round(time.Minute))
+				q.giveUpOnTorrent(monitorCtx, match, infoHash, reason)
+				q.replaceDeadTorrent(monitorCtx, request, match.Strategy, done, wg,
+					"The download made no progress for "+timeout.String())
+				monitorSpan.SetStatus(codes.Error, "stalled")
+				return
+			}
+			q.logger.InfoContext(monitorCtx, "Torrent downloading",
+				telemetry.WithTraceContext(monitorCtx,
+					"title", match.Torrent.Title,
+					"torrent_hash", infoHash,
+					"progress", torrent.Progress*100,
+					"state", torrent.State,
+					"seeds", torrent.NumSeeds,
+					"dlspeed", torrent.DlSpeed,
+					"stalled_for", stalledFor.Round(time.Second).String())...)
 		}
 	}
 }
@@ -339,8 +354,8 @@ const (
 )
 
 // replaceDeadTorrent searches for another copy of an item whose download was
-// given up on, skipping every release already tried, and starts a fresh
-// download and monitor for it. After maxDeadReplacements the item is reported
+// given up on (why says what happened, in words the user sees), skipping every
+// release already tried, and starts a fresh download and monitor for it. After maxDeadReplacements the item is reported
 // as failed instead. Nothing happens for in-flight rows written before the
 // search request was recorded.
 func (q *QbittHandler) replaceDeadTorrent(
@@ -349,23 +364,24 @@ func (q *QbittHandler) replaceDeadTorrent(
 	ss *models.SearchStrategy,
 	done chan<- models.TorrentCompleteEvent,
 	wg *sync.WaitGroup,
+	why string,
 ) {
 	if request == nil {
 		q.logger.WarnContext(ctx, "Cannot look for a replacement: no search request recorded for this torrent",
 			telemetry.WithTraceContext(ctx, "tvdb_id", ss.EpisodeTvdbID)...)
-		q.updateNotificationStatus(ctx, ss.EpisodeTvdbID, "Chosen torrent had no seeds", notifications.StatusFailed)
+		q.failNotification(ctx, ss.EpisodeTvdbID, dlstatus.CodeMonitorLost, why)
 		return
 	}
 	if request.Replaced >= maxDeadReplacements {
-		reason := fmt.Sprintf("No copy with live seeds found after %d tries", request.Replaced+1)
-		q.logger.WarnContext(ctx, "Giving up on item: every replacement was dead too",
+		reason := fmt.Sprintf("No working copy found after %d tries", request.Replaced+1)
+		q.logger.WarnContext(ctx, "Giving up on item: every replacement failed too",
 			telemetry.WithTraceContext(ctx, "tvdb_id", ss.EpisodeTvdbID, "tries", request.Replaced+1)...)
-		q.updateNotificationStatus(ctx, ss.EpisodeTvdbID, reason, notifications.StatusFailed)
+		q.failNotification(ctx, ss.EpisodeTvdbID, dlstatus.CodeNoTorrentFound, reason)
 		return
 	}
 	request.Replaced++
 
-	q.updateNotificationStatus(ctx, ss.EpisodeTvdbID, "Chosen torrent had no seeds, looking for another copy", notifications.StatusSearching)
+	q.updateNotificationStatus(ctx, ss.EpisodeTvdbID, why+", looking for another copy", notifications.StatusSearching)
 	q.logger.InfoContext(ctx, "Searching for a replacement torrent",
 		telemetry.WithTraceContext(ctx, "media", request.Media.Name, "season", ss.Season, "episode", ss.Episode, "replacement", request.Replaced)...)
 
@@ -377,7 +393,7 @@ func (q *QbittHandler) replaceDeadTorrent(
 		strategies = q.createSearchStrategy(&media, request.Episode)
 	}
 	if len(strategies) == 0 {
-		q.updateNotificationStatus(ctx, ss.EpisodeTvdbID, "Chosen torrent had no seeds and no other copy could be searched for", notifications.StatusFailed)
+		q.failNotification(ctx, ss.EpisodeTvdbID, dlstatus.CodeInvalidMedia, why+" and no other copy could be searched for")
 		return
 	}
 
@@ -389,7 +405,7 @@ func (q *QbittHandler) replaceDeadTorrent(
 		q.logger.WarnContext(ctx, "No replacement torrent found",
 			telemetry.WithTraceContext(ctx, "media", media.Name, "season", ss.Season, "episode", ss.Episode)...)
 		q.recordStrategyFailure(ctx, ss, "no replacement torrent found")
-		q.updateNotificationStatus(ctx, ss.EpisodeTvdbID, "Chosen torrent had no seeds and no other copy was found", notifications.StatusFailed)
+		q.failNotification(ctx, ss.EpisodeTvdbID, dlstatus.CodeNoTorrentFound, why+" and no other copy was found")
 		return
 	}
 

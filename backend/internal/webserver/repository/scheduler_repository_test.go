@@ -417,7 +417,7 @@ func (s *SchedulerRepoTestSuite) TestFindRowsByItem_MatchesByNotificationKey() {
 	next := time.Now().Add(time.Hour)
 
 	s.mock.ExpectQuery(`SELECT id, media, release_time, schedule_status, attempts, next_attempt_at`).
-		WithArgs(StatusPending, StatusQueued, StatusFailed).
+		WithArgs(StatusPending, StatusQueued, StatusFailed, StatusCompleted).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "media", "release_time", "schedule_status", "attempts", "next_attempt_at"}).
 			AddRow(1, mine, time.Now(), StatusPending, 2, next).
 			AddRow(2, other, time.Now(), StatusPending, 0, nil).
@@ -447,7 +447,7 @@ func (s *SchedulerRepoTestSuite) TestCancelRow_OnlyControllableStatuses() {
 
 func (s *SchedulerRepoTestSuite) TestRearmRow() {
 	s.mock.ExpectExec(`UPDATE ScheduledDownloads`).
-		WithArgs(StatusPending, sqlmock.AnyArg(), true, 7, StatusPending, StatusFailed).
+		WithArgs(StatusPending, sqlmock.AnyArg(), true, 7, StatusPending, StatusFailed, StatusCompleted).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	s.NoError(s.repo.RearmRow(context.Background(), 7, true))
@@ -505,4 +505,35 @@ func (s *SchedulerRepoTestSuite) TestTrackedItemKeys_EveryStatus() {
 
 	s.Require().NoError(err)
 	s.Equal(map[string]bool{"55": true, "77": true}, keys)
+}
+
+func (s *SchedulerRepoTestSuite) TestRearmCompletedRow() {
+	next := time.Now().Add(time.Hour)
+	s.mock.ExpectExec(`UPDATE ScheduledDownloads`).
+		WithArgs(StatusPending, next.Format(time.RFC3339), "monitor_lost", "Lost track of the download", 7, StatusCompleted).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	s.NoError(s.repo.RearmCompletedRow(context.Background(), 7, "monitor_lost", "Lost track of the download", next))
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestFailCompletedRow() {
+	s.mock.ExpectExec(`UPDATE ScheduledDownloads`).
+		WithArgs(StatusFailed, "max_retries_exceeded", "Gave up", 7, StatusCompleted).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	s.NoError(s.repo.FailCompletedRow(context.Background(), 7, "max_retries_exceeded", "Gave up"))
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+// A dispatched item is kept as a completed row keyed by the same content hash
+// a scheduled row would use, so an existing row for the item is left alone.
+func (s *SchedulerRepoTestSuite) TestRecordDispatched_InsertsCompletedRow() {
+	media := tvdb.Media{Id: "154561", Name: "X", Category: "movie", Year: "2022"}
+	s.mock.ExpectExec(`INSERT INTO ScheduledDownloads`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), StatusCompleted, ComputeContentHash(media, mediaReleaseTime(media)), "trace", "span").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	s.NoError(s.repo.RecordDispatched(context.Background(), media, "trace", "span"))
+	s.NoError(s.mock.ExpectationsWereMet())
 }

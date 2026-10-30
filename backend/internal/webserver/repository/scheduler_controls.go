@@ -45,18 +45,24 @@ type UpcomingItem struct {
 // controllableStatuses are the rows a user can still act on.
 var controllableStatuses = []string{StatusPending, StatusQueued, StatusFailed}
 
-// FindRowsByItem returns the pending, queued and failed rows for an item. Rows
-// are matched in Go by NotificationKey, since the key lives inside the media
-// JSON; the controllable set is small, so this is cheaper than an index.
+// lookupStatuses are the rows FindRowsByItem returns: the controllable ones
+// plus completed rows, which keep the media payload of a download that was
+// handed off and can be re-armed when the torrenter later loses it.
+var lookupStatuses = []string{StatusPending, StatusQueued, StatusFailed, StatusCompleted}
+
+// FindRowsByItem returns the pending, queued, failed and completed rows for an
+// item, oldest first. Rows are matched in Go by NotificationKey, since the key
+// lives inside the media JSON; the set is small, so this is cheaper than an
+// index. Callers decide by ScheduleStatus which rows they may act on.
 func (r *SchedulerRepo) FindRowsByItem(ctx context.Context, itemKey string) ([]ScheduledRow, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	stmt := `SELECT id, media, release_time, schedule_status, attempts, next_attempt_at
 			 FROM ScheduledDownloads
-			 WHERE schedule_status IN ($1, $2, $3)
+			 WHERE schedule_status IN ($1, $2, $3, $4)
 			 ORDER BY id ASC`
-	rows, err := r.db.QueryContext(ctx, stmt, controllableStatuses[0], controllableStatuses[1], controllableStatuses[2])
+	rows, err := r.db.QueryContext(ctx, stmt, lookupStatuses[0], lookupStatuses[1], lookupStatuses[2], lookupStatuses[3])
 	if err != nil {
 		return nil, fmt.Errorf("failed to query rows for item: %w", err)
 	}
@@ -110,7 +116,7 @@ func (r *SchedulerRepo) CancelRow(ctx context.Context, id int) error {
 	return nil
 }
 
-// RearmRow makes a pending or failed row due right now. resetAttempts gives a
+// RearmRow makes a pending, failed or completed row due right now. resetAttempts gives a
 // permanently failed row a fresh retry budget.
 func (r *SchedulerRepo) RearmRow(ctx context.Context, id int, resetAttempts bool) error {
 	r.mu.Lock()
@@ -120,10 +126,74 @@ func (r *SchedulerRepo) RearmRow(ctx context.Context, id int, resetAttempts bool
 		`UPDATE ScheduledDownloads
 		 SET schedule_status = $1, next_attempt_at = $2,
 		     attempts = CASE WHEN $3 THEN 0 ELSE attempts END
-		 WHERE id = $4 AND schedule_status IN ($5, $6)`,
-		StatusPending, time.Now().Format(time.RFC3339), resetAttempts, id, StatusPending, StatusFailed)
+		 WHERE id = $4 AND schedule_status IN ($5, $6, $7)`,
+		StatusPending, time.Now().Format(time.RFC3339), resetAttempts, id, StatusPending, StatusFailed, StatusCompleted)
 	if err != nil {
 		return fmt.Errorf("failed to re-arm row: %w", err)
+	}
+	return nil
+}
+
+// RearmCompletedRow puts a completed row back on the retry ladder after the
+// torrenter lost the download it had started: pending again, one more attempt
+// on the count, due at nextAttempt, with the failure recorded on the row.
+func (r *SchedulerRepo) RearmCompletedRow(ctx context.Context, id int, code, reason string, nextAttempt time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE ScheduledDownloads
+		 SET schedule_status = $1, attempts = attempts + 1, next_attempt_at = $2,
+		     last_failure_code = $3, last_failure_reason = $4
+		 WHERE id = $5 AND schedule_status = $6`,
+		StatusPending, nextAttempt.Format(time.RFC3339), code, reason, id, StatusCompleted)
+	if err != nil {
+		return fmt.Errorf("failed to re-arm completed row: %w", err)
+	}
+	return nil
+}
+
+// FailCompletedRow marks a completed row terminally failed: the download it
+// started was lost and the retry ladder is exhausted.
+func (r *SchedulerRepo) FailCompletedRow(ctx context.Context, id int, code, reason string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE ScheduledDownloads
+		 SET schedule_status = $1, attempts = attempts + 1, next_attempt_at = NULL,
+		     last_failure_code = $2, last_failure_reason = $3
+		 WHERE id = $4 AND schedule_status = $5`,
+		StatusFailed, code, reason, id, StatusCompleted)
+	if err != nil {
+		return fmt.Errorf("failed to fail completed row: %w", err)
+	}
+	return nil
+}
+
+// RecordDispatched keeps a completed row for an item the torrenter accepted
+// straight from a request, so the media payload exists to retry from when the
+// download is lost later. A row for the item (canonical or retry) already
+// tracking it is left alone.
+func (r *SchedulerRepo) RecordDispatched(ctx context.Context, media tvdb.Media, traceID, spanID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	mediaJSON, err := json.Marshal(media)
+	if err != nil {
+		return fmt.Errorf("failed to marshal media: %w", err)
+	}
+	hashTime := mediaReleaseTime(media)
+	contentHash := ComputeContentHash(media, hashTime)
+
+	_, err = r.db.ExecContext(ctx,
+		`INSERT INTO ScheduledDownloads
+		 (media, release_time, schedule_status, content_hash, scheduled_trace_id, scheduled_span_id, attempts, queued_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, 0, now())
+		 ON CONFLICT (content_hash) DO NOTHING`,
+		mediaJSON, hashTime.Format(time.RFC3339), StatusCompleted, contentHash, traceID, spanID)
+	if err != nil {
+		return fmt.Errorf("failed to record dispatched item: %w", err)
 	}
 	return nil
 }

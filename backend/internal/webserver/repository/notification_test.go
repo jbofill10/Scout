@@ -75,6 +75,7 @@ func (s *NotificationRepoTestSuite) TestCreateNotification_Success() {
 			notification.IsAnime,
 			notification.Status,
 			notification.Reason,
+			notification.FailureCode,
 			notification.IsRead,
 			notification.AutoDismissed,
 			notification.TraceID,
@@ -117,6 +118,7 @@ func (s *NotificationRepoTestSuite) TestCreateNotification_Movie() {
 			notification.IsAnime,
 			notification.Status,
 			notification.Reason,
+			notification.FailureCode,
 			notification.IsRead,
 			notification.AutoDismissed,
 			notification.TraceID,
@@ -146,7 +148,7 @@ func (s *NotificationRepoTestSuite) TestCreateNotification_DatabaseError() {
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
 
 	err := s.repo.CreateNotification(context.Background(), notification)
@@ -166,6 +168,7 @@ func (s *NotificationRepoTestSuite) TestUpdateNotification_Success() {
 		WithArgs(
 			notification.Status,
 			notification.Reason,
+			notification.FailureCode,
 			notification.IsRead,
 			notification.AutoDismissed,
 			sqlmock.AnyArg(),
@@ -187,7 +190,7 @@ func (s *NotificationRepoTestSuite) TestUpdateNotification_NotFound() {
 
 	s.mock.ExpectExec(`UPDATE Notifications`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg(), sqlmock.AnyArg(), notification.ID).
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), notification.ID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	err := s.repo.UpdateNotification(context.Background(), notification)
@@ -204,11 +207,11 @@ func (s *NotificationRepoTestSuite) TestGetNotifications_NoFilters() {
 
 	rows := sqlmock.NewRows([]string{
 		"id", "tvdb_id", "media_title", "category", "season", "episode", "absolute_episode",
-		"poster_url", "is_anime", "status", "reason",
+		"poster_url", "is_anime", "status", "reason", "failure_code",
 		"is_read", "auto_dismissed", "trace_id", "span_id", "created_at", "updated_at",
 	}).AddRow(
 		1, "123456", "Test Show", "series", &season, &episode, nil,
-		"https://example.com/poster.jpg", false, "completed", "",
+		"https://example.com/poster.jpg", false, "completed", "", "",
 		false, false, "trace-1", "span-1", now, now,
 	)
 
@@ -230,11 +233,11 @@ func (s *NotificationRepoTestSuite) TestGetNotifications_WithFilters() {
 
 	rows := sqlmock.NewRows([]string{
 		"id", "tvdb_id", "media_title", "category", "season", "episode", "absolute_episode",
-		"poster_url", "is_anime", "status", "reason",
+		"poster_url", "is_anime", "status", "reason", "failure_code",
 		"is_read", "auto_dismissed", "trace_id", "span_id", "created_at", "updated_at",
 	}).AddRow(
 		2, "789012", "Test Movie", "movie", nil, nil, nil,
-		"https://example.com/movie.jpg", true, "scheduled", "",
+		"https://example.com/movie.jpg", true, "scheduled", "", "",
 		false, false, "trace-2", "span-2", now, now,
 	)
 

@@ -42,7 +42,7 @@ func (r *NotificationRepo) GetNotifications(ctx context.Context, limit int, cate
 
 	query := `
 		SELECT id, tvdb_id, media_title, category, season, episode, absolute_episode,
-			poster_url, is_anime, status, reason,
+			poster_url, is_anime, status, reason, failure_code,
 			is_read, auto_dismissed, trace_id, span_id, created_at, updated_at
 		FROM Notifications
 		WHERE auto_dismissed = false
@@ -81,7 +81,7 @@ func (r *NotificationRepo) GetNotifications(ctx context.Context, limit int, cate
 		var n notifications.Notification
 		err := rows.Scan(
 			&n.ID, &n.TvdbID, &n.MediaTitle, &n.Category, &n.Season, &n.Episode, &n.AbsoluteEpisode,
-			&n.PosterURL, &n.IsAnime, &n.Status, &n.Reason,
+			&n.PosterURL, &n.IsAnime, &n.Status, &n.Reason, &n.FailureCode,
 			&n.IsRead, &n.AutoDismissed, &n.TraceID, &n.SpanID, &n.CreatedAt, &n.UpdatedAt,
 		)
 		if err != nil {

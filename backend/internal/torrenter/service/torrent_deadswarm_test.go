@@ -127,7 +127,7 @@ func TestReplaceDeadTorrent_NoRequestReportsFailed(t *testing.T) {
 	q := newResumeTestHandler(t, repo)
 
 	var wg sync.WaitGroup
-	q.replaceDeadTorrent(context.Background(), nil, deadSwarmTestStrategy(), make(chan models.TorrentCompleteEvent, 1), &wg)
+	q.replaceDeadTorrent(context.Background(), nil, deadSwarmTestStrategy(), make(chan models.TorrentCompleteEvent, 1), &wg, "Chosen torrent had no seeds")
 }
 
 // After the replacement budget is spent the item is reported failed with the
@@ -136,13 +136,13 @@ func TestReplaceDeadTorrent_BudgetExhaustedReportsFailed(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.On("GetNotification", mock.Anything, "55").Return(&notifications.Notification{ID: 1, TvdbID: "55"}, nil)
 	repo.On("UpdateNotification", mock.Anything, mock.MatchedBy(func(n *notifications.Notification) bool {
-		return n.Status == notifications.StatusFailed && n.Reason == "No copy with live seeds found after 4 tries"
+		return n.Status == notifications.StatusFailed && n.Reason == "No working copy found after 4 tries"
 	})).Return(nil)
 	q := newResumeTestHandler(t, repo)
 
 	request := &models.SearchRequest{Media: tvdb.Media{Id: "9001", Name: "Some Show", Category: "series"}, Replaced: maxDeadReplacements}
 	var wg sync.WaitGroup
-	q.replaceDeadTorrent(context.Background(), request, deadSwarmTestStrategy(), make(chan models.TorrentCompleteEvent, 1), &wg)
+	q.replaceDeadTorrent(context.Background(), request, deadSwarmTestStrategy(), make(chan models.TorrentCompleteEvent, 1), &wg, "Chosen torrent had no seeds")
 	assert.Equal(t, maxDeadReplacements, request.Replaced, "no further replacement is counted")
 }
 
@@ -168,7 +168,7 @@ func TestReplaceDeadTorrent_SearchesAgainExcludingFailed(t *testing.T) {
 	request := &models.SearchRequest{Media: *req, Episode: &ep}
 
 	var wg sync.WaitGroup
-	q.replaceDeadTorrent(context.Background(), request, deadSwarmTestStrategy(), make(chan models.TorrentCompleteEvent, 1), &wg)
+	q.replaceDeadTorrent(context.Background(), request, deadSwarmTestStrategy(), make(chan models.TorrentCompleteEvent, 1), &wg, "Chosen torrent had no seeds")
 
 	assert.Equal(t, 1, request.Replaced)
 	assert.Equal(t, []notifications.NotificationStatus{notifications.StatusSearching, notifications.StatusFailed}, statuses,

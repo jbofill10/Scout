@@ -70,6 +70,7 @@ func (s *PostgresRepositoryTestSuite) TestCreateNotification_Series() {
 			notification.IsAnime,
 			notification.Status,
 			notification.Reason,
+			notification.FailureCode,
 			notification.IsRead,
 			notification.AutoDismissed,
 			notification.TraceID,
@@ -114,6 +115,7 @@ func (s *PostgresRepositoryTestSuite) TestCreateNotification_Movie() {
 			notification.IsAnime,
 			notification.Status,
 			notification.Reason,
+			notification.FailureCode,
 			notification.IsRead,
 			notification.AutoDismissed,
 			notification.TraceID,
@@ -161,11 +163,11 @@ func (s *PostgresRepositoryTestSuite) TestGetNotification_Found() {
 
 	rows := sqlmock.NewRows([]string{
 		"id", "tvdb_id", "media_title", "category", "season", "episode", "absolute_episode",
-		"poster_url", "is_anime", "status", "reason",
+		"poster_url", "is_anime", "status", "reason", "failure_code",
 		"is_read", "auto_dismissed", "trace_id", "span_id", "created_at", "updated_at",
 	}).AddRow(
 		5, tvdbID, "Found Show", "series", season, episode, nil,
-		"poster.jpg", false, StatusDownloading, "",
+		"poster.jpg", false, StatusDownloading, "", "",
 		false, false, "trace", "span", time.Now(), time.Now(),
 	)
 
@@ -232,6 +234,7 @@ func (s *PostgresRepositoryTestSuite) TestUpdateNotification_Success() {
 		WithArgs(
 			notification.Status,
 			notification.Reason,
+			notification.FailureCode,
 			notification.IsRead,
 			notification.AutoDismissed,
 			sqlmock.AnyArg(), // updated_at
@@ -258,6 +261,7 @@ func (s *PostgresRepositoryTestSuite) TestUpdateNotification_NotFound() {
 		WithArgs(
 			notification.Status,
 			notification.Reason,
+			notification.FailureCode,
 			notification.IsRead,
 			notification.AutoDismissed,
 			sqlmock.AnyArg(),

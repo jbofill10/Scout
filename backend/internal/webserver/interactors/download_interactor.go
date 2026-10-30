@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/jbofill10/scout/backend/internal/webserver/clients"
@@ -64,6 +65,9 @@ type DownloadInteractor struct {
 	// so the HTTP request returns immediately; tests substitute a synchronous
 	// runner.
 	dispatch func(func())
+	// unrecoverable remembers lost episodes with no row to retry from, so
+	// they are logged once rather than every reconciliation pass.
+	unrecoverable sync.Map
 }
 
 func NewDownloadInteractor(
@@ -101,6 +105,7 @@ func (i *DownloadInteractor) WatchForDueMedia() {
 			i.processDueItem(item)
 		}
 	}()
+	go i.runAsyncFailureReconciler(context.Background())
 }
 
 // processDueItem dispatches a single scheduled download and transitions its row
@@ -190,7 +195,7 @@ func (i *DownloadInteractor) handlePermanentRowFailureWithCode(ctx context.Conte
 	if markErr := i.repo.MarkPermanentlyFailed(ctx, item.ID, code, reason); markErr != nil {
 		i.logger.ErrorContext(ctx, "Failed to mark download permanently failed", "error", markErr, "id", item.ID)
 	}
-	i.surfacePermanentFailure(ctx, item.Media.Name, failed, reason, traceID, spanID)
+	i.surfacePermanentFailure(ctx, item.Media.Name, failed, code, reason, traceID, spanID)
 	i.logger.ErrorContext(ctx, "Scheduled download permanently failed",
 		"media", item.Media.Name, "code", code, "reason", reason)
 }
@@ -198,8 +203,8 @@ func (i *DownloadInteractor) handlePermanentRowFailureWithCode(ctx context.Conte
 // surfacePermanentFailure updates the episode/movie notification to failed and
 // records a history failure row. Shared by the scheduled-dispatch and both
 // immediate-download paths so the "notify + history" pattern lives in one place.
-func (i *DownloadInteractor) surfacePermanentFailure(ctx context.Context, mediaTitle string, failed dlstatus.EpisodeResult, reason, traceID, spanID string) {
-	i.updateNotificationStatus(ctx, failed.TvdbID, notifications.StatusFailed, reason)
+func (i *DownloadInteractor) surfacePermanentFailure(ctx context.Context, mediaTitle string, failed dlstatus.EpisodeResult, code, reason, traceID, spanID string) {
+	i.setNotification(ctx, failed.TvdbID, notifications.StatusFailed, reason, code)
 	if histErr := i.repo.InsertDownloadHistory(mediaTitle, failed.Season, failed.Episode, 0,
 		status.Failure, "[Download Failed]: "+reason, traceID, spanID); histErr != nil {
 		i.logger.ErrorContext(ctx, "Failed to insert download history", "error", histErr)
@@ -229,6 +234,12 @@ func failedResult(results []dlstatus.EpisodeResult) *dlstatus.EpisodeResult {
 // updateNotificationStatus updates an existing notification (by tvdb_id) to the
 // given status and reason. Missing notifications are logged, not fatal.
 func (i *DownloadInteractor) updateNotificationStatus(ctx context.Context, tvdbID string, st notifications.NotificationStatus, reason string) {
+	i.setNotification(ctx, tvdbID, st, reason, "")
+}
+
+// setNotification writes a status, its reason and, for a failure, the
+// dlstatus code behind it; any other transition clears the code.
+func (i *DownloadInteractor) setNotification(ctx context.Context, tvdbID string, st notifications.NotificationStatus, reason, failureCode string) {
 	notification, err := i.notificationRepo.GetNotification(ctx, tvdbID)
 	if err != nil {
 		i.logger.ErrorContext(ctx, "Failed to load notification for update", "error", err, "tvdb_id", tvdbID)
@@ -240,6 +251,7 @@ func (i *DownloadInteractor) updateNotificationStatus(ctx context.Context, tvdbI
 	}
 	notification.Status = st
 	notification.Reason = reason
+	notification.FailureCode = failureCode
 	if err := i.notificationRepo.UpdateNotification(ctx, notification); err != nil {
 		i.logger.ErrorContext(ctx, "Failed to update notification", "error", err, "tvdb_id", tvdbID)
 	}
@@ -476,6 +488,9 @@ func (i *DownloadInteractor) dispatchShowDownload(
 			i.logger.ErrorContext(ctx, "Failed to download episode", "error", dlErr,
 				"media", payload.Name, "season", ep.SeasonNumber, "episode", ep.Number)
 		}
+		if downloading(resp) {
+			i.recordDispatched(ctx, i.buildScheduledMedia(payload, extendedInfo, isAnime, ep), traceID, spanID)
+		}
 
 		allScheduled, scheduleErr := i.handleImmediateShowFailures(ctx, single, extendedInfo, isAnime, resp, traceID, spanID)
 		if !allScheduled || scheduleErr != nil {
@@ -602,6 +617,9 @@ func (i *DownloadInteractor) dispatchMovieDownload(ctx context.Context, req tvdb
 	i.logger.InfoContext(ctx, "Sent movie to torrenter", "movie", req.Name)
 
 	traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
+	if downloading(resp) {
+		i.recordDispatched(ctx, req, traceID, spanID)
+	}
 	scheduled, scheduleErr := i.handleImmediateMovieFailure(ctx, req, resp, traceID, spanID)
 	if !scheduled || scheduleErr != nil {
 		i.logger.ErrorContext(ctx, "Movie download failure could not be scheduled for retry",
@@ -646,7 +664,7 @@ func (i *DownloadInteractor) handleImmediateShowFailures(
 		}
 
 		if r.Code.Category() == dlstatus.CategoryPermanent {
-			i.surfacePermanentFailure(ctx, payload.Name, r, reason, traceID, spanID)
+			i.surfacePermanentFailure(ctx, payload.Name, r, string(r.Code), reason, traceID, spanID)
 			continue
 		}
 
@@ -721,7 +739,7 @@ func (i *DownloadInteractor) handleImmediateMovieFailure(
 	}
 
 	if failed.Code.Category() == dlstatus.CategoryPermanent {
-		i.surfacePermanentFailure(ctx, req.Name, *failed, reason, traceID, spanID)
+		i.surfacePermanentFailure(ctx, req.Name, *failed, string(failed.Code), reason, traceID, spanID)
 		return true, nil
 	}
 

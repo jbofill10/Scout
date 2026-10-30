@@ -60,15 +60,15 @@ func TestValidatePack(t *testing.T) {
 	q.minQualityTier = QualityTier("1080p")
 	show, eps := packShow()
 	accept := map[string]bool{
-		"Severance S01 1080p WEB-DL-NTb":           true,
-		"Severance Season 1 Complete 1080p x265":   true,
-		"Severance S01E01-E08 1080p WEB":           true,
-		"Severance S01E01-E06 1080p WEB":           false, // does not cover 7 and 8
-		"Severance S02 1080p WEB":                  false,
-		"Severance S01E04 1080p WEB":               false, // single episode
-		"Severance S01 720p WEB":                   false, // below the floor
-		"Some Other Show S01 1080p WEB":            false,
-		"Severance.S01.COMPLETE.2160p.WEB.x265":    true,
+		"Severance S01 1080p WEB-DL-NTb":         true,
+		"Severance Season 1 Complete 1080p x265": true,
+		"Severance S01E01-E08 1080p WEB":         true,
+		"Severance S01E01-E06 1080p WEB":         false, // does not cover 7 and 8
+		"Severance S02 1080p WEB":                false,
+		"Severance S01E04 1080p WEB":             false, // single episode
+		"Severance S01 720p WEB":                 false, // below the floor
+		"Some Other Show S01 1080p WEB":          false,
+		"Severance.S01.COMPLETE.2160p.WEB.x265":  true,
 	}
 	for title, want := range accept {
 		ok, why, _, _ := q.validatePack(&prowlarr.Search{Title: title, Seeders: 20}, show, 1, eps)

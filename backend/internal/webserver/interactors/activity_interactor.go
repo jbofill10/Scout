@@ -75,9 +75,10 @@ func (a *ActivityInteractor) GetActivity(ctx context.Context, limit int) (Activi
 	}
 
 	// Failed rows are included so a permanently failed item still shows its
-	// attempt count and can offer Retry.
+	// attempt count and can offer Retry; completed rows so an item whose
+	// download was lost after the hand-off can be retried from its payload.
 	meta, err := a.schedulerRepo.GetScheduleMetaByStatus(ctx,
-		repository.StatusPending, repository.StatusQueued, repository.StatusFailed)
+		repository.StatusPending, repository.StatusQueued, repository.StatusFailed, repository.StatusCompleted)
 	if err != nil {
 		a.logger.ErrorContext(ctx, "Failed to load schedule metadata for activity", "error", err)
 		meta = map[string]repository.ScheduleMeta{}
@@ -104,7 +105,7 @@ func (a *ActivityInteractor) GetActivity(ctx context.Context, limit int) (Activi
 		item.CanCancel = activeStatuses[n.Status]
 		item.CanRetry = hasRow && (n.Status == notifications.StatusFailed ||
 			(m.ScheduleStatus == repository.StatusPending && m.NextAttemptAt != nil))
-		item.CanPickRelease = hasRow || n.Status == notifications.StatusDownloading
+		item.CanPickRelease = (hasRow && n.Status != notifications.StatusCompleted) || n.Status == notifications.StatusDownloading
 
 		snapshot.Counts[string(n.Status)]++
 		if activeStatuses[n.Status] {
