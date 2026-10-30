@@ -111,3 +111,22 @@ export function formatTimeUntil(timestamp: string): string {
   if (diffDays < 7) return `in ${diffDays}d`;
   return `on ${date.toLocaleDateString()}`;
 }
+
+/**
+ * Short "S03E01" (or "E12" for anime) code for dense rows where
+ * formatEpisodeLabel's long form would not fit. Empty when nothing is known.
+ */
+export function formatEpisodeCode(
+  season?: number,
+  episode?: number,
+  absoluteEpisode?: number,
+  isAnime?: boolean,
+): string {
+  if (isAnime && absoluteEpisode) {
+    return `E${absoluteEpisode}`;
+  }
+  if (season !== undefined && episode !== undefined) {
+    return `S${season.toString().padStart(2, "0")}E${episode.toString().padStart(2, "0")}`;
+  }
+  return "";
+}

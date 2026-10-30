@@ -1,455 +1,139 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import Box from "@mui/material/Box";
-import Container from "@mui/material/Container";
-import Typography from "@mui/material/Typography";
 import Button from "@mui/material/Button";
-import IconButton from "@mui/material/IconButton";
-import Skeleton from "@mui/material/Skeleton";
-import Tooltip from "@mui/material/Tooltip";
+import Chip from "@mui/material/Chip";
+import Container from "@mui/material/Container";
 import LinearProgress from "@mui/material/LinearProgress";
-import CircularProgress from "@mui/material/CircularProgress";
+import Skeleton from "@mui/material/Skeleton";
+import Tab from "@mui/material/Tab";
+import Tabs from "@mui/material/Tabs";
+import Typography from "@mui/material/Typography";
+import useMediaQuery from "@mui/material/useMediaQuery";
 import RefreshIcon from "@mui/icons-material/Refresh";
-import InboxIcon from "@mui/icons-material/MoveToInbox";
-import CancelIcon from "@mui/icons-material/CancelOutlined";
-import ReplayIcon from "@mui/icons-material/Replay";
-import ManageSearchIcon from "@mui/icons-material/ManageSearch";
+import DeleteSweepOutlinedIcon from "@mui/icons-material/DeleteSweepOutlined";
+import UnfoldLessIcon from "@mui/icons-material/UnfoldLess";
+import UnfoldMoreIcon from "@mui/icons-material/UnfoldMore";
 import { alpha, useTheme } from "@mui/material/styles";
 import PageHeader from "../components/ui/PageHeader";
-import StageChip from "../components/ui/StageChip";
 import ReleasePickerDialog from "../components/ui/ReleasePickerDialog";
 import IndexerHealthCard from "../components/ui/IndexerHealthCard";
-import { useActivity, type ActivityItem } from "../hooks/useActivity";
-import { useUpcoming, type UpcomingItem } from "../hooks/useUpcoming";
+import ActivityList, { type PickerTarget } from "../components/ui/ActivityList";
+import { useActivity } from "../hooks/useActivity";
+import { useUpcoming } from "../hooks/useUpcoming";
+import { useClearFinished } from "../hooks/useNotifications";
 import { toSelection, useDownloadControls, type ReleaseCandidate } from "../hooks/useDownloadControls";
-import {
-  formatEpisodeLabel,
-  formatRelativeTime,
-  formatTimeUntil,
-  getStageColor,
-  getStageDescription,
-  type DownloadStage,
-} from "../utils/downloadStage";
+import { buildViews, countByStage, groupRows, type ActivityRowModel } from "../utils/activityRows";
+import { getStageColor, getStageDescription, getStageLabel, type DownloadStage } from "../utils/downloadStage";
 
-/** The order a download travels through, used to draw the progress track. */
-const PIPELINE: DownloadStage[] = ["scheduled", "searching", "downloading", "completed"];
+type TabKey = "inflight" | "upcoming" | "finished";
 
-/** Stage tiles across the top, in the order work flows. */
-const SUMMARY_STAGES: DownloadStage[] = [
-  "downloading",
-  "searching",
-  "scheduled",
-  "failed",
+/** A summary tile doubles as a shortcut: it opens the tab that holds its stage, filtered to it. */
+interface SummaryTile {
+  stage: DownloadStage;
+  tab: TabKey;
+  filter: DownloadStage | null;
+}
+
+const TILES: SummaryTile[] = [
+  { stage: "downloading", tab: "inflight", filter: "downloading" },
+  { stage: "searching", tab: "inflight", filter: "searching" },
+  { stage: "scheduled", tab: "upcoming", filter: null },
+  { stage: "failed", tab: "finished", filter: "failed" },
 ];
 
-function itemKey(item: ActivityItem): string {
-  return `${item.id}-${item.tvdb_id}`;
-}
+/** Groups shown in Upcoming and Finished before "Show all". In flight is never cut. */
+const COLLAPSED_GROUPS = 12;
 
-/**
- * Horizontal track showing how far an item has moved through the pipeline.
- * A failed item stops at the stage it reached and turns red, so a glance
- * answers "how far did it get before it broke?".
- */
-const StageTrack: React.FC<{ stage: DownloadStage }> = ({ stage }) => {
-  const theme = useTheme();
-  const failed = stage === "failed";
-  // A failure is reported at whichever stage it happened; without a per-stage
-  // record, treat it as having reached the search step. A cancelled item never
-  // got anywhere worth showing.
-  const reachedIndex = failed ? 1 : stage === "cancelled" ? -1 : PIPELINE.indexOf(stage);
-  const color = getStageColor(stage);
-
-  return (
-    <Box sx={{ display: "flex", gap: 0.5, mt: 1.25 }} aria-hidden>
-      {PIPELINE.map((step, index) => (
-        <Box
-          key={step}
-          sx={{
-            height: 3,
-            flex: 1,
-            borderRadius: 999,
-            backgroundColor:
-              index <= reachedIndex ? color : alpha(theme.palette.common.white, 0.08),
-          }}
-        />
-      ))}
-    </Box>
-  );
+const EMPTY: Record<TabKey, { title: string; body: string }> = {
+  inflight: { title: "Nothing in flight", body: "Request a show or movie and its progress will appear here." },
+  upcoming: { title: "Nothing scheduled", body: "Future episodes and unreleased movies wait here until they come out." },
+  finished: { title: "Nothing finished yet", body: "Completed, failed and cancelled downloads end up here." },
 };
 
-/** What the release picker needs to know about the item it is opened for. */
-interface PickerTarget {
-  itemId: string;
-  title: string;
-  detail: string;
-}
+type ExpandedByTab = Record<TabKey, ReadonlySet<string>>;
 
-function describeItem(category: "series" | "movie", season?: number, episode?: number, absolute?: number, anime?: boolean) {
-  return category === "series" ? formatEpisodeLabel(season, episode, absolute, anime) : "Movie";
-}
-
-/**
- * Cancel needs a second tap: on a downloading item it deletes the torrent and
- * its files. The first tap arms the button for a few seconds.
- */
-const CancelButton: React.FC<{ onConfirm: () => void; busy: boolean; title: string }> = ({ onConfirm, busy, title }) => {
-  const theme = useTheme();
-  const [armed, setArmed] = useState(false);
-
-  useEffect(() => {
-    if (!armed) return;
-    const timer = window.setTimeout(() => setArmed(false), 4000);
-    return () => window.clearTimeout(timer);
-  }, [armed]);
-
-  if (busy) {
-    return <CircularProgress size={18} sx={{ m: 1 }} aria-label="Cancelling" />;
-  }
-  if (armed) {
-    return (
-      <Button
-        size="small"
-        color="error"
-        variant="contained"
-        onClick={() => {
-          setArmed(false);
-          onConfirm();
-        }}
-        sx={{ minWidth: 0, px: 1.25 }}
-      >
-        Confirm
-      </Button>
-    );
-  }
-  return (
-    <Tooltip title={`Cancel ${title}`}>
-      <IconButton size="small" aria-label={`Cancel ${title}`} onClick={() => setArmed(true)} sx={{ color: theme.palette.text.secondary }}>
-        <CancelIcon fontSize="small" />
-      </IconButton>
-    </Tooltip>
-  );
-};
-
-/** The per-item actions, shared by in-flight, finished and upcoming rows. */
-const RowActions: React.FC<{
-  itemId: string;
-  title: string;
-  detail: string;
-  canCancel: boolean;
-  canRetry: boolean;
-  canPick: boolean;
-  onPick: (target: PickerTarget) => void;
-}> = ({ itemId, title, detail, canCancel, canRetry, canPick, onPick }) => {
-  const theme = useTheme();
-  const controls = useDownloadControls();
-  const label = `${title} ${detail}`.trim();
-
-  if (!canCancel && !canRetry && !canPick) return null;
-
-  return (
-    <Box sx={{ display: "flex", alignItems: "center", gap: 0.25 }}>
-      {canRetry && (
-        <Tooltip title="Retry now">
-          <span>
-            <IconButton
-              size="small"
-              aria-label={`Retry ${label} now`}
-              disabled={controls.isRetrying(itemId)}
-              onClick={() => controls.retryNow({ itemId, title: label })}
-              sx={{ color: theme.palette.text.secondary }}
-            >
-              {controls.isRetrying(itemId) ? <CircularProgress size={18} /> : <ReplayIcon fontSize="small" />}
-            </IconButton>
-          </span>
-        </Tooltip>
-      )}
-      {canPick && (
-        <Tooltip title="Pick a release">
-          <IconButton
-            size="small"
-            aria-label={`Pick a release for ${label}`}
-            onClick={() => onPick({ itemId, title, detail })}
-            sx={{ color: theme.palette.text.secondary }}
-          >
-            <ManageSearchIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      )}
-      {canCancel && (
-        <CancelButton
-          title={label}
-          busy={controls.isCancelling(itemId)}
-          onConfirm={() => controls.cancel({ itemId, title: label })}
-        />
-      )}
-    </Box>
-  );
-};
-
-/** One tracked episode or movie. */
-const ActivityRow: React.FC<{ item: ActivityItem; onPick: (target: PickerTarget) => void }> = ({ item, onPick }) => {
-  const theme = useTheme();
-  const isFailed = item.status === "failed";
-  const detail = describeItem(item.category, item.season, item.episode, item.absolute_episode, item.is_anime);
-
-  // The most useful "what now?" line, in priority order: why it failed, when
-  // it will be retried, when it is due to release, or what stage it is in.
-  const retryLine = (() => {
-    if (item.next_attempt_at && !isFailed) {
-      const attempt = item.attempts ? ` (attempt ${item.attempts + 1})` : "";
-      return `Retrying ${formatTimeUntil(item.next_attempt_at)}${attempt}`;
-    }
-    if (item.status === "scheduled" && item.release_time) {
-      return `Releases ${formatTimeUntil(item.release_time)}`;
-    }
-    return getStageDescription(item.status);
-  })();
-
-  return (
-    <Box
-      sx={{
-        display: "flex",
-        gap: 2,
-        px: { xs: 2, sm: 2.5 },
-        py: 2,
-        borderBottom: `1px solid ${theme.palette.divider}`,
-        "&:last-of-type": { borderBottom: 0 },
-      }}
-    >
-      {item.poster_url ? (
-        <Box
-          component="img"
-          src={item.poster_url}
-          alt=""
-          sx={{
-            width: 48,
-            height: 72,
-            flexShrink: 0,
-            objectFit: "cover",
-            borderRadius: 1.5,
-            border: `1px solid ${theme.palette.divider}`,
-          }}
-        />
-      ) : (
-        <Box
-          sx={{
-            width: 48,
-            height: 72,
-            flexShrink: 0,
-            borderRadius: 1.5,
-            backgroundColor: alpha(theme.palette.common.white, 0.05),
-          }}
-        />
-      )}
-
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
-          <Typography
-            variant="body1"
-            sx={{
-              fontWeight: 650,
-              color: theme.palette.text.primary,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              maxWidth: { xs: "100%", sm: 420 },
-            }}
-          >
-            {item.media_title}
-          </Typography>
-          <StageChip stage={item.status} />
-          <Typography variant="caption" sx={{ color: theme.palette.text.disabled }}>
-            {detail}
-          </Typography>
-          {/* Phones drop the right-hand column, so the time moves in here */}
-          <Typography
-            variant="caption"
-            sx={{ display: { xs: "inline", sm: "none" }, color: theme.palette.text.disabled }}
-          >
-            {formatRelativeTime(item.updated_at)}
-          </Typography>
-        </Box>
-
-        <Typography
-          variant="body2"
-          sx={{
-            mt: 0.5,
-            color: isFailed ? theme.palette.error.main : theme.palette.text.secondary,
-          }}
-        >
-          {item.reason || retryLine}
-        </Typography>
-
-        <StageTrack stage={item.status} />
-
-        {/* Phones: actions sit under the text */}
-        <Box sx={{ display: { xs: "flex", sm: "none" }, mt: 1, justifyContent: "flex-end" }}>
-          <RowActions
-            itemId={item.tvdb_id}
-            title={item.media_title}
-            detail={detail}
-            canCancel={!!item.can_cancel}
-            canRetry={!!item.can_retry}
-            canPick={!!item.can_pick_release}
-            onPick={onPick}
-          />
-        </Box>
-      </Box>
-
-      <Box sx={{ flexShrink: 0, textAlign: "right", display: { xs: "none", sm: "block" } }}>
-        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 0.5 }}>
-          <RowActions
-            itemId={item.tvdb_id}
-            title={item.media_title}
-            detail={detail}
-            canCancel={!!item.can_cancel}
-            canRetry={!!item.can_retry}
-            canPick={!!item.can_pick_release}
-            onPick={onPick}
-          />
-        </Box>
-        <Typography variant="caption" sx={{ display: "block", color: theme.palette.text.secondary }}>
-          {formatRelativeTime(item.updated_at)}
-        </Typography>
-        {item.trace_id && (
-          <Tooltip title="Trace ID — use it to find this request in SigNoz">
-            <Typography
-              variant="caption"
-              sx={{
-                display: "block",
-                mt: 0.5,
-                fontFamily: "monospace",
-                fontSize: "0.6875rem",
-                color: theme.palette.text.disabled,
-                cursor: "default",
-              }}
-            >
-              {item.trace_id.slice(0, 8)}
-            </Typography>
-          </Tooltip>
-        )}
-      </Box>
-    </Box>
-  );
-};
-
-/** One pending scheduled row: what Scout will do and when. */
-const UpcomingRow: React.FC<{ item: UpcomingItem; onPick: (target: PickerTarget) => void }> = ({ item, onPick }) => {
-  const theme = useTheme();
-  const detail = describeItem(item.category, item.season, item.episode, item.absolute_episode, item.is_anime);
-  const retrying = !!item.next_attempt_at;
-  const when = retrying
-    ? `Retry ${formatTimeUntil(item.next_attempt_at as string)}${item.attempts ? ` (attempt ${item.attempts + 1})` : ""}`
-    : `Releases ${formatTimeUntil(item.release_time)}`;
-
-  return (
-    <Box
-      sx={{
-        display: "flex",
-        gap: 2,
-        alignItems: "center",
-        px: { xs: 2, sm: 2.5 },
-        py: 1.5,
-        borderBottom: `1px solid ${theme.palette.divider}`,
-        "&:last-of-type": { borderBottom: 0 },
-      }}
-    >
-      {item.poster_url ? (
-        <Box
-          component="img"
-          src={item.poster_url}
-          alt=""
-          sx={{ width: 36, height: 54, flexShrink: 0, objectFit: "cover", borderRadius: 1, border: `1px solid ${theme.palette.divider}` }}
-        />
-      ) : (
-        <Box sx={{ width: 36, height: 54, flexShrink: 0, borderRadius: 1, backgroundColor: alpha(theme.palette.common.white, 0.05) }} />
-      )}
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, flexWrap: "wrap" }}>
-          <Typography variant="body2" sx={{ fontWeight: 650, color: theme.palette.text.primary }}>
-            {item.media_title}
-          </Typography>
-          <Typography variant="caption" sx={{ color: theme.palette.text.disabled }}>
-            {detail}
-          </Typography>
-        </Box>
-        <Typography variant="caption" sx={{ display: "block", color: retrying ? getStageColor("searching") : theme.palette.text.secondary }}>
-          {when}
-          {retrying && item.last_failure_reason ? ` · ${item.last_failure_reason}` : ""}
-        </Typography>
-      </Box>
-      <RowActions
-        itemId={item.tvdb_id}
-        title={item.media_title}
-        detail={detail}
-        canCancel
-        canRetry={retrying}
-        canPick={retrying}
-        onPick={onPick}
-      />
-    </Box>
-  );
-};
-
-const UPCOMING_COLLAPSED = 10;
-
-const SectionCard: React.FC<{
-  title: string;
-  count: number;
-  children: React.ReactNode;
-}> = ({ title, count, children }) => {
-  const theme = useTheme();
-
-  return (
-    <Box sx={{ mb: 5 }}>
-      <Box sx={{ display: "flex", alignItems: "baseline", gap: 1.25, mb: 1.75 }}>
-        <Typography variant="h5" sx={{ color: theme.palette.text.primary }}>
-          {title}
-        </Typography>
-        <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
-          {count}
-        </Typography>
-      </Box>
-      <Box
-        sx={{
-          backgroundColor: theme.palette.background.paper,
-          border: `1px solid ${theme.palette.divider}`,
-          borderRadius: 3,
-          overflow: "hidden",
-        }}
-      >
-        {children}
-      </Box>
-    </Box>
-  );
-};
+const NONE_EXPANDED: ExpandedByTab = { inflight: new Set(), upcoming: new Set(), finished: new Set() };
 
 /**
  * Activity Page
  *
- * Answers "what is Scout doing right now?". Every requested episode or movie
- * appears here with the stage it has reached, why it is waiting, when it will
- * be retried, and the trace id to dig further. Polls every 5 seconds.
+ * Answers "what is Scout doing right now?" without scrolling: four stage
+ * tiles, the indexer strip, then one tab at a time (In flight, Upcoming,
+ * Finished) listing one line per show. A whole season is a single row until
+ * it is opened; a tile click jumps to the matching tab filtered to that
+ * stage. Polls every 5 seconds.
  */
 const Activity: React.FC = () => {
   const theme = useTheme();
-  const { data, isLoading, isError, isFetching, refetch } = useActivity();
+  const phone = useMediaQuery(theme.breakpoints.down("sm"));
+  const activity = useActivity();
   const upcomingQuery = useUpcoming();
   const controls = useDownloadControls();
-  const [picker, setPicker] = useState<PickerTarget | null>(null);
-  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
+  const clearFinished = useClearFinished();
 
-  const active = data?.active ?? [];
-  const recent = data?.recent ?? [];
-  const counts = data?.counts ?? {};
-  const upcoming = upcomingQuery.data ?? [];
-  const visibleUpcoming = showAllUpcoming ? upcoming : upcoming.slice(0, UPCOMING_COLLAPSED);
+  const [tab, setTab] = useState<TabKey>("inflight");
+  const [stageFilter, setStageFilter] = useState<DownloadStage | null>(null);
+  const [expanded, setExpanded] = useState<ExpandedByTab>(NONE_EXPANDED);
+  const [showAll, setShowAll] = useState<Partial<Record<TabKey, boolean>>>({});
+  const [picker, setPicker] = useState<PickerTarget | null>(null);
+
+  // Recomputed every render on purpose: the relative times inside the rows
+  // move even when the polled data does not, and the work is a few hundred rows.
+  const views = buildViews(activity.data, upcomingQuery.data);
+  const inFlightCounts = countByStage(views.inFlight);
+  const finishedCounts = countByStage(views.finished);
+  const rowsByTab: Record<TabKey, ActivityRowModel[]> = {
+    inflight: views.inFlight,
+    upcoming: views.upcoming,
+    finished: views.finished,
+  };
+  const rows = stageFilter ? rowsByTab[tab].filter((row) => row.stage === stageFilter) : rowsByTab[tab];
+  const groups = groupRows(rows, tab === "upcoming" ? "soonest" : "latest");
+  const hasGroups = groups.some((group) => group.rows.length > 1);
+  const allOpen = hasGroups && groups.every((group) => group.rows.length === 1 || expanded[tab].has(group.key));
+
+  const tileCount = (tile: SummaryTile): number => {
+    if (tile.stage === "scheduled") return views.upcoming.length;
+    return (tile.tab === "inflight" ? inFlightCounts : finishedCounts)[tile.stage] ?? 0;
+  };
+  const tileSelected = (tile: SummaryTile) => tab === tile.tab && stageFilter === tile.filter;
+  const selectTile = (tile: SummaryTile) => {
+    if (tileSelected(tile) && tile.filter) {
+      setStageFilter(null);
+      return;
+    }
+    setTab(tile.tab);
+    setStageFilter(tile.filter);
+  };
+
+  const toggleGroup = (key: string) => {
+    setExpanded((current) => {
+      const next = new Set(current[tab]);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return { ...current, [tab]: next };
+    });
+  };
+  const setAllOpen = (open: boolean) => {
+    setExpanded((current) => ({ ...current, [tab]: open ? new Set(groups.map((group) => group.key)) : new Set() }));
+  };
 
   const handleGrab = (candidate: ReleaseCandidate) => {
     if (!picker) return;
     controls.grab({ itemId: picker.itemId, title: picker.title, release: toSelection(candidate) });
     setPicker(null);
   };
+
+  const refreshing = activity.isFetching || upcomingQuery.isFetching;
+  const refetchAll = () => {
+    activity.refetch();
+    upcomingQuery.refetch();
+  };
+
+  const tabLabel = (label: string, count: number) => (count > 0 ? `${label} (${count})` : label);
+  const empty = stageFilter
+    ? { title: `No ${stageFilter} items`, body: "Clear the filter to see the rest of this tab." }
+    : EMPTY[tab];
 
   return (
     <Box
@@ -464,84 +148,158 @@ const Activity: React.FC = () => {
         <PageHeader
           eyebrow="Downloads"
           title="Activity"
-          description="Everything Scout is working on and will work on next. Cancel an item, retry one now, or pick the release yourself."
+          description="What Scout is doing now, what comes next, and what finished. Open a show to see each episode."
           action={
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<RefreshIcon />}
-              onClick={() => refetch()}
-              disabled={isFetching}
-            >
-              {isFetching ? "Refreshing" : "Refresh"}
+            <Button variant="outlined" size="small" startIcon={<RefreshIcon />} onClick={refetchAll} disabled={refreshing}>
+              {refreshing ? "Refreshing" : "Refresh"}
             </Button>
           }
         />
 
-        <IndexerHealthCard />
-
-        {/* Stage tiles */}
+        {/* Stage tiles: a count each, and a shortcut to the tab that holds them */}
         <Box
           sx={{
             display: "grid",
             gridTemplateColumns: { xs: "repeat(2, 1fr)", md: "repeat(4, 1fr)" },
-            gap: 2,
-            mb: 5,
+            gap: 1.5,
+            mb: 2.5,
           }}
         >
-          {SUMMARY_STAGES.map((stage) => (
-            <Box
-              key={stage}
-              sx={{
-                px: { xs: 2, md: 2.5 },
-                py: 2,
-                borderRadius: 3,
-                backgroundColor: theme.palette.background.paper,
-                border: `1px solid ${theme.palette.divider}`,
-                borderLeft: `3px solid ${getStageColor(stage)}`,
-              }}
-            >
-              <Typography
-                variant="h4"
-                sx={{ color: theme.palette.text.primary, fontVariantNumeric: "tabular-nums" }}
+          {TILES.map((tile) => {
+            const color = getStageColor(tile.stage);
+            const selected = tileSelected(tile);
+            return (
+              <Box
+                key={tile.stage}
+                component="button"
+                type="button"
+                aria-pressed={selected}
+                onClick={() => selectTile(tile)}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1.5,
+                  px: { xs: 1.5, md: 2 },
+                  py: 1.25,
+                  textAlign: "left",
+                  cursor: "pointer",
+                  font: "inherit",
+                  color: "inherit",
+                  borderRadius: 2.5,
+                  backgroundColor: selected ? alpha(color, 0.12) : theme.palette.background.paper,
+                  border: `1px solid ${selected ? alpha(color, 0.5) : theme.palette.divider}`,
+                  borderLeft: `3px solid ${color}`,
+                  transition: "background-color .15s ease, border-color .15s ease",
+                  "&:hover": { backgroundColor: alpha(color, 0.08) },
+                  "&:focus-visible": { outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: 2 },
+                }}
               >
-                {counts[stage] ?? 0}
-              </Typography>
-              <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
-                {getStageDescription(stage)}
-              </Typography>
-            </Box>
-          ))}
+                <Typography
+                  variant="h4"
+                  component="span"
+                  sx={{ color: theme.palette.text.primary, fontVariantNumeric: "tabular-nums", minWidth: 28 }}
+                >
+                  {tileCount(tile)}
+                </Typography>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="subtitle2" sx={{ display: "block", color: theme.palette.text.primary, lineHeight: 1.3 }}>
+                    {getStageLabel(tile.stage)}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    sx={{ display: "block", color: theme.palette.text.secondary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  >
+                    {getStageDescription(tile.stage)}
+                  </Typography>
+                </Box>
+              </Box>
+            );
+          })}
         </Box>
 
-        {/* A thin progress line keeps polling visible without moving the page */}
-        <Box sx={{ height: 2, mb: 3 }}>
-          {isFetching && !isLoading && <LinearProgress sx={{ height: 2, borderRadius: 999 }} />}
+        <IndexerHealthCard />
+
+        <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
+          <Tabs
+            value={tab}
+            onChange={(_, value: TabKey) => {
+              setTab(value);
+              setStageFilter(null);
+            }}
+            aria-label="activity tabs"
+            variant={phone ? "fullWidth" : "standard"}
+          >
+            <Tab label={tabLabel("In flight", views.inFlight.length)} value="inflight" />
+            <Tab label={tabLabel("Upcoming", views.upcoming.length)} value="upcoming" />
+            <Tab label={tabLabel("Finished", views.finished.length)} value="finished" />
+          </Tabs>
         </Box>
 
-        {isLoading && (
+        {/* Filter chip and list-wide actions; a thin progress line keeps polling visible without moving the page */}
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, minHeight: 40, py: 0.5 }}>
+          {stageFilter && (
+            <Chip
+              size="small"
+              label={`${getStageLabel(stageFilter)} only`}
+              onDelete={() => setStageFilter(null)}
+              sx={{
+                backgroundColor: alpha(getStageColor(stageFilter), 0.16),
+                color: getStageColor(stageFilter),
+                "& .MuiChip-deleteIcon": { color: "inherit", opacity: 0.7, "&:hover": { opacity: 1 } },
+              }}
+            />
+          )}
+          <Box sx={{ flex: 1 }} />
+          {hasGroups && (
+            <Button
+              size="small"
+              color="inherit"
+              startIcon={allOpen ? <UnfoldLessIcon /> : <UnfoldMoreIcon />}
+              onClick={() => setAllOpen(!allOpen)}
+              sx={{ color: theme.palette.text.secondary }}
+            >
+              {allOpen ? "Collapse all" : "Expand all"}
+            </Button>
+          )}
+          {tab === "finished" && views.finished.length > 0 && (
+            <Button
+              size="small"
+              color="inherit"
+              startIcon={<DeleteSweepOutlinedIcon />}
+              onClick={() => clearFinished.mutate()}
+              disabled={clearFinished.isPending}
+              sx={{ color: theme.palette.text.secondary }}
+            >
+              Clear finished
+            </Button>
+          )}
+        </Box>
+        <Box sx={{ height: 2, mb: 1 }}>
+          {refreshing && !activity.isLoading && <LinearProgress sx={{ height: 2, borderRadius: 999 }} />}
+        </Box>
+
+        {activity.isLoading && (
           <Box
             sx={{
               backgroundColor: theme.palette.background.paper,
               border: `1px solid ${theme.palette.divider}`,
               borderRadius: 3,
-              p: 2.5,
+              px: 2,
             }}
           >
-            {Array.from({ length: 4 }).map((_, index) => (
-              <Box key={index} sx={{ display: "flex", gap: 2, py: 1.5 }}>
-                <Skeleton variant="rectangular" width={48} height={72} sx={{ borderRadius: 1.5 }} />
-                <Box sx={{ flex: 1 }}>
-                  <Skeleton variant="text" width="35%" height={24} />
-                  <Skeleton variant="text" width="55%" height={18} />
-                  <Skeleton variant="rectangular" height={3} sx={{ mt: 1.5, borderRadius: 999 }} />
-                </Box>
+            {Array.from({ length: 6 }).map((_, index) => (
+              <Box key={index} sx={{ display: "flex", alignItems: "center", gap: 2, py: 1 }}>
+                <Skeleton variant="rectangular" width={32} height={48} sx={{ borderRadius: 1 }} />
+                <Skeleton variant="text" width="22%" height={22} />
+                <Skeleton variant="text" width="40%" height={18} />
+                <Box sx={{ flex: 1 }} />
+                <Skeleton variant="text" width={48} height={18} />
               </Box>
             ))}
           </Box>
         )}
 
-        {isError && !isLoading && (
+        {activity.isError && !activity.isLoading && (
           <Box sx={{ textAlign: "center", py: 8 }}>
             <Typography variant="subtitle1" sx={{ color: theme.palette.text.primary }}>
               Couldn't load activity
@@ -549,57 +307,24 @@ const Activity: React.FC = () => {
             <Typography variant="body2" sx={{ color: theme.palette.text.secondary, mb: 2 }}>
               Scout couldn't reach the server.
             </Typography>
-            <Button variant="outlined" size="small" onClick={() => refetch()}>
+            <Button variant="outlined" size="small" onClick={refetchAll}>
               Retry
             </Button>
           </Box>
         )}
 
-        {!isLoading && !isError && (
-          <>
-            {active.length > 0 && (
-              <SectionCard title="In flight" count={active.length}>
-                {active.map((item) => (
-                  <ActivityRow key={itemKey(item)} item={item} onPick={setPicker} />
-                ))}
-              </SectionCard>
-            )}
-
-            {upcoming.length > 0 && (
-              <SectionCard title="Upcoming" count={upcoming.length}>
-                {visibleUpcoming.map((item) => (
-                  <UpcomingRow key={`${item.id}-${item.tvdb_id}`} item={item} onPick={setPicker} />
-                ))}
-                {upcoming.length > UPCOMING_COLLAPSED && (
-                  <Box sx={{ px: 2.5, py: 1.25, borderTop: `1px solid ${theme.palette.divider}` }}>
-                    <Button size="small" onClick={() => setShowAllUpcoming((v) => !v)}>
-                      {showAllUpcoming ? "Show fewer" : `Show all ${upcoming.length}`}
-                    </Button>
-                  </Box>
-                )}
-              </SectionCard>
-            )}
-
-            {recent.length > 0 && (
-              <SectionCard title="Finished" count={recent.length}>
-                {recent.map((item) => (
-                  <ActivityRow key={itemKey(item)} item={item} onPick={setPicker} />
-                ))}
-              </SectionCard>
-            )}
-
-            {active.length === 0 && recent.length === 0 && upcoming.length === 0 && (
-              <Box sx={{ textAlign: "center", py: 10 }}>
-                <InboxIcon sx={{ fontSize: 38, color: theme.palette.text.disabled, mb: 1 }} />
-                <Typography variant="subtitle1" sx={{ color: theme.palette.text.primary }}>
-                  Nothing in flight
-                </Typography>
-                <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
-                  Request a show or movie and its progress will appear here.
-                </Typography>
-              </Box>
-            )}
-          </>
+        {!activity.isLoading && !activity.isError && (
+          <ActivityList
+            groups={groups}
+            expanded={expanded[tab]}
+            onToggle={toggleGroup}
+            onPick={setPicker}
+            limit={tab === "inflight" ? undefined : COLLAPSED_GROUPS}
+            showAll={!!showAll[tab]}
+            onToggleShowAll={() => setShowAll((current) => ({ ...current, [tab]: !current[tab] }))}
+            emptyTitle={empty.title}
+            emptyBody={empty.body}
+          />
         )}
       </Container>
 
