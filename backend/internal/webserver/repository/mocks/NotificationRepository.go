@@ -271,6 +271,41 @@ func (_m *NotificationRepository) ExistingTvdbIDs(ctx context.Context, tvdbIDs [
 	return r0, r1
 }
 
+// PendingDeliveries provides a mock function with given fields: ctx, limit
+func (_m *NotificationRepository) PendingDeliveries(ctx context.Context, limit int) ([]notifications.Notification, error) {
+	ret := _m.Called(ctx, limit)
+
+	var r0 []notifications.Notification
+	if rf, ok := ret.Get(0).(func(context.Context, int) []notifications.Notification); ok {
+		r0 = rf(ctx, limit)
+	} else if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]notifications.Notification)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context, int) error); ok {
+		r1 = rf(ctx, limit)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MarkNotified provides a mock function with given fields: ctx, id, status
+func (_m *NotificationRepository) MarkNotified(ctx context.Context, id int, status string) error {
+	ret := _m.Called(ctx, id, status)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, int, string) error); ok {
+		r0 = rf(ctx, id, status)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // NewNotificationRepository creates a new instance of NotificationRepository
 func NewNotificationRepository(t interface {
 	mock.TestingT

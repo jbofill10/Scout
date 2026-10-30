@@ -25,6 +25,24 @@ import {
   type UploaderPreference,
 } from "../hooks/useSettings";
 import { durationError, invalidLanguage, parseLanguages, tidyDuration } from "../utils/settingsForm";
+import IconButton from "@mui/material/IconButton";
+import Tooltip from "@mui/material/Tooltip";
+import CircularProgress from "@mui/material/CircularProgress";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import SendIcon from "@mui/icons-material/Send";
+import {
+  TARGET_EVENTS,
+  TARGET_KINDS,
+  useCreateTarget,
+  useDeleteTarget,
+  useNotificationTargets,
+  useTestTarget,
+  useUpdateTarget,
+  type NotificationTarget,
+  type TargetEvent,
+  type TargetKind,
+} from "../hooks/useNotificationTargets";
+import { formatRelativeTime } from "../utils/downloadStage";
 
 /** A titled card holding one group of settings. */
 const SettingCard: React.FC<{ title: string; description: string; children: React.ReactNode }> = ({
@@ -338,6 +356,157 @@ const UploadersSection: React.FC = () => {
   );
 };
 
+const TargetRow: React.FC<{ target: NotificationTarget }> = ({ target }) => {
+  const theme = useTheme();
+  const update = useUpdateTarget();
+  const remove = useDeleteTarget();
+  const test = useTestTarget();
+  const kind = TARGET_KINDS.find((k) => k.value === target.kind)?.label ?? target.kind;
+
+  const toggle = (enabled: boolean) =>
+    update.mutate({ id: target.id, name: target.name, kind: target.kind, url: target.url, events: target.events, enabled });
+
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        gap: 1.5,
+        alignItems: "center",
+        py: 1.25,
+        borderBottom: `1px solid ${theme.palette.divider}`,
+        "&:last-of-type": { borderBottom: 0 },
+        flexWrap: "wrap",
+      }}
+    >
+      <Switch size="small" checked={target.enabled} onChange={(e) => toggle(e.target.checked)} disabled={update.isPending} inputProps={{ "aria-label": `Enable ${target.name}` }} />
+      <Box sx={{ flex: 1, minWidth: 200 }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+          <Typography variant="body2" sx={{ fontWeight: 650 }}>
+            {target.name}
+          </Typography>
+          <Chip size="small" label={kind} sx={{ height: 20 }} />
+          {target.events.map((e) => (
+            <Chip key={e} size="small" variant="outlined" label={TARGET_EVENTS.find((x) => x.value === e)?.label ?? e} sx={{ height: 20 }} />
+          ))}
+        </Box>
+        <Typography variant="caption" sx={{ display: "block", color: theme.palette.text.secondary, wordBreak: "break-all" }}>
+          {target.url}
+          {target.has_token ? " · token set" : ""}
+        </Typography>
+        <Typography variant="caption" sx={{ display: "block", color: target.last_error ? theme.palette.error.main : theme.palette.text.disabled }}>
+          {target.last_error
+            ? `Last delivery failed: ${target.last_error}`
+            : target.last_sent_at
+              ? `Last sent ${formatRelativeTime(target.last_sent_at)}`
+              : "Nothing sent yet"}
+        </Typography>
+      </Box>
+      <Tooltip title="Send a test">
+        <span>
+          <IconButton size="small" aria-label={`Test ${target.name}`} disabled={test.isPending} onClick={() => test.mutate(target)}>
+            {test.isPending ? <CircularProgress size={18} /> : <SendIcon fontSize="small" />}
+          </IconButton>
+        </span>
+      </Tooltip>
+      <Tooltip title="Remove">
+        <span>
+          <IconButton size="small" aria-label={`Remove ${target.name}`} disabled={remove.isPending} onClick={() => remove.mutate(target)}>
+            <DeleteOutlineIcon fontSize="small" />
+          </IconButton>
+        </span>
+      </Tooltip>
+    </Box>
+  );
+};
+
+const NotificationsSection: React.FC = () => {
+  const theme = useTheme();
+  const { data, isLoading, isError } = useNotificationTargets();
+  const create = useCreateTarget();
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState<TargetKind>("webhook");
+  const [url, setUrl] = useState("");
+  const [token, setToken] = useState("");
+  const [events, setEvents] = useState<TargetEvent[]>(["completed", "failed"]);
+
+  const toggleEvent = (e: TargetEvent) => setEvents((cur) => (cur.includes(e) ? cur.filter((x) => x !== e) : [...cur, e]));
+  const canAdd = name.trim() !== "" && /^https?:\/\/\S+/.test(url.trim()) && events.length > 0;
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canAdd) return;
+    create.mutate(
+      { name: name.trim(), kind, url: url.trim(), token: token.trim() || undefined, events },
+      {
+        onSuccess: () => {
+          setName("");
+          setUrl("");
+          setToken("");
+        },
+      },
+    );
+  };
+
+  return (
+    <SettingCard
+      title="Notifications"
+      description="Where finished, failed and cancelled downloads are sent, outside the app. A Home Assistant webhook is a Webhook target; the JSON arrives under trigger.json."
+    >
+      {isLoading && <Skeleton variant="rectangular" height={60} sx={{ borderRadius: 2 }} />}
+      {isError && <Alert severity="error">Couldn't load the notification targets.</Alert>}
+      {data && data.length === 0 && (
+        <Typography variant="body2" sx={{ color: theme.palette.text.disabled, mb: 2 }}>
+          No targets yet.
+        </Typography>
+      )}
+      {data && data.length > 0 && (
+        <Box sx={{ mb: 2.5 }}>
+          {data.map((t) => (
+            <TargetRow key={t.id} target={t} />
+          ))}
+        </Box>
+      )}
+
+      <Box component="form" onSubmit={submit} sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" } }}>
+        <TextField size="small" label="Name" value={name} onChange={(e) => setName(e.target.value)} slotProps={{ htmlInput: { maxLength: 64 } }} />
+        <FormControl size="small">
+          <InputLabel id="target-kind-label">Kind</InputLabel>
+          <Select labelId="target-kind-label" label="Kind" value={kind} onChange={(e) => setKind(e.target.value as TargetKind)}>
+            {TARGET_KINDS.map((k) => (
+              <MenuItem key={k.value} value={k.value}>
+                {k.label}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        <TextField
+          size="small"
+          label="URL"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          helperText={TARGET_KINDS.find((k) => k.value === kind)?.hint}
+          sx={{ gridColumn: { sm: "1 / -1" } }}
+        />
+        <TextField size="small" label="Token (optional)" type="password" value={token} onChange={(e) => setToken(e.target.value)} helperText="Sent as a bearer token" />
+        <Box sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+          {TARGET_EVENTS.map((e) => (
+            <FormControlLabel
+              key={e.value}
+              control={<Switch size="small" checked={events.includes(e.value)} onChange={() => toggleEvent(e.value)} />}
+              label={e.label}
+            />
+          ))}
+        </Box>
+        <Box>
+          <Button type="submit" variant="outlined" size="small" disabled={!canAdd || create.isPending}>
+            Add target
+          </Button>
+        </Box>
+      </Box>
+    </SettingCard>
+  );
+};
+
 /**
  * Settings Page
  *
@@ -386,6 +555,7 @@ const Settings: React.FC = () => {
             <UploadersSection />
             <SubtitlesSection view={data} />
             <LibrarySyncSection view={data} />
+            <NotificationsSection />
           </>
         )}
       </Container>

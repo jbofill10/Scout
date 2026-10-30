@@ -272,3 +272,19 @@ CREATE TABLE IF NOT EXISTS FollowedShows (
     last_check_error TEXT,
     episodes_added INTEGER NOT NULL DEFAULT 0
 );
+
+-- Outbound notification targets and the delivered-status marker.
+-- See backend/pkg/dbmigrate/migrations/011.
+CREATE TABLE IF NOT EXISTS NotificationTargets (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    url TEXT NOT NULL,
+    token TEXT,
+    events TEXT[] NOT NULL DEFAULT ARRAY['completed', 'failed'],
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    last_sent_at TIMESTAMPTZ,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE Notifications ADD COLUMN IF NOT EXISTS notified_status TEXT;
