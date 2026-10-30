@@ -1,4 +1,4 @@
-package main
+package tvdb
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/jbofill10/scout/backend/internal/tvdbproxy/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,44 +54,33 @@ func newFakeTVDB(t *testing.T) *fakeTVDB {
 	return f
 }
 
-// useFakeTVDB points the package globals at the fake server and restores them
-// afterwards so other tests in the package are unaffected.
-func useFakeTVDB(t *testing.T, f *fakeTVDB, startingToken string) {
-	prevCfg := tvDbConfig
-	prevLogger := logger
-	t.Cleanup(func() {
-		tokenMu.Lock()
-		tvDbConfig = prevCfg
-		tokenMu.Unlock()
-		logger = prevLogger
-	})
-	if logger == nil {
-		logger = slog.Default()
-	}
-	tokenMu.Lock()
-	tvDbConfig = TvDbConfig{Host: f.srv.URL, ApiKey: "key", Pin: "pin", Token: startingToken}
-	tokenMu.Unlock()
+// newTestClient returns a client pointed at the fake server that already
+// holds startingToken.
+func newTestClient(f *fakeTVDB, startingToken string) *Client {
+	c := NewClient(config.TVDB{Host: f.srv.URL, APIKey: "key", Pin: "pin"}, NewHTTPClient(), slog.Default())
+	c.token = startingToken
+	return c
 }
 
 func TestTvdbAuthedGet_ReauthenticatesOn401(t *testing.T) {
 	f := newFakeTVDB(t)
-	useFakeTVDB(t, f, "expired-token")
+	c := newTestClient(f, "expired-token")
 
-	status, body, err := tvdbAuthedGet(context.Background(), f.srv.URL+"/thing")
+	status, body, err := c.authedGet(context.Background(), f.srv.URL+"/thing")
 
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, status)
 	assert.True(t, strings.Contains(string(body), `"ok"`), "retry should return the real payload, got %s", body)
 	assert.Equal(t, int32(1), f.logins.Load(), "exactly one re-login")
 	assert.Equal(t, int32(2), f.gets.Load(), "original request plus one retry")
-	assert.Equal(t, "fresh-token", currentToken(), "new token must be stored for later calls")
+	assert.Equal(t, "fresh-token", c.CurrentToken(), "new token must be stored for later calls")
 }
 
 func TestTvdbAuthedGet_NoLoginWhenTokenValid(t *testing.T) {
 	f := newFakeTVDB(t)
-	useFakeTVDB(t, f, "fresh-token")
+	c := newTestClient(f, "fresh-token")
 
-	status, _, err := tvdbAuthedGet(context.Background(), f.srv.URL+"/thing")
+	status, _, err := c.authedGet(context.Background(), f.srv.URL+"/thing")
 
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, status)
@@ -100,25 +91,25 @@ func TestTvdbAuthedGet_NoLoginWhenTokenValid(t *testing.T) {
 func TestTvdbAuthedGet_ReturnsOriginal401WhenReloginFails(t *testing.T) {
 	f := newFakeTVDB(t)
 	f.loginFails = true
-	useFakeTVDB(t, f, "expired-token")
+	c := newTestClient(f, "expired-token")
 
-	status, body, err := tvdbAuthedGet(context.Background(), f.srv.URL+"/thing")
+	status, body, err := c.authedGet(context.Background(), f.srv.URL+"/thing")
 
 	require.NoError(t, err, "a failed re-login is reported through the status, not an error")
 	assert.Equal(t, http.StatusUnauthorized, status)
 	assert.Contains(t, string(body), "Unauthorized")
 	assert.Equal(t, int32(1), f.logins.Load())
 	assert.Equal(t, int32(1), f.gets.Load(), "no retry without a new token")
-	assert.Equal(t, "expired-token", currentToken(), "token unchanged when login fails")
+	assert.Equal(t, "expired-token", c.CurrentToken(), "token unchanged when login fails")
 }
 
 func TestRefreshToken_SkipsLoginWhenAlreadyReplaced(t *testing.T) {
 	f := newFakeTVDB(t)
-	useFakeTVDB(t, f, "already-new")
+	c := newTestClient(f, "already-new")
 
 	// A caller that observed an older token asks for a refresh; the stored
 	// token has moved on, so no login should happen.
-	tok, err := refreshToken(context.Background(), "older-token")
+	tok, err := c.refreshToken(context.Background(), "older-token")
 
 	require.NoError(t, err)
 	assert.Equal(t, "already-new", tok)

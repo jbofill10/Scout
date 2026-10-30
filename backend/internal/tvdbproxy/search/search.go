@@ -1,9 +1,13 @@
-package main
+// Package search answers tvdb-proxy's structured media searches: it queries
+// TVDB's search index, a person's credits or the IMDb remote-id lookup,
+// ranks the hits in tiers and fills in episodes for series.
+package search
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"sort"
 	"strconv"
@@ -48,31 +52,52 @@ const (
 	roleDirector  = "Director"
 )
 
-var (
-	peopleSearchCache  = newTTLCache[[]tvdb.TVDBSearchItem](peopleCacheTTL)
-	peopleCreditsCache = newTTLCache[tvdb.TVDBPeopleExtended](peopleCacheTTL)
-)
+// TVDB is the part of the TVDB client a search needs.
+type TVDB interface {
+	// Get performs an authenticated GET of a path relative to the TVDB host.
+	Get(ctx context.Context, uri string) ([]byte, error)
+	// SeriesEpisodes fetches a series' episodes and score.
+	SeriesEpisodes(ctx context.Context, seriesID string) (tvdb.TVDBSeriesResponse, error)
+}
+
+// Service runs searches against TVDB, caching people lookups.
+type Service struct {
+	client             TVDB
+	logger             *slog.Logger
+	peopleSearchCache  *ttlCache[[]tvdb.TVDBSearchItem]
+	peopleCreditsCache *ttlCache[tvdb.TVDBPeopleExtended]
+}
+
+// NewService returns a search service backed by client.
+func NewService(client TVDB, logger *slog.Logger) *Service {
+	return &Service{
+		client:             client,
+		logger:             logger,
+		peopleSearchCache:  newTTLCache[[]tvdb.TVDBSearchItem](peopleCacheTTL),
+		peopleCreditsCache: newTTLCache[tvdb.TVDBPeopleExtended](peopleCacheTTL),
+	}
+}
 
 type candidate struct {
 	media tvdb.Media
 	tier  int
 }
 
-// searchMedia answers a structured query with ranked Media. It fans out to
+// Search answers a structured query with ranked Media. It fans out to
 // TVDB's search index (with whatever filters it supports natively), to people
 // credits when the query names a person, or to a remote-id lookup for an IMDb
 // id, then fetches episodes for every series so counts and schedules work.
-func searchMedia(ctx context.Context, q search.Query, mediaType string) ([]tvdb.Media, error) {
+func (s *Service) Search(ctx context.Context, q search.Query, mediaType string) ([]tvdb.Media, error) {
 	if q.ImdbID != "" {
-		return searchByImdbID(ctx, q.ImdbID, mediaType)
+		return s.searchByImdbID(ctx, q.ImdbID, mediaType)
 	}
 
 	var candidates []candidate
 	var err error
 	if personName, role, ok := explicitPerson(q, mediaType); ok {
-		candidates, err = creditCandidates(ctx, q, personName, role, mediaType, true)
+		candidates, err = s.creditCandidates(ctx, q, personName, role, mediaType, true)
 	} else {
-		candidates, err = titleCandidates(ctx, q, mediaType)
+		candidates, err = s.titleCandidates(ctx, q, mediaType)
 	}
 	if err != nil {
 		return nil, err
@@ -87,7 +112,7 @@ func searchMedia(ctx context.Context, q search.Query, mediaType string) ([]tvdb.
 	for idx, cand := range candidates {
 		results[idx] = cand.media
 	}
-	fetchSeriesEpisodes(ctx, results)
+	s.fetchSeriesEpisodes(ctx, results)
 	for idx := range results {
 		candidates[idx].media = results[idx]
 	}
@@ -129,13 +154,13 @@ func explicitPerson(q search.Query, mediaType string) (name, role string, ok boo
 
 // titleCandidates runs the title search, the verbatim retry when a year was
 // inferred, and the implicit person lookup, and tiers the results.
-func titleCandidates(ctx context.Context, q search.Query, mediaType string) ([]candidate, error) {
+func (s *Service) titleCandidates(ctx context.Context, q search.Query, mediaType string) ([]candidate, error) {
 	if q.Title == "" {
 		// Only filters that need a title to go with them (year, studio, ...).
 		return []candidate{}, nil
 	}
 
-	hits, err := tvdbSearch(ctx, q.Title, mediaType, q)
+	hits, err := s.tvdbSearch(ctx, q.Title, mediaType, q)
 	if err != nil {
 		return nil, err
 	}
@@ -144,18 +169,18 @@ func titleCandidates(ctx context.Context, q search.Query, mediaType string) ([]c
 	if q.AltTitle != "" {
 		verbatim := q
 		verbatim.Year = ""
-		altHits, err := tvdbSearch(ctx, q.AltTitle, mediaType, verbatim)
+		altHits, err := s.tvdbSearch(ctx, q.AltTitle, mediaType, verbatim)
 		if err != nil {
-			logger.WarnContext(ctx, "Verbatim title search failed, keeping year-filtered results",
+			s.logger.WarnContext(ctx, "Verbatim title search failed, keeping year-filtered results",
 				telemetry.WithTraceContext(ctx, "title", q.AltTitle, "error", err)...)
 		} else {
 			candidates = append(candidates, tierTitleHits(altHits, q.AltTitle, tierExactTitle, tierAltTitle)...)
 		}
 	}
 
-	credits, err := creditCandidates(ctx, q, q.Title, "", mediaType, false)
+	credits, err := s.creditCandidates(ctx, q, q.Title, "", mediaType, false)
 	if err != nil {
-		logger.WarnContext(ctx, "People lookup failed, returning title matches only",
+		s.logger.WarnContext(ctx, "People lookup failed, returning title matches only",
 			telemetry.WithTraceContext(ctx, "name", q.Title, "error", err)...)
 	} else {
 		candidates = append(candidates, credits...)
@@ -196,7 +221,9 @@ func titleMatches(media tvdb.Media, want string) bool {
 
 // tvdbSearch calls TVDB's /search with the filters it supports natively and
 // applies the studio filter, which it does not, to the hits.
-func tvdbSearch(ctx context.Context, title, mediaType string, q search.Query) ([]tvdb.TVDBSearchItem, error) {
+func (s *Service) tvdbSearch(
+	ctx context.Context, title, mediaType string, q search.Query,
+) ([]tvdb.TVDBSearchItem, error) {
 	params := url.Values{}
 	params.Set("query", title)
 	params.Set("type", mediaType)
@@ -220,7 +247,7 @@ func tvdbSearch(ctx context.Context, title, mediaType string, q search.Query) ([
 		}
 	}
 
-	body, err := tvDbGet(ctx, "/search?"+params.Encode())
+	body, err := s.client.Get(ctx, "/search?"+params.Encode())
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +260,7 @@ func tvdbSearch(ctx context.Context, title, mediaType string, q search.Query) ([
 	if mediaType == "movie" && q.Company != "" {
 		hits = filterByStudio(hits, q.Company)
 	}
-	logger.InfoContext(ctx, "TVDB search", telemetry.WithTraceContext(ctx,
+	s.logger.InfoContext(ctx, "TVDB search", telemetry.WithTraceContext(ctx,
 		"title", title, "media_type", mediaType, "year", q.Year, "count", len(hits))...)
 	return hits, nil
 }
@@ -260,10 +287,10 @@ func filterByStudio(hits []tvdb.TVDBSearchItem, studio string) []tvdb.TVDBSearch
 // equals the query are expanded, so "Pearl" does not drag in everyone whose
 // name contains it. role limits the credits kept: "" means actors and
 // directors for an implicit lookup, or any role for an explicit person:.
-func creditCandidates(
+func (s *Service) creditCandidates(
 	ctx context.Context, q search.Query, name, role, mediaType string, explicit bool,
 ) ([]candidate, error) {
-	people, err := searchPeople(ctx, name)
+	people, err := s.searchPeople(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -274,9 +301,9 @@ func creditCandidates(
 
 	var candidates []candidate
 	for _, person := range selected {
-		extended, err := peopleCredits(ctx, person.TvdbID)
+		extended, err := s.peopleCredits(ctx, person.TvdbID)
 		if err != nil {
-			logger.WarnContext(ctx, "People credits lookup failed",
+			s.logger.WarnContext(ctx, "People credits lookup failed",
 				telemetry.WithTraceContext(ctx, "person_id", person.TvdbID, "error", err)...)
 			continue
 		}
@@ -296,7 +323,7 @@ func creditCandidates(
 			candidates = append(candidates, candidate{media: c.media, tier: tierCredits + c.rank})
 		}
 	}
-	logger.InfoContext(ctx, "People credits", telemetry.WithTraceContext(ctx,
+	s.logger.InfoContext(ctx, "People credits", telemetry.WithTraceContext(ctx,
 		"name", name, "people", len(selected), "credits", len(candidates), "explicit", explicit)...)
 	return candidates, nil
 }
@@ -493,15 +520,15 @@ func filterCredits(credits []credit, q search.Query, explicit bool) []credit {
 }
 
 // searchPeople looks a name up in TVDB's people index, cached per name.
-func searchPeople(ctx context.Context, name string) ([]tvdb.TVDBSearchItem, error) {
+func (s *Service) searchPeople(ctx context.Context, name string) ([]tvdb.TVDBSearchItem, error) {
 	key := search.Normalize(name)
-	if people, ok := peopleSearchCache.get(key); ok {
+	if people, ok := s.peopleSearchCache.get(key); ok {
 		return people, nil
 	}
 	params := url.Values{}
 	params.Set("query", name)
 	params.Set("type", "person")
-	body, err := tvDbGet(ctx, "/search?"+params.Encode())
+	body, err := s.client.Get(ctx, "/search?"+params.Encode())
 	if err != nil {
 		return nil, err
 	}
@@ -509,16 +536,16 @@ func searchPeople(ctx context.Context, name string) ([]tvdb.TVDBSearchItem, erro
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("decode people search response: %w", err)
 	}
-	peopleSearchCache.set(key, response.Data)
+	s.peopleSearchCache.set(key, response.Data)
 	return response.Data, nil
 }
 
 // peopleCredits fetches a person's extended record, cached per id.
-func peopleCredits(ctx context.Context, personID string) (tvdb.TVDBPeopleExtended, error) {
-	if person, ok := peopleCreditsCache.get(personID); ok {
+func (s *Service) peopleCredits(ctx context.Context, personID string) (tvdb.TVDBPeopleExtended, error) {
+	if person, ok := s.peopleCreditsCache.get(personID); ok {
 		return person, nil
 	}
-	body, err := tvDbGet(ctx, "/people/"+url.PathEscape(personID)+"/extended")
+	body, err := s.client.Get(ctx, "/people/"+url.PathEscape(personID)+"/extended")
 	if err != nil {
 		return tvdb.TVDBPeopleExtended{}, err
 	}
@@ -526,15 +553,15 @@ func peopleCredits(ctx context.Context, personID string) (tvdb.TVDBPeopleExtende
 	if err := json.Unmarshal(body, &response); err != nil {
 		return tvdb.TVDBPeopleExtended{}, fmt.Errorf("decode people extended response: %w", err)
 	}
-	peopleCreditsCache.set(personID, response.Data)
+	s.peopleCreditsCache.set(personID, response.Data)
 	return response.Data, nil
 }
 
 // searchByImdbID resolves an IMDb title id through TVDB's remote-id lookup.
 // A match of the other media type is dropped: the UI's download actions are
 // bound to the selected type, so the user is told to switch instead.
-func searchByImdbID(ctx context.Context, imdbID, mediaType string) ([]tvdb.Media, error) {
-	body, err := tvDbGet(ctx, "/search/remoteid/"+url.PathEscape(imdbID))
+func (s *Service) searchByImdbID(ctx context.Context, imdbID, mediaType string) ([]tvdb.Media, error) {
+	body, err := s.client.Get(ctx, "/search/remoteid/"+url.PathEscape(imdbID))
 	if err != nil {
 		return nil, err
 	}
@@ -571,8 +598,8 @@ func searchByImdbID(ctx context.Context, imdbID, mediaType string) ([]tvdb.Media
 		}
 		results = append(results, media)
 	}
-	fetchSeriesEpisodes(ctx, results)
-	logger.InfoContext(ctx, "IMDb lookup", telemetry.WithTraceContext(ctx,
+	s.fetchSeriesEpisodes(ctx, results)
+	s.logger.InfoContext(ctx, "IMDb lookup", telemetry.WithTraceContext(ctx,
 		"imdb_id", imdbID, "media_type", mediaType, "count", len(results))...)
 	return results, nil
 }
@@ -580,7 +607,7 @@ func searchByImdbID(ctx context.Context, imdbID, mediaType string) ([]tvdb.Media
 // fetchSeriesEpisodes fills in episodes and score for every series in results,
 // in place and in parallel. Movies are left alone. A failed lookup leaves that
 // series with an empty episode list rather than dropping it.
-func fetchSeriesEpisodes(ctx context.Context, results []tvdb.Media) {
+func (s *Service) fetchSeriesEpisodes(ctx context.Context, results []tvdb.Media) {
 	sem := make(chan struct{}, episodeFetchConcurrency)
 	var wg sync.WaitGroup
 	for idx := range results {
@@ -595,9 +622,9 @@ func fetchSeriesEpisodes(ctx context.Context, results []tvdb.Media) {
 		go func(media *tvdb.Media) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			seriesResponse, err := querySeriesMetadata(ctx, media.Id)
+			seriesResponse, err := s.client.SeriesEpisodes(ctx, media.Id)
 			if err != nil {
-				logger.WarnContext(ctx, "Failed to fetch episode metadata, returning partial result",
+				s.logger.WarnContext(ctx, "Failed to fetch episode metadata, returning partial result",
 					"media_id", media.Id, "media_name", media.Name, "error", err)
 				media.Metadata = tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{}}
 				return
@@ -677,10 +704,4 @@ func (c *ttlCache[V]) set(key string, value V) {
 		}
 	}
 	c.entries[key] = ttlEntry[V]{value: value, expires: now.Add(c.ttl)}
-}
-
-func (c *ttlCache[V]) clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries = make(map[string]ttlEntry[V])
 }
