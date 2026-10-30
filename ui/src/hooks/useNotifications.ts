@@ -364,6 +364,8 @@ export function useClearFinished() {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      // The Activity page's Finished tab lists the same rows.
+      queryClient.invalidateQueries({ queryKey: ['activity'] });
     },
   });
 }

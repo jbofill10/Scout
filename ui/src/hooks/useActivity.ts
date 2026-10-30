@@ -39,8 +39,15 @@ export interface ActivitySnapshot {
   counts: Partial<Record<DownloadStage, number>>;
 }
 
+/**
+ * The server returns the newest `limit` notifications (default 200). The page
+ * groups rows per show, so asking for far more costs little and keeps every
+ * in-flight episode and the finished list complete.
+ */
+export const ACTIVITY_LIMIT = 1000;
+
 async function fetchActivity(): Promise<ActivitySnapshot> {
-  const response = await fetch("/api/activity");
+  const response = await fetch(`/api/activity?limit=${ACTIVITY_LIMIT}`);
   if (!response.ok) {
     throw new Error(`Failed to fetch activity: ${response.statusText}`);
   }
