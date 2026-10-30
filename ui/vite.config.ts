@@ -2,16 +2,15 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react-swc'
 
 // https://vite.dev/config/
-// Vendor code is split by library so a change to app code does not invalidate
-// the cached MUI, React or OpenTelemetry bundles, and so no single chunk
-// carries everything. Pages are split per route in App.tsx.
+// Vendor code is kept in two chunks: OpenTelemetry (self-contained, large,
+// rarely changes) and everything else. Splitting React, MUI and Emotion into
+// separate chunks created a circular chunk graph that threw "Cannot access
+// 'x' before initialization" at load and left the page blank, so the
+// interdependent UI libraries stay together. Pages are split per route in
+// App.tsx, which is where most of the first-paint win comes from.
 function vendorChunk(id: string): string | undefined {
   if (!id.includes('node_modules')) return undefined
   if (id.includes('@opentelemetry')) return 'otel'
-  if (id.includes('@mui') || id.includes('@emotion')) return 'mui'
-  if (id.includes('@tanstack')) return 'query'
-  if (id.includes('react-router')) return 'router'
-  if (/node_modules\/(react|react-dom|scheduler)\//.test(id)) return 'react'
   return 'vendor'
 }
 
