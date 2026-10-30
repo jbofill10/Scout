@@ -328,6 +328,32 @@ func (c *TorrenterClient) GetShowEpisodes(ctx context.Context, tvdbId string) ([
 	return episodes, nil
 }
 
+// GetMissingEpisodes retrieves every library show's aired episodes that Plex lacks.
+func (c *TorrenterClient) GetMissingEpisodes(ctx context.Context) ([]library.MissingShow, error) {
+	url := fmt.Sprintf("http://%s/library/missing", c.Host)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.WarnContext(ctx, "Failed to close response body", "error", cerr)
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("torrenter returned status %d", resp.StatusCode)
+	}
+	var shows []library.MissingShow
+	if err := json.NewDecoder(resp.Body).Decode(&shows); err != nil {
+		return nil, err
+	}
+	return shows, nil
+}
+
 // GetShowMetadataStatus retrieves TVDB sync status for a show from torrenter
 func (c *TorrenterClient) GetShowMetadataStatus(ctx context.Context, tvdbId string) (library.MetadataStatus, error) {
 	url := fmt.Sprintf("http://%s/library/shows/%s/metadata-status", c.Host, tvdbId)

@@ -1115,3 +1115,50 @@ func (r *Repo) DeleteUploaderPreference(ctx context.Context, id int) (bool, erro
 	}
 	return n > 0, nil
 }
+
+// GetMissingEpisodes returns, per library show, the aired non-special TVDB
+// episodes with no Plex episode, in one query. Shows with nothing missing are
+// left out.
+func (r *Repo) GetMissingEpisodes(ctx context.Context) ([]library.MissingShow, error) {
+	ctx, span := repoTracer.Start(ctx, "repository.GetMissingEpisodes")
+	defer span.End()
+
+	query := `
+		SELECT sh.tvdb_id, sh.title, COALESCE(sh.thumb, ''),
+		       te.tvdb_id, te.season_number, te.episode_number,
+		       COALESCE(te.absolute_number, 0), COALESCE(te.name, ''), COALESCE(te.aired::text, '')
+		FROM Shows sh
+		JOIN TvdbEpisodes te ON te.series_tvdb_id = sh.tvdb_id
+		LEFT JOIN Episodes e ON e.tvdb_id = te.tvdb_id
+		WHERE sh.tvdb_id IS NOT NULL AND sh.tvdb_id != ''
+		  AND te.season_number > 0
+		  AND te.aired <= CURRENT_DATE
+		  AND e.id IS NULL
+		ORDER BY lower(sh.title), sh.tvdb_id, te.season_number, te.episode_number
+	`
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("failed to query missing episodes: %w", err)
+	}
+	defer rows.Close()
+
+	shows := []library.MissingShow{}
+	index := map[string]int{}
+	for rows.Next() {
+		var showID, title, thumb string
+		var ep library.MissingEpisode
+		if err := rows.Scan(&showID, &title, &thumb, &ep.TvdbId, &ep.SeasonNumber, &ep.EpisodeNumber,
+			&ep.AbsoluteNumber, &ep.Name, &ep.Aired); err != nil {
+			return nil, fmt.Errorf("failed to scan missing episode: %w", err)
+		}
+		i, ok := index[showID]
+		if !ok {
+			index[showID] = len(shows)
+			i = len(shows)
+			shows = append(shows, library.MissingShow{TvdbId: showID, Title: title, Thumb: thumb, Episodes: []library.MissingEpisode{}})
+		}
+		shows[i].Episodes = append(shows[i].Episodes, ep)
+	}
+	return shows, rows.Err()
+}

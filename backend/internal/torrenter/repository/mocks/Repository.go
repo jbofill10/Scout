@@ -779,3 +779,24 @@ func (_m *Repository) DeleteUploaderPreference(ctx context.Context, id int) (boo
 
 	return r0, r1
 }
+
+// GetMissingEpisodes provides a mock function with given fields: ctx
+func (_m *Repository) GetMissingEpisodes(ctx context.Context) ([]library.MissingShow, error) {
+	ret := _m.Called(ctx)
+
+	var r0 []library.MissingShow
+	if rf, ok := ret.Get(0).(func(context.Context) []library.MissingShow); ok {
+		r0 = rf(ctx)
+	} else if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]library.MissingShow)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = rf(ctx)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}

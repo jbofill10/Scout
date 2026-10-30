@@ -183,6 +183,8 @@ func main() {
 	controlHandler := handlers.NewDownloadControlHandler(controlInteractor, logger)
 	settingsHandler := handlers.NewSettingsHandler(torrenterClient, logger)
 	followHandler := handlers.NewFollowHandler(followInteractor, logger)
+	missingInteractor := interactors.NewMissingInteractor(torrenterClient, schedulerRepo, notificationRepo, downloadInteractor, logger)
+	missingHandler := handlers.NewMissingHandler(missingInteractor, logger)
 
 	// Setup routes
 	r := gin.Default()
@@ -248,6 +250,8 @@ func main() {
 	r.GET("/library/shows/:tvdbId", libraryHandler.GetShowDetails)
 	r.GET("/library/shows/:tvdbId/metadata-status", libraryHandler.GetShowMetadataStatus)
 	r.GET("/library/movies", libraryHandler.GetMovies)
+	r.GET("/library/missing", missingHandler.List)
+	r.POST("/library/shows/:tvdbId/fill-missing", missingHandler.Fill)
 
 	// Plex proxy routes
 	r.GET("/plex/thumb", libraryHandler.ProxyPlexThumb)

@@ -40,6 +40,22 @@ func (h *LibraryHandler) GetShows(c *gin.Context) {
 	c.JSON(http.StatusOK, shows)
 }
 
+// GetMissingEpisodes lists every library show's aired episodes that Plex lacks
+// GET /library/missing
+func (h *LibraryHandler) GetMissingEpisodes(c *gin.Context) {
+	ctx := c.Request.Context()
+	shows, err := h.interactor.GetMissingEpisodes(ctx)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "Failed to get missing episodes", telemetry.WithTraceContext(ctx, "error", err)...)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve missing episodes"})
+		return
+	}
+	if shows == nil {
+		shows = []library.MissingShow{}
+	}
+	c.JSON(http.StatusOK, shows)
+}
+
 // GetShowEpisodes retrieves all episodes (downloaded + missing) for a show
 // GET /library/shows/:tvdbId/episodes
 func (h *LibraryHandler) GetShowEpisodes(c *gin.Context) {
@@ -119,7 +135,7 @@ func (h *LibraryHandler) SyncEpisodes(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	var request struct {
-		SeriesTvdbId string                 `json:"seriesTvdbId" binding:"required"`
+		SeriesTvdbId string                `json:"seriesTvdbId" binding:"required"`
 		Episodes     []library.TvdbEpisode `json:"episodes" binding:"required"`
 	}
 

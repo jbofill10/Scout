@@ -4,7 +4,11 @@ import { alpha, useTheme } from "@mui/material/styles";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import BookmarkRemoveOutlinedIcon from "@mui/icons-material/BookmarkRemoveOutlined";
 import { useCheckFollows, useFollows, useUnfollowShow, type FollowedShow } from "../hooks/useFollows";
-import { formatRelativeTime } from "../utils/downloadStage";
+import { unrequestedCount, useFillMissing, useMissingEpisodes, type MissingShow } from "../hooks/useMissing";
+import { formatEpisodeLabel, formatRelativeTime } from "../utils/downloadStage";
+import Collapse from "@mui/material/Collapse";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import MediaCard from "../components/ui/MediaCard";
 import { MediaStatusDialog } from "../components/ui/MediaStatusDialog";
 import PageHeader from "../components/ui/PageHeader";
@@ -124,10 +128,76 @@ const FollowedRow: React.FC<{ show: FollowedShow; onOpen: () => void }> = ({ sho
   );
 };
 
+/** One show with gaps: the count, the fill button, and the episodes on demand. */
+const MissingRow: React.FC<{ show: MissingShow; thumbUrl: string; onOpen: () => void }> = ({ show, thumbUrl, onOpen }) => {
+  const theme = useTheme();
+  const fill = useFillMissing();
+  const [expanded, setExpanded] = useState(false);
+  const pending = unrequestedCount(show);
+  const requested = show.episodes.length - pending;
+
+  return (
+    <Box sx={{ borderBottom: `1px solid ${theme.palette.divider}`, "&:last-of-type": { borderBottom: 0 } }}>
+      <Box sx={{ display: "flex", gap: 2, alignItems: "center", px: { xs: 2, sm: 2.5 }, py: 1.5 }}>
+        <Box
+          component={thumbUrl ? "img" : "div"}
+          src={thumbUrl || undefined}
+          alt=""
+          onClick={onOpen}
+          sx={{ width: 44, height: 66, flexShrink: 0, objectFit: "cover", borderRadius: 1.5, cursor: "pointer", border: `1px solid ${theme.palette.divider}`, backgroundColor: alpha(theme.palette.common.white, 0.05) }}
+        />
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography variant="body1" sx={{ fontWeight: 650, cursor: "pointer" }} onClick={onOpen}>
+            {show.title}
+          </Typography>
+          <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
+            {show.episodes.length} missing
+            {requested > 0 ? ` · ${requested} already requested` : ""}
+          </Typography>
+        </Box>
+        <Button
+          size="small"
+          variant="contained"
+          startIcon={fill.isPending ? <CircularProgress size={16} color="inherit" /> : <DownloadRoundedIcon />}
+          disabled={pending === 0 || fill.isPending}
+          onClick={() => fill.mutate({ tvdbId: show.tvdbId, title: show.title })}
+        >
+          {pending === 0 ? "All requested" : `Download ${pending}`}
+        </Button>
+        <IconButton
+          size="small"
+          aria-label={expanded ? `Hide episodes of ${show.title}` : `Show episodes of ${show.title}`}
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+          sx={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform .2s ease" }}
+        >
+          <ExpandMoreIcon />
+        </IconButton>
+      </Box>
+      <Collapse in={expanded} unmountOnExit>
+        <Box sx={{ px: { xs: 2, sm: 2.5 }, pb: 1.5, display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 0.5 }}>
+          {show.episodes.map((ep) => (
+            <Box key={ep.tvdbId} sx={{ display: "flex", alignItems: "center", gap: 1, py: 0.25 }}>
+              <Typography variant="caption" sx={{ color: theme.palette.text.secondary, fontVariantNumeric: "tabular-nums", minWidth: 150 }}>
+                {formatEpisodeLabel(ep.seasonNumber, ep.episodeNumber)}
+              </Typography>
+              <Typography variant="caption" sx={{ color: theme.palette.text.primary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {ep.name || "Untitled"}
+              </Typography>
+              {ep.requested && <Chip size="small" label="Requested" sx={{ height: 18, fontSize: "0.65rem" }} />}
+            </Box>
+          ))}
+        </Box>
+      </Collapse>
+    </Box>
+  );
+};
+
 export const Library = () => {
   const theme = useTheme();
-  const [activeTab, setActiveTab] = useState<"shows" | "movies" | "following">("shows");
+  const [activeTab, setActiveTab] = useState<"shows" | "movies" | "following" | "missing">("shows");
   const { data: follows, isLoading: followsLoading } = useFollows(activeTab === "following");
+  const { data: missing, isLoading: missingLoading } = useMissingEpisodes(activeTab === "missing");
   const checkAll = useCheckFollows();
   const [selectedTvdbId, setSelectedTvdbId] = useState<string | null>(null);
   const [selectedMediaName, setSelectedMediaName] = useState<string>("");
@@ -152,7 +222,8 @@ export const Library = () => {
 
   // Determine which items to display
   const items = activeTab === "shows" ? sortedShows : activeTab === "movies" ? sortedMovies : [];
-  const isLoading = activeTab === "shows" ? showsLoading : activeTab === "movies" ? moviesLoading : followsLoading;
+  const isLoading =
+    activeTab === "shows" ? showsLoading : activeTab === "movies" ? moviesLoading : activeTab === "following" ? followsLoading : missingLoading;
 
   // Convert Plex thumb path to proxied URL
   const getProxiedThumbUrl = (plexThumbPath: string): string => {
@@ -257,8 +328,40 @@ export const Library = () => {
             <Tab label="TV Shows" value="shows" />
             <Tab label="Movies" value="movies" />
             <Tab label={`Following${follows && follows.length > 0 ? ` (${follows.length})` : ""}`} value="following" />
+            <Tab label={`Missing${missing && missing.length > 0 ? ` (${missing.length})` : ""}`} value="missing" />
           </Tabs>
         </Box>
+
+        {/* Shows with aired episodes Plex lacks, and a one-click fill per show */}
+        {activeTab === "missing" && !missingLoading && (
+          <Box sx={{ mb: 4 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+              Aired episodes your library does not have. Download fills a show's gaps; episodes Scout is already working on are skipped.
+            </Typography>
+            {(!missing || missing.length === 0) && (
+              <Box sx={{ textAlign: "center", py: 8 }}>
+                <Typography variant="h6" color="text.secondary">
+                  Nothing missing
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  Every aired episode of every show in your library is there.
+                </Typography>
+              </Box>
+            )}
+            {missing && missing.length > 0 && (
+              <Box sx={{ backgroundColor: theme.palette.background.paper, border: `1px solid ${theme.palette.divider}`, borderRadius: 3, overflow: "hidden" }}>
+                {missing.map((show) => (
+                  <MissingRow
+                    key={show.tvdbId}
+                    show={show}
+                    thumbUrl={getProxiedThumbUrl(show.thumb)}
+                    onOpen={() => handleMediaClick(show.tvdbId, show.title, show.thumb)}
+                  />
+                ))}
+              </Box>
+            )}
+          </Box>
+        )}
 
         {/* Followed shows: re-checked for new episodes on their own */}
         {activeTab === "following" && !followsLoading && (
@@ -305,7 +408,7 @@ export const Library = () => {
         )}
 
         {/* Empty State */}
-        {!isLoading && activeTab !== "following" && items.length === 0 && (
+        {!isLoading && (activeTab === "shows" || activeTab === "movies") && items.length === 0 && (
           <Box sx={{ textAlign: "center", py: 8 }}>
             <Typography variant="h6" color="text.secondary">
               No {activeTab === "shows" ? "TV shows" : "movies"} in your library yet
@@ -317,7 +420,7 @@ export const Library = () => {
         )}
 
         {/* Grid of Media Cards — two columns on a phone, as many as fit elsewhere */}
-        {!isLoading && activeTab !== "following" && items.length > 0 && (
+        {!isLoading && (activeTab === "shows" || activeTab === "movies") && items.length > 0 && (
           <Box
             sx={{
               display: "grid",

@@ -74,6 +74,21 @@ func (i *LibraryInteractor) GetShowMetadataStatus(ctx context.Context, tvdbId st
 	return status, nil
 }
 
+// GetMissingEpisodes lists, per library show, the aired episodes Plex lacks.
+func (i *LibraryInteractor) GetMissingEpisodes(ctx context.Context) ([]library.MissingShow, error) {
+	shows, err := i.repo.GetMissingEpisodes(ctx)
+	if err != nil {
+		i.logger.ErrorContext(ctx, "Failed to fetch missing episodes", "error", err)
+		return nil, fmt.Errorf("failed to fetch missing episodes: %w", err)
+	}
+	total := 0
+	for _, s := range shows {
+		total += len(s.Episodes)
+	}
+	i.logger.InfoContext(ctx, "Fetched missing episodes", "shows", len(shows), "episodes", total)
+	return shows, nil
+}
+
 // GetLibraryMovies retrieves all movies in the user's library
 func (i *LibraryInteractor) GetLibraryMovies(ctx context.Context) ([]library.LibraryMovie, error) {
 	i.logger.InfoContext(ctx, "Fetching all library movies")

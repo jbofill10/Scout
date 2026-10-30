@@ -44,3 +44,19 @@ type MetadataStatus struct {
 	PlexEpisodeCount int  `json:"plexEpisodeCount"`
 	MissingCount     int  `json:"missingCount"`
 }
+
+// MissingEpisode is an aired, non-special episode TVDB lists for a library
+// show that Plex does not have. Requested is filled in by the webserver when
+// a scheduled row or a notification already exists for it.
+type MissingEpisode struct {
+	EpisodeWithStatus
+	Requested bool `json:"requested"`
+}
+
+// MissingShow groups a library show's missing episodes.
+type MissingShow struct {
+	TvdbId   string           `json:"tvdbId"`
+	Title    string           `json:"title"`
+	Thumb    string           `json:"thumb"`
+	Episodes []MissingEpisode `json:"episodes"`
+}
