@@ -27,6 +27,7 @@ const (
 	CodeProcessingError      FailureCode = "processing_error"      // permanent
 	CodeInvalidMedia         FailureCode = "invalid_media"         // permanent
 	CodeMaxRetries           FailureCode = "max_retries_exceeded"  // permanent
+	CodeCancelled            FailureCode = "cancelled"             // permanent: the user stopped it
 )
 
 // Outcome values describe the result of a per-episode (or per-movie) download attempt.
@@ -48,7 +49,8 @@ func (c FailureCode) Category() FailureCategory {
 		return CategoryTransient
 	case CodeProcessingError,
 		CodeInvalidMedia,
-		CodeMaxRetries:
+		CodeMaxRetries,
+		CodeCancelled:
 		return CategoryPermanent
 	default:
 		return CategoryPermanent
@@ -74,6 +76,8 @@ func (c FailureCode) HumanReason() string {
 		return "Media request was invalid"
 	case CodeMaxRetries:
 		return "Gave up after repeated attempts"
+	case CodeCancelled:
+		return "Cancelled"
 	default:
 		return "Unknown failure"
 	}

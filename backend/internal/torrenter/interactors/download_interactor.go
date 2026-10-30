@@ -6,6 +6,7 @@ import (
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 	"github.com/jbofill10/scout/backend/internal/torrenter/service"
+	"github.com/jbofill10/scout/backend/pkg/controls"
 	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/notifications"
@@ -61,6 +62,38 @@ func (i *DownloadInteractor) InitiateDownload(ctx context.Context, req *tvdb.Med
 	}
 
 	return results, nil
+}
+
+// Cancel stops everything in flight for an item and marks its notification
+// cancelled. The response says what was found; nothing found is not an error.
+func (i *DownloadInteractor) Cancel(ctx context.Context, itemID string) (controls.CancelResponse, error) {
+	return i.qbitt.CancelItem(ctx, itemID)
+}
+
+// ListReleases returns every candidate release the indexers have for an item,
+// resolving the media from the request or from the item's in-flight torrent.
+func (i *DownloadInteractor) ListReleases(ctx context.Context, req controls.ReleasesRequest) (controls.ReleasesResponse, error) {
+	media, err := i.qbitt.ResolveItemMedia(ctx, req.ItemID, req.Media)
+	if err != nil {
+		return controls.ReleasesResponse{}, err
+	}
+	return i.qbitt.ListReleases(ctx, req.ItemID, media)
+}
+
+// ManualDownload downloads the release the user chose for an item. The
+// completion handler runs exactly as for an automatic download, so the file is
+// linked into Plex and subtitles are fetched when it lands.
+func (i *DownloadInteractor) ManualDownload(ctx context.Context, req controls.ManualDownloadRequest) (dlstatus.EpisodeResult, error) {
+	media, err := i.qbitt.ResolveItemMedia(ctx, req.ItemID, req.Media)
+	if err != nil {
+		return dlstatus.EpisodeResult{}, err
+	}
+
+	dlComplete := make(chan models.TorrentCompleteEvent, 1)
+	go i.handleDownloadCompletion(ctx, dlComplete)
+
+	// DownloadRelease owns closing dlComplete on every path.
+	return i.qbitt.DownloadRelease(ctx, req.ItemID, media, req.Release, dlComplete)
 }
 
 // ResumeInFlightDownloads restarts completion monitors for torrents that were

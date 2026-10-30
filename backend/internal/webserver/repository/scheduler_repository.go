@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,9 @@ const (
 	StatusQueued    = "queued"
 	StatusCompleted = "completed"
 	StatusFailed    = "failed"
+	// StatusCancelled: the user stopped the item; the row is kept so a later
+	// request for the same item can revive it instead of inserting a twin.
+	StatusCancelled = "cancelled"
 )
 
 // DueItem is a scheduled download row that is due (or retry-due) for dispatch.
@@ -71,6 +75,13 @@ type SchedulerRepository interface {
 	InsertDownloadHistory(mediaTitle string, season, episode, absoluteEpisode int, status, reason, traceID, spanID string) error
 	GetWeeklySchedule() ([]ScheduledDownload, error)
 	GetPendingScheduleMeta(ctx context.Context) (map[string]ScheduleMeta, error)
+	// GetScheduleMetaByStatus is GetPendingScheduleMeta for an explicit status set.
+	GetScheduleMetaByStatus(ctx context.Context, statuses ...string) (map[string]ScheduleMeta, error)
+	// Download controls (see scheduler_controls.go).
+	FindRowsByItem(ctx context.Context, itemKey string) ([]ScheduledRow, error)
+	CancelRow(ctx context.Context, id int) error
+	RearmRow(ctx context.Context, id int, resetAttempts bool) error
+	GetUpcoming(ctx context.Context) ([]UpcomingItem, error)
 }
 
 type SchedulerRepo struct {
@@ -131,9 +142,18 @@ func (r *SchedulerRepo) Schedule(ctx context.Context, media tvdb.Media, releaseT
 	// Compute a deterministic content hash for deduplication.
 	contentHash := ComputeContentHash(media, releaseTime)
 
+	// A row the user cancelled is revived by a new request for the same item;
+	// any other existing row makes the request a duplicate (no row returned).
 	stmt := `INSERT INTO ScheduledDownloads (media, release_time, schedule_status, content_hash, scheduled_trace_id, scheduled_span_id)
 			 VALUES ($1, $2, $3, $4, $5, $6)
-			 ON CONFLICT (content_hash) DO NOTHING RETURNING id`
+			 ON CONFLICT (content_hash) DO UPDATE SET
+			     schedule_status = EXCLUDED.schedule_status, media = EXCLUDED.media,
+			     release_time = EXCLUDED.release_time,
+			     scheduled_trace_id = EXCLUDED.scheduled_trace_id, scheduled_span_id = EXCLUDED.scheduled_span_id,
+			     attempts = 0, next_attempt_at = NULL, queued_at = NULL,
+			     last_failure_code = NULL, last_failure_reason = NULL
+			 WHERE ScheduledDownloads.schedule_status = '` + StatusCancelled + `'
+			 RETURNING id`
 
 	r.logger.InfoContext(ctx, "Attempting to schedule media",
 		slog.String("media", media.Name),
@@ -238,8 +258,8 @@ func (r *SchedulerRepo) MarkCompleted(ctx context.Context, id int) error {
 	defer r.mu.Unlock()
 
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE ScheduledDownloads SET schedule_status = $1 WHERE id = $2`,
-		StatusCompleted, id)
+		`UPDATE ScheduledDownloads SET schedule_status = $1 WHERE id = $2 AND schedule_status IN ($3, $4)`,
+		StatusCompleted, id, StatusQueued, StatusPending)
 	if err != nil {
 		return fmt.Errorf("failed to mark row completed: %w", err)
 	}
@@ -256,8 +276,8 @@ func (r *SchedulerRepo) RecordFailure(ctx context.Context, id int, code, reason 
 		`UPDATE ScheduledDownloads
 		 SET schedule_status = $1, attempts = attempts + 1, next_attempt_at = $2,
 		     last_failure_code = $3, last_failure_reason = $4
-		 WHERE id = $5`,
-		StatusPending, nextAttempt.Format(time.RFC3339), code, reason, id)
+		 WHERE id = $5 AND schedule_status = $6`,
+		StatusPending, nextAttempt.Format(time.RFC3339), code, reason, id, StatusQueued)
 	if err != nil {
 		return fmt.Errorf("failed to record failure: %w", err)
 	}
@@ -273,8 +293,8 @@ func (r *SchedulerRepo) MarkPermanentlyFailed(ctx context.Context, id int, code,
 		`UPDATE ScheduledDownloads
 		 SET schedule_status = $1, attempts = attempts + 1,
 		     last_failure_code = $2, last_failure_reason = $3
-		 WHERE id = $4`,
-		StatusFailed, code, reason, id)
+		 WHERE id = $4 AND schedule_status = $5`,
+		StatusFailed, code, reason, id, StatusQueued)
 	if err != nil {
 		return fmt.Errorf("failed to mark row permanently failed: %w", err)
 	}
@@ -378,15 +398,30 @@ func mediaReleaseTime(media tvdb.Media) time.Time {
 // that is still pending or queued, keyed by notification tvdb id. Rows whose
 // media cannot be decoded are skipped rather than failing the whole lookup.
 func (r *SchedulerRepo) GetPendingScheduleMeta(ctx context.Context) (map[string]ScheduleMeta, error) {
+	return r.GetScheduleMetaByStatus(ctx, StatusPending, StatusQueued)
+}
+
+// GetScheduleMetaByStatus returns the scheduling state of every row in one of
+// the given statuses, keyed like GetPendingScheduleMeta.
+func (r *SchedulerRepo) GetScheduleMetaByStatus(ctx context.Context, statuses ...string) (map[string]ScheduleMeta, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if len(statuses) == 0 {
+		return map[string]ScheduleMeta{}, nil
+	}
+	args := make([]any, len(statuses))
+	placeholders := make([]string, len(statuses))
+	for i, st := range statuses {
+		args[i] = st
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+	}
 	stmt := `SELECT media, release_time, schedule_status, attempts, next_attempt_at,
 			        last_failure_code, last_failure_reason
 			 FROM ScheduledDownloads
-			 WHERE schedule_status IN ($1, $2)`
+			 WHERE schedule_status IN (` + strings.Join(placeholders, ", ") + `)`
 
-	rows, err := r.db.QueryContext(ctx, stmt, StatusPending, StatusQueued)
+	rows, err := r.db.QueryContext(ctx, stmt, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pending schedule metadata: %w", err)
 	}

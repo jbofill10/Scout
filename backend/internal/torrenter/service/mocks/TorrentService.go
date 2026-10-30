@@ -6,6 +6,7 @@ import (
 	context "context"
 
 	models "github.com/jbofill10/scout/backend/internal/torrenter/models"
+	controls "github.com/jbofill10/scout/backend/pkg/controls"
 	dlstatus "github.com/jbofill10/scout/backend/pkg/dlstatus"
 	media "github.com/jbofill10/scout/backend/pkg/media"
 	mock "github.com/stretchr/testify/mock"
@@ -104,4 +105,88 @@ func NewTorrentService(t interface {
 	t.Cleanup(func() { mock.AssertExpectations(t) })
 
 	return mock
+}
+
+// CancelItem provides a mock function with given fields: ctx, itemID
+func (_m *TorrentService) CancelItem(ctx context.Context, itemID string) (controls.CancelResponse, error) {
+	ret := _m.Called(ctx, itemID)
+
+	var r0 controls.CancelResponse
+	if rf, ok := ret.Get(0).(func(context.Context, string) controls.CancelResponse); ok {
+		r0 = rf(ctx, itemID)
+	} else {
+		r0 = ret.Get(0).(controls.CancelResponse)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, itemID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// ResolveItemMedia provides a mock function with given fields: ctx, itemID, m
+func (_m *TorrentService) ResolveItemMedia(ctx context.Context, itemID string, m *media.Media) (*media.Media, error) {
+	ret := _m.Called(ctx, itemID, m)
+
+	var r0 *media.Media
+	if rf, ok := ret.Get(0).(func(context.Context, string, *media.Media) *media.Media); ok {
+		r0 = rf(ctx, itemID, m)
+	} else if ret.Get(0) != nil {
+		r0 = ret.Get(0).(*media.Media)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context, string, *media.Media) error); ok {
+		r1 = rf(ctx, itemID, m)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// ListReleases provides a mock function with given fields: ctx, itemID, m
+func (_m *TorrentService) ListReleases(ctx context.Context, itemID string, m *media.Media) (controls.ReleasesResponse, error) {
+	ret := _m.Called(ctx, itemID, m)
+
+	var r0 controls.ReleasesResponse
+	if rf, ok := ret.Get(0).(func(context.Context, string, *media.Media) controls.ReleasesResponse); ok {
+		r0 = rf(ctx, itemID, m)
+	} else {
+		r0 = ret.Get(0).(controls.ReleasesResponse)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context, string, *media.Media) error); ok {
+		r1 = rf(ctx, itemID, m)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// DownloadRelease provides a mock function with given fields: ctx, itemID, m, sel, done
+func (_m *TorrentService) DownloadRelease(ctx context.Context, itemID string, m *media.Media, sel controls.ReleaseSelection, done chan<- models.TorrentCompleteEvent) (dlstatus.EpisodeResult, error) {
+	ret := _m.Called(ctx, itemID, m, sel, done)
+
+	var r0 dlstatus.EpisodeResult
+	if rf, ok := ret.Get(0).(func(context.Context, string, *media.Media, controls.ReleaseSelection, chan<- models.TorrentCompleteEvent) dlstatus.EpisodeResult); ok {
+		r0 = rf(ctx, itemID, m, sel, done)
+	} else {
+		r0 = ret.Get(0).(dlstatus.EpisodeResult)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context, string, *media.Media, controls.ReleaseSelection, chan<- models.TorrentCompleteEvent) error); ok {
+		r1 = rf(ctx, itemID, m, sel, done)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
 }

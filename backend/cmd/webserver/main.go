@@ -163,6 +163,8 @@ func main() {
 	tvdbHandler := handlers.NewTVDBHandler(tvdbClient, logger)
 	activityInteractor := interactors.NewActivityInteractor(notificationRepo, schedulerRepo, logger)
 	activityHandler := handlers.NewActivityHandler(activityInteractor, logger)
+	controlInteractor := interactors.NewDownloadControlInteractor(schedulerRepo, notificationRepo, sched, torrenterClient, logger)
+	controlHandler := handlers.NewDownloadControlHandler(controlInteractor, logger)
 
 	// Setup routes
 	r := gin.Default()
@@ -198,6 +200,13 @@ func main() {
 	r.POST("/media/batch-extended", mediaExtendedHandler.GetBatchExtended)
 	r.GET("/media/:id/details", mediaExtendedHandler.GetDetails)
 	r.GET("/schedule/weekly", scheduleHandler.GetWeeklySchedule)
+	r.GET("/schedule/upcoming", controlHandler.Upcoming)
+
+	// Download controls, keyed by the item's notification tvdb id
+	r.POST("/downloads/:id/cancel", controlHandler.Cancel)
+	r.POST("/downloads/:id/retry", controlHandler.RetryNow)
+	r.GET("/downloads/:id/releases", controlHandler.ListReleases)
+	r.POST("/downloads/:id/releases", controlHandler.Grab)
 
 	// TVDB routes
 	r.POST("/tvdb/batch/episodes", tvdbHandler.GetEpisodesBatch)

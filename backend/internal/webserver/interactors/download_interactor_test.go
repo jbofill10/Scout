@@ -144,6 +144,17 @@ func (f *fakeSchedulerRepo) GetWeeklySchedule() ([]repository.ScheduledDownload,
 func (f *fakeSchedulerRepo) GetPendingScheduleMeta(context.Context) (map[string]repository.ScheduleMeta, error) {
 	return f.pendingMeta, f.pendingMetaErr
 }
+func (f *fakeSchedulerRepo) GetScheduleMetaByStatus(context.Context, ...string) (map[string]repository.ScheduleMeta, error) {
+	return f.pendingMeta, f.pendingMetaErr
+}
+func (f *fakeSchedulerRepo) FindRowsByItem(context.Context, string) ([]repository.ScheduledRow, error) {
+	return nil, nil
+}
+func (f *fakeSchedulerRepo) CancelRow(context.Context, int) error      { return nil }
+func (f *fakeSchedulerRepo) RearmRow(context.Context, int, bool) error { return nil }
+func (f *fakeSchedulerRepo) GetUpcoming(context.Context) ([]repository.UpcomingItem, error) {
+	return nil, nil
+}
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, nil))

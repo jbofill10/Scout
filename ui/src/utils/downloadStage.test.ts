@@ -9,7 +9,7 @@ import {
   isActiveStage,
 } from "./downloadStage";
 
-const stages = ["scheduled", "searching", "downloading", "completed", "failed"] as const;
+const stages = ["scheduled", "searching", "downloading", "completed", "failed", "cancelled"] as const;
 
 describe("stage lookups", () => {
   it.each([
@@ -18,6 +18,7 @@ describe("stage lookups", () => {
     ["downloading", "#8B5CF6", "Downloading", "Downloading", true],
     ["completed", "#10B981", "Completed", "In your library", false],
     ["failed", "#EF4444", "Failed", "Gave up", false],
+    ["cancelled", "#64748B", "Cancelled", "Cancelled", false],
   ])("%s", (stage, color, label, description, active) => {
     expect(getStageColor(stage)).toBe(color);
     expect(getStageLabel(stage)).toBe(label);

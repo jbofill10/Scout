@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
+	"github.com/jbofill10/scout/backend/pkg/controls"
 	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	"github.com/jbofill10/scout/backend/pkg/library"
 	"github.com/jbofill10/scout/backend/pkg/media"
@@ -15,6 +16,12 @@ type TorrentService interface {
 	HandleDownload(ctx context.Context, req *media.Media, done chan<- models.TorrentCompleteEvent) ([]dlstatus.EpisodeResult, error)
 	ResumeMonitors(ctx context.Context, done chan<- models.TorrentCompleteEvent) (int, error)
 	RemoveUUIDTag(ctx context.Context, hash string, uuid string) error
+	// Download controls, keyed by the item's notification tvdb id.
+	CancelItem(ctx context.Context, itemID string) (controls.CancelResponse, error)
+	ResolveItemMedia(ctx context.Context, itemID string, m *media.Media) (*media.Media, error)
+	ListReleases(ctx context.Context, itemID string, m *media.Media) (controls.ReleasesResponse, error)
+	DownloadRelease(ctx context.Context, itemID string, m *media.Media, sel controls.ReleaseSelection,
+		done chan<- models.TorrentCompleteEvent) (dlstatus.EpisodeResult, error)
 }
 
 // MediaProcessor handles post-download processing

@@ -202,8 +202,8 @@ func (s *SchedulerRepoTestSuite) TestMarkQueued() {
 }
 
 func (s *SchedulerRepoTestSuite) TestMarkCompleted() {
-	s.mock.ExpectExec(`UPDATE ScheduledDownloads SET schedule_status = \$1 WHERE id = \$2`).
-		WithArgs(StatusCompleted, 7).
+	s.mock.ExpectExec(`UPDATE ScheduledDownloads SET schedule_status = \$1 WHERE id = \$2 AND schedule_status IN \(\$3, \$4\)`).
+		WithArgs(StatusCompleted, 7, StatusQueued, StatusPending).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := s.repo.MarkCompleted(context.Background(), 7)
@@ -214,7 +214,7 @@ func (s *SchedulerRepoTestSuite) TestMarkCompleted() {
 func (s *SchedulerRepoTestSuite) TestRecordFailure() {
 	next := time.Now().Add(time.Hour)
 	s.mock.ExpectExec(`UPDATE ScheduledDownloads`).
-		WithArgs(StatusPending, next.Format(time.RFC3339), "no_torrent_found", "no torrent", 7).
+		WithArgs(StatusPending, next.Format(time.RFC3339), "no_torrent_found", "no torrent", 7, StatusQueued).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := s.repo.RecordFailure(context.Background(), 7, "no_torrent_found", "no torrent", next)
@@ -224,7 +224,7 @@ func (s *SchedulerRepoTestSuite) TestRecordFailure() {
 
 func (s *SchedulerRepoTestSuite) TestMarkPermanentlyFailed() {
 	s.mock.ExpectExec(`UPDATE ScheduledDownloads`).
-		WithArgs(StatusFailed, "invalid_media", "bad", 7).
+		WithArgs(StatusFailed, "invalid_media", "bad", 7, StatusQueued).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := s.repo.MarkPermanentlyFailed(context.Background(), 7, "invalid_media", "bad")
@@ -408,4 +408,89 @@ func (s *SchedulerRepoTestSuite) TestGetPendingScheduleMeta_KeysByNotificationID
 	s.Empty(movieMeta.LastFailureCode)
 
 	s.Require().NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestFindRowsByItem_MatchesByNotificationKey() {
+	mine, _ := json.Marshal(tvdb.Media{Id: "900", Name: "Some Show", Metadata: tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{{Id: 55}}}})
+	other, _ := json.Marshal(tvdb.Media{Id: "900", Name: "Some Show", Metadata: tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{{Id: 56}}}})
+	movie, _ := json.Marshal(tvdb.Media{Id: "55", Name: "A Movie", Category: "movie"})
+	next := time.Now().Add(time.Hour)
+
+	s.mock.ExpectQuery(`SELECT id, media, release_time, schedule_status, attempts, next_attempt_at`).
+		WithArgs(StatusPending, StatusQueued, StatusFailed).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "media", "release_time", "schedule_status", "attempts", "next_attempt_at"}).
+			AddRow(1, mine, time.Now(), StatusPending, 2, next).
+			AddRow(2, other, time.Now(), StatusPending, 0, nil).
+			AddRow(3, movie, time.Now(), StatusFailed, 5, nil))
+
+	rows, err := s.repo.FindRowsByItem(context.Background(), "55")
+
+	s.Require().NoError(err)
+	s.Require().Len(rows, 2, "the episode row and the movie row share the key; the other episode does not")
+	s.Equal(1, rows[0].ID)
+	s.Equal("55", rows[0].ItemKey)
+	s.Equal(2, rows[0].Attempts)
+	s.NotNil(rows[0].NextAttemptAt)
+	s.Equal(3, rows[1].ID)
+	s.Equal(StatusFailed, rows[1].ScheduleStatus)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestCancelRow_OnlyControllableStatuses() {
+	s.mock.ExpectExec(`UPDATE ScheduledDownloads SET schedule_status = \$1, next_attempt_at = NULL`).
+		WithArgs(StatusCancelled, 7, StatusPending, StatusQueued, StatusFailed).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	s.NoError(s.repo.CancelRow(context.Background(), 7))
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestRearmRow() {
+	s.mock.ExpectExec(`UPDATE ScheduledDownloads`).
+		WithArgs(StatusPending, sqlmock.AnyArg(), true, 7, StatusPending, StatusFailed).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	s.NoError(s.repo.RearmRow(context.Background(), 7, true))
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestGetUpcoming_MapsRows() {
+	media, _ := json.Marshal(tvdb.Media{Id: "900", Name: "Some Show", Category: "series", ImageUrl: "poster", Anime: true,
+		Metadata: tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{{Id: 55, SeasonNumber: 2, Number: 3, AbsoluteNumber: 15}}}})
+	release := time.Now().Add(48 * time.Hour)
+	next := time.Now().Add(time.Hour)
+
+	s.mock.ExpectQuery(`SELECT id, media, release_time, attempts, next_attempt_at, last_failure_code, last_failure_reason`).
+		WithArgs(StatusPending).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "media", "release_time", "attempts", "next_attempt_at", "last_failure_code", "last_failure_reason", "due_at"}).
+			AddRow(9, media, release, 2, next, "no_torrent_found", "nothing yet", next))
+
+	items, err := s.repo.GetUpcoming(context.Background())
+
+	s.Require().NoError(err)
+	s.Require().Len(items, 1)
+	it := items[0]
+	s.Equal(9, it.ID)
+	s.Equal("55", it.ItemKey)
+	s.Equal("Some Show", it.Title)
+	s.Equal("series", it.Category)
+	s.Equal(2, it.Season)
+	s.Equal(3, it.Episode)
+	s.Equal(15, it.AbsoluteEpisode)
+	s.Equal("poster", it.PosterUrl)
+	s.True(it.IsAnime)
+	s.Equal(2, it.Attempts)
+	s.NotNil(it.NextAttemptAt)
+	s.Equal("no_torrent_found", it.LastFailureCode)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestSchedule_RevivesCancelledRow() {
+	media := tvdb.Media{Id: "900", Name: "Some Show", Metadata: tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{{Id: 55, SeasonNumber: 1, Number: 1}}}}
+	s.mock.ExpectQuery(`ON CONFLICT \(content_hash\) DO UPDATE SET`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(4))
+
+	s.NoError(s.repo.Schedule(context.Background(), media, time.Now(), "", ""),
+		"a cancelled row is revived and reported as newly scheduled")
+	s.NoError(s.mock.ExpectationsWereMet())
 }

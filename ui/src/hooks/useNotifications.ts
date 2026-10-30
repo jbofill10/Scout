@@ -12,7 +12,7 @@ export interface Notification {
   absolute_episode?: number;
   poster_url?: string;
   is_anime: boolean;
-  status: 'scheduled' | 'searching' | 'downloading' | 'completed' | 'failed';
+  status: 'scheduled' | 'searching' | 'downloading' | 'completed' | 'failed' | 'cancelled';
   reason?: string;
   is_read: boolean;
   auto_dismissed: boolean;
