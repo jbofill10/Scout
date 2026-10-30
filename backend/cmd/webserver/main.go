@@ -75,6 +75,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	followRepo, err := repository.NewFollowRepo(logger, cfg.Database.ConnStr)
+	if err != nil {
+		logger.Error("Failed to init follow repo", "error", err)
+		os.Exit(1)
+	}
+
 	// Initialize media queue for scheduled downloads
 	queue := make(chan repository.DueItem, 100)
 
@@ -124,6 +130,16 @@ func main() {
 	// Start watching for due media
 	downloadInteractor.WatchForDueMedia()
 
+	// Followed shows: re-check TVDB on a timer and request what is new.
+	followInteractor := interactors.NewFollowInteractor(
+		followRepo, schedulerRepo, notificationRepo, tvdbClient, torrenterClient, downloadInteractor,
+		cfg.FollowCheckInterval, logger,
+	)
+	followCtx, stopFollows := context.WithCancel(context.Background())
+	defer stopFollows()
+	followInteractor.Start(followCtx)
+	logger.Info("Follow checks scheduled", "interval", cfg.FollowCheckInterval.String())
+
 	// Setup graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -166,6 +182,7 @@ func main() {
 	controlInteractor := interactors.NewDownloadControlInteractor(schedulerRepo, notificationRepo, sched, torrenterClient, logger)
 	controlHandler := handlers.NewDownloadControlHandler(controlInteractor, logger)
 	settingsHandler := handlers.NewSettingsHandler(torrenterClient, logger)
+	followHandler := handlers.NewFollowHandler(followInteractor, logger)
 
 	// Setup routes
 	r := gin.Default()
@@ -215,6 +232,13 @@ func main() {
 	r.GET("/settings/uploaders", settingsHandler.ListUploaders)
 	r.POST("/settings/uploaders", settingsHandler.AddUploader)
 	r.DELETE("/settings/uploaders/:id", settingsHandler.DeleteUploader)
+
+	// Followed shows
+	r.GET("/follows", followHandler.List)
+	r.POST("/follows", followHandler.Follow)
+	r.POST("/follows/check", followHandler.CheckAll)
+	r.DELETE("/follows/:tvdbId", followHandler.Unfollow)
+	r.POST("/follows/:tvdbId/check", followHandler.CheckOne)
 
 	// TVDB routes
 	r.POST("/tvdb/batch/episodes", tvdbHandler.GetEpisodesBatch)

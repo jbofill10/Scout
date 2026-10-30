@@ -33,6 +33,9 @@ export type { MediaStatusDialogProps } from './MediaStatusDialog';
 export { default as ReleasePickerDialog } from './ReleasePickerDialog';
 export type { ReleasePickerDialogProps } from './ReleasePickerDialog';
 
+export { default as FollowButton } from './FollowButton';
+export type { FollowButtonProps } from './FollowButton';
+
 export { default as StageChip } from './StageChip';
 export type { StageChipProps } from './StageChip';
 

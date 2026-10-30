@@ -155,6 +155,9 @@ func (f *fakeSchedulerRepo) RearmRow(context.Context, int, bool) error { return 
 func (f *fakeSchedulerRepo) GetUpcoming(context.Context) ([]repository.UpcomingItem, error) {
 	return nil, nil
 }
+func (f *fakeSchedulerRepo) TrackedItemKeys(context.Context) (map[string]bool, error) {
+	return nil, nil
+}
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, nil))
