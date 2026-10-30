@@ -11,6 +11,8 @@ export interface SettingsValues {
   subtitle_prefer_sdh: boolean;
   plex_sync_delay: string;
   plex_sync_interval: string;
+  /** Let the torrenter rotate the Mullvad relay when an indexer blocks the exit IP. */
+  auto_rotate_relay: boolean;
 }
 
 export type SettingKey = keyof SettingsValues;
@@ -24,6 +26,8 @@ export interface SettingsView {
     subtitles_enabled: boolean;
     /** Free bytes on the downloads volume right now; -1 when unknown. */
     free_space_bytes: number;
+    /** Whether a relay agent is configured, so rotation is possible at all. */
+    relay_agent_configured: boolean;
   };
 }
 

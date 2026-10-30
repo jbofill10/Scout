@@ -310,6 +310,39 @@ const LibrarySyncSection: React.FC<{ view: SettingsView }> = ({ view }) => {
   );
 };
 
+const IndexersSection: React.FC<{ view: SettingsView }> = ({ view }) => {
+  const update = useUpdateSettings();
+  const configured = view.options.relay_agent_configured;
+  return (
+    <SettingCard
+      title="Indexers and relay"
+      description="Public indexers ban the exit IP after a burst of searches. With the host relay agent installed, Scout can move to another Mullvad relay on its own and ask Prowlarr to re-test the indexer."
+    >
+      {!configured && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          No relay agent is configured (RELAY_AGENT_URL). Rotation is off until tools/relay-agent is installed on the host.
+        </Alert>
+      )}
+      <FormControlLabel
+        control={
+          <Switch
+            checked={view.values.auto_rotate_relay}
+            disabled={!configured || update.isPending}
+            onChange={(e) => update.mutate({ auto_rotate_relay: e.target.checked })}
+          />
+        }
+        label="Rotate the relay automatically when an indexer blocks the exit IP"
+      />
+      <DefaultHint
+        defaultLabel={view.defaults.auto_rotate_relay ? "on" : "off"}
+        overridden={!!view.overridden.auto_rotate_relay}
+        onReset={() => update.mutate({ reset: ["auto_rotate_relay"] })}
+        busy={update.isPending}
+      />
+    </SettingCard>
+  );
+};
+
 const GROUPS: { key: string; label: string; media_type: "series" | "movie"; is_anime: boolean }[] = [
   { key: "series-false", label: "Shows", media_type: "series", is_anime: false },
   { key: "series-true", label: "Anime shows", media_type: "series", is_anime: true },
@@ -594,6 +627,7 @@ const Settings: React.FC = () => {
             <UploadersSection />
             <SubtitlesSection view={data} />
             <LibrarySyncSection view={data} />
+            <IndexersSection view={data} />
             <NotificationsSection />
           </>
         )}

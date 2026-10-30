@@ -25,6 +25,9 @@ type Defaults struct {
 	// SubtitlesEnabled is reported to the UI; subtitle settings have no effect
 	// without an OpenSubtitles key.
 	SubtitlesEnabled bool
+	// AutoRotateRelay default; RelayAgentConfigured is reported to the UI.
+	AutoRotateRelay      bool
+	RelayAgentConfigured bool
 }
 
 // qualityOptions are the accepted quality floor labels, lowest first.
@@ -102,6 +105,9 @@ func (r *Resolver) Apply(ctx context.Context, upd api.Update) (api.View, error) 
 	}
 	if upd.SubtitlePreferSDH != nil {
 		writes[api.KeySubtitlePreferSDH] = *upd.SubtitlePreferSDH
+	}
+	if upd.AutoRotateRelay != nil {
+		writes[api.KeyAutoRotateRelay] = *upd.AutoRotateRelay
 	}
 	if upd.PlexSyncDelay != nil {
 		d, err := parseDuration(api.KeyPlexSyncDelay, *upd.PlexSyncDelay, 0, 24*time.Hour)
@@ -195,6 +201,17 @@ func (r *Resolver) SubtitlePreferSDH() bool {
 	return r.defaults.SubtitlePreferSDH
 }
 
+// AutoRotateRelay is whether the indexer health monitor may rotate the relay.
+func (r *Resolver) AutoRotateRelay() bool {
+	if v, ok := r.override(api.KeyAutoRotateRelay); ok {
+		var b bool
+		if json.Unmarshal(v, &b) == nil {
+			return b
+		}
+	}
+	return r.defaults.AutoRotateRelay
+}
+
 // PlexSyncDelay is the effective quiet period before a post-download sync.
 func (r *Resolver) PlexSyncDelay() time.Duration {
 	return r.duration(api.KeyPlexSyncDelay, r.defaults.PlexSyncDelay)
@@ -274,6 +291,7 @@ func (r *Resolver) view() api.View {
 			SubtitlePreferSDH: r.SubtitlePreferSDH(),
 			PlexSyncDelay:     r.PlexSyncDelay().String(),
 			PlexSyncInterval:  r.PlexSyncInterval().String(),
+			AutoRotateRelay:   r.AutoRotateRelay(),
 		},
 		Defaults: api.Values{
 			MinQuality:        r.defaults.MinQuality,
@@ -282,12 +300,14 @@ func (r *Resolver) view() api.View {
 			SubtitlePreferSDH: r.defaults.SubtitlePreferSDH,
 			PlexSyncDelay:     r.defaults.PlexSyncDelay.String(),
 			PlexSyncInterval:  r.defaults.PlexSyncInterval.String(),
+			AutoRotateRelay:   r.defaults.AutoRotateRelay,
 		},
 		Overridden: overridden,
 		Options: api.Options{
-			MinQuality:       append([]string{}, qualityOptions...),
-			SubtitlesEnabled: r.defaults.SubtitlesEnabled,
-			FreeSpaceBytes:   freeSpace,
+			MinQuality:           append([]string{}, qualityOptions...),
+			SubtitlesEnabled:     r.defaults.SubtitlesEnabled,
+			FreeSpaceBytes:       freeSpace,
+			RelayAgentConfigured: r.defaults.RelayAgentConfigured,
 		},
 	}
 }

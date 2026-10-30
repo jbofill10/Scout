@@ -23,6 +23,20 @@ func Load() (models.TorrenterConf, error) {
 		return cfg, fmt.Errorf("invalid MIN_FREE_SPACE_GB value: %s", minFree)
 	}
 
+	// Relay agent (optional)
+	cfg.Relay.AgentURL = getEnv("RELAY_AGENT_URL", "")
+	cfg.Relay.AgentToken = getEnv("RELAY_AGENT_TOKEN", "")
+	rotateCooldown, err := parseNonNegativeDuration("RELAY_ROTATE_COOLDOWN", "30m")
+	if err != nil {
+		return cfg, err
+	}
+	cfg.Relay.RotateCooldown = rotateCooldown
+	healthInterval, err := parseNonNegativeDuration("INDEXER_HEALTH_INTERVAL", "1m")
+	if err != nil {
+		return cfg, err
+	}
+	cfg.Relay.HealthInterval = healthInterval
+
 	// Load Prowlarr config
 	cfg.Prowlarr.Host = getEnv("PROWLARR_HOST", "")
 	if cfg.Prowlarr.Host == "" {

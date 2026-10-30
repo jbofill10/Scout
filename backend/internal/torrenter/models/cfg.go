@@ -41,8 +41,18 @@ type DownloadsCfg struct {
 	MinFreeSpaceGB int
 }
 
+// RelayCfg points at the host relay agent (tools/relay-agent); an empty URL
+// disables relay rotation.
+type RelayCfg struct {
+	AgentURL       string
+	AgentToken     string
+	RotateCooldown time.Duration
+	HealthInterval time.Duration
+}
+
 type TorrenterConf struct {
 	Downloads DownloadsCfg
+	Relay     RelayCfg
 	Prowlarr  ProwlarrCfg
 	Qbitt     QbittCfg
 	Ui        UiCfg

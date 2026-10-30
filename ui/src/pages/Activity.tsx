@@ -17,6 +17,7 @@ import { alpha, useTheme } from "@mui/material/styles";
 import PageHeader from "../components/ui/PageHeader";
 import StageChip from "../components/ui/StageChip";
 import ReleasePickerDialog from "../components/ui/ReleasePickerDialog";
+import IndexerHealthCard from "../components/ui/IndexerHealthCard";
 import { useActivity, type ActivityItem } from "../hooks/useActivity";
 import { useUpcoming, type UpcomingItem } from "../hooks/useUpcoming";
 import { toSelection, useDownloadControls, type ReleaseCandidate } from "../hooks/useDownloadControls";
@@ -476,6 +477,8 @@ const Activity: React.FC = () => {
             </Button>
           }
         />
+
+        <IndexerHealthCard />
 
         {/* Stage tiles */}
         <Box

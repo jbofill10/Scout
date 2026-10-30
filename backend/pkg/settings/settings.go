@@ -12,10 +12,11 @@ const (
 	KeyPlexSyncDelay     = "plex_sync_delay"
 	KeyPlexSyncInterval  = "plex_sync_interval"
 	KeyMinFreeSpaceGB    = "min_free_space_gb"
+	KeyAutoRotateRelay   = "auto_rotate_relay"
 )
 
 // Keys lists every settable key, in display order.
-var Keys = []string{KeyMinQuality, KeyMinFreeSpaceGB, KeySubtitleLanguages, KeySubtitlePreferSDH, KeyPlexSyncDelay, KeyPlexSyncInterval}
+var Keys = []string{KeyMinQuality, KeyMinFreeSpaceGB, KeySubtitleLanguages, KeySubtitlePreferSDH, KeyPlexSyncDelay, KeyPlexSyncInterval, KeyAutoRotateRelay}
 
 // Values are the settings as the API presents them. Durations are Go
 // duration strings ("2m", "30m"); "0s" disables the periodic sync.
@@ -28,6 +29,9 @@ type Values struct {
 	SubtitlePreferSDH bool     `json:"subtitle_prefer_sdh"`
 	PlexSyncDelay     string   `json:"plex_sync_delay"`
 	PlexSyncInterval  string   `json:"plex_sync_interval"`
+	// AutoRotateRelay lets the torrenter switch the Mullvad relay on its own
+	// when an indexer blocks the exit IP (needs the relay agent).
+	AutoRotateRelay bool `json:"auto_rotate_relay"`
 }
 
 // Update is the body of PUT /settings: any subset of keys to override, plus
@@ -40,6 +44,7 @@ type Update struct {
 	SubtitlePreferSDH *bool     `json:"subtitle_prefer_sdh,omitempty"`
 	PlexSyncDelay     *string   `json:"plex_sync_delay,omitempty"`
 	PlexSyncInterval  *string   `json:"plex_sync_interval,omitempty"`
+	AutoRotateRelay   *bool     `json:"auto_rotate_relay,omitempty"`
 	Reset             []string  `json:"reset,omitempty"`
 }
 
@@ -53,6 +58,8 @@ type Options struct {
 	// FreeSpaceBytes is the downloads volume's free space right now; -1 when
 	// it could not be read.
 	FreeSpaceBytes int64 `json:"free_space_bytes"`
+	// RelayAgentConfigured is whether relay rotation is possible at all.
+	RelayAgentConfigured bool `json:"relay_agent_configured"`
 }
 
 // View is the response of GET /settings and PUT /settings.
