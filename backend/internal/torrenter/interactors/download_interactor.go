@@ -96,6 +96,12 @@ func (i *DownloadInteractor) ManualDownload(ctx context.Context, req controls.Ma
 	return i.qbitt.DownloadRelease(ctx, req.ItemID, media, req.Release, dlComplete)
 }
 
+// RunCompletionHandler consumes completion events for downloads started
+// outside InitiateDownload (upgrades), with the same post-processing.
+func (i *DownloadInteractor) RunCompletionHandler(ctx context.Context, dlComplete <-chan models.TorrentCompleteEvent) {
+	i.handleDownloadCompletion(ctx, dlComplete)
+}
+
 // ResumeInFlightDownloads restarts completion monitors for torrents that were
 // still downloading when the process last stopped. Without this a restart
 // silently orphans them: qBittorrent finishes the download, but nothing is left
@@ -139,6 +145,11 @@ func (i *DownloadInteractor) handleDownloadCompletion(ctx context.Context, dlCom
 			}
 			// Update notification to failed
 			i.updateNotificationFailed(eventCtx, &event, "Processing error: "+err.Error())
+			if event.Req != nil && event.Req.Upgrade != nil {
+				if uerr := i.repo.SetUpgradeAttemptStatus(eventCtx, event.Req.EpisodeTvdbID, "failed", err.Error()); uerr != nil {
+					i.logger.ErrorContext(eventCtx, "Failed to record upgrade failure", "error", uerr)
+				}
+			}
 			// The torrent is accounted for even though processing failed: the
 			// outcome is recorded, and retrying it on every restart would only
 			// replay the same failure.
@@ -158,6 +169,11 @@ func (i *DownloadInteractor) handleDownloadCompletion(ctx context.Context, dlCom
 
 		// Update notification to completed
 		i.updateNotificationCompleted(eventCtx, &event)
+		if event.Req != nil && event.Req.Upgrade != nil {
+			if uerr := i.repo.SetUpgradeAttemptStatus(eventCtx, event.Req.EpisodeTvdbID, "completed", ""); uerr != nil {
+				i.logger.ErrorContext(eventCtx, "Failed to record upgrade completion", "error", uerr)
+			}
+		}
 
 		// The torrent is fully accounted for; stop tracking it as in-flight.
 		i.clearActiveTorrent(eventCtx, event.Hash)

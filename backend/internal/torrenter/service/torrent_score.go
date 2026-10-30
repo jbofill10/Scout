@@ -82,6 +82,14 @@ func (q *QbittHandler) scoreMatch(
 	// indexer with only sub-floor releases yields no match, so the search
 	// moves on to the fallback indexer tier instead of settling.
 	floor := q.qualityFloor()
+	if match.Strategy != nil && match.Strategy.MinTier > floor {
+		floor = match.Strategy.MinTier
+	}
+	if match.Strategy != nil && match.Strategy.MaxTier > 0 && qualityTier > match.Strategy.MaxTier {
+		q.logger.InfoContext(ctx, "Torrent above the upgrade cutoff, skipping",
+			"torrent_title", match.Torrent.Title, "quality", quality, "quality_tier", qualityTier, "max_tier", match.Strategy.MaxTier)
+		return matchVerdict{quality: quality, rejection: fmt.Sprintf("%s is above the upgrade cutoff", quality)}
+	}
 	if floor > 0 && qualityTier < floor {
 		q.logger.WarnContext(ctx, "Torrent below minimum quality, skipping",
 			"torrent_title", match.Torrent.Title,

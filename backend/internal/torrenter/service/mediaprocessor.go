@@ -234,6 +234,12 @@ func (mp *MediaProcessSvc) ProcessDownloadedTorrent(ctx context.Context, media *
 		return fmt.Errorf("failed to create target directory %s: %w", targetDir, err)
 	}
 
+	// An upgrade replaces what is there: drop the old copies first so Plex ends
+	// up with one version, and clear the way if the new file reuses a name.
+	if media.Req.Upgrade != nil {
+		mp.removeOldCopies(ctx, media.Req.Upgrade.OldFiles, fullSavePath)
+	}
+
 	// Create symbolic link from qBittorrent download to Plex library
 	mp.Logger.InfoContext(ctx, "Creating symbolic link", "source", sourcePath, "destination", fullSavePath)
 	if err := mp.fs.HardLink(sourcePath, fullSavePath); err != nil {
@@ -388,4 +394,25 @@ func (mp *MediaProcessSvc) getLibraryPath(ctx context.Context, isShow bool) (mod
 	}
 
 	return lib, nil
+}
+
+// removeOldCopies deletes the files an upgrade replaces, plus any file already
+// at the new path. Failures are logged: a stale copy next to the new one is
+// not worth failing the download over.
+func (mp *MediaProcessSvc) removeOldCopies(ctx context.Context, oldFiles []string, newPath string) {
+	seen := map[string]bool{}
+	for _, old := range append(append([]string{}, oldFiles...), newPath) {
+		if old == "" || seen[old] {
+			continue
+		}
+		seen[old] = true
+		if !mp.fs.Exists(old) {
+			continue
+		}
+		if err := mp.fs.Remove(old); err != nil {
+			mp.Logger.WarnContext(ctx, "Failed to remove the copy being upgraded", "path", old, "error", err)
+			continue
+		}
+		mp.Logger.InfoContext(ctx, "Removed the copy being upgraded", "path", old)
+	}
 }

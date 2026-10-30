@@ -13,6 +13,10 @@ export interface SettingsValues {
   plex_sync_interval: string;
   /** Let the torrenter rotate the Mullvad relay when an indexer blocks the exit IP. */
   auto_rotate_relay: boolean;
+  /** Quality upgrades: replace library copies below the cutoff, batch items per pass. */
+  upgrades_enabled: boolean;
+  upgrade_cutoff: string;
+  upgrade_batch: number;
 }
 
 export type SettingKey = keyof SettingsValues;

@@ -109,6 +109,13 @@ type SearchStrategy struct {
 	// lower ones yield no confident match, and matches from tier >= 2 are
 	// gated behind a higher minimum confidence in pickBestTorrent.
 	RelaxLevel int
+	// MinTier and MaxTier bound the acceptable quality for this search
+	// (QualityTier values); zero means no bound beyond the global floor. An
+	// upgrade sets both: above the copy it replaces, at most the cutoff.
+	MinTier int
+	MaxTier int
+	// Upgrade is set when this download replaces an existing library copy.
+	Upgrade *UpgradeInfo
 }
 
 type TorrentMatch struct {
@@ -124,4 +131,11 @@ func (tm *TorrentMatch) String() string {
 		return fmt.Sprintf("TorrentMatch{Strategy: %v, Torrent: %v}", tm.Strategy, tm.Torrent)
 	}
 	return fmt.Sprintf("TorrentMatch{Title: %s, Query: %s, Seeders: %d}", tm.Torrent.Title, tm.Strategy.Query, tm.Torrent.Seeders)
+}
+
+// UpgradeInfo rides on an upgrade's strategy so the completion path knows
+// what to remove once the better copy has landed.
+type UpgradeInfo struct {
+	FromQuality string   `json:"from_quality"`
+	OldFiles    []string `json:"old_files"`
 }

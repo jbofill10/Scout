@@ -1162,3 +1162,129 @@ func (r *Repo) GetMissingEpisodes(ctx context.Context) ([]library.MissingShow, e
 	}
 	return shows, rows.Err()
 }
+
+// GetUpgradeMedia returns every library file with its Plex resolution, for
+// the upgrade pass to judge which items sit below the cutoff.
+func (r *Repo) GetUpgradeMedia(ctx context.Context) ([]models.UpgradeMediaRow, error) {
+	ctx, span := repoTracer.Start(ctx, "repository.GetUpgradeMedia")
+	defer span.End()
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT sh.tvdb_id, sh.title, e.tvdb_id, s.season_number, e.episode_number,
+		       COALESCE(em.video_resolution, ''), COALESCE(em.file_path, '')
+		FROM Episodes e
+		JOIN Seasons s ON e.parentid = s.id
+		JOIN Shows sh ON s.parentid = sh.id
+		JOIN EpisodeMedia em ON em.parentid = e.id
+		WHERE sh.tvdb_id IS NOT NULL AND sh.tvdb_id <> ''
+		  AND e.tvdb_id IS NOT NULL AND e.tvdb_id <> ''
+		  AND s.season_number > 0`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query episode media: %w", err)
+	}
+	out := []models.UpgradeMediaRow{}
+	for rows.Next() {
+		row := models.UpgradeMediaRow{Kind: "episode"}
+		if err := rows.Scan(&row.ShowTvdbID, &row.ShowTitle, &row.EpisodeTvdbID, &row.Season, &row.Episode, &row.Resolution, &row.FilePath); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("failed to scan episode media: %w", err)
+		}
+		out = append(out, row)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	mrows, err := r.db.QueryContext(ctx, `
+		SELECT m.tvdb_id, m.title, COALESCE(m.year, 0), COALESCE(mm.video_resolution, ''), COALESCE(mm.file_path, '')
+		FROM Movies m
+		JOIN MovieMedia mm ON mm.parentid = m.id
+		WHERE m.tvdb_id IS NOT NULL AND m.tvdb_id <> ''`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query movie media: %w", err)
+	}
+	defer mrows.Close()
+	for mrows.Next() {
+		row := models.UpgradeMediaRow{Kind: "movie"}
+		if err := mrows.Scan(&row.MovieTvdbID, &row.MovieTitle, &row.Year, &row.Resolution, &row.FilePath); err != nil {
+			return nil, fmt.Errorf("failed to scan movie media: %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, mrows.Err()
+}
+
+const upgradeAttemptColumns = `item_key, kind, title, COALESCE(season, 0), COALESCE(episode, 0), COALESCE(from_quality, ''),
+	COALESCE(to_quality, ''), status, COALESCE(reason, ''), attempts, created_at, updated_at`
+
+func scanUpgradeAttempt(rs interface{ Scan(...any) error }) (models.UpgradeAttempt, error) {
+	var a models.UpgradeAttempt
+	err := rs.Scan(&a.ItemKey, &a.Kind, &a.Title, &a.Season, &a.Episode, &a.FromQuality, &a.ToQuality, &a.Status, &a.Reason,
+		&a.Attempts, &a.CreatedAt, &a.UpdatedAt)
+	return a, err
+}
+
+// GetUpgradeAttempts returns every attempt keyed by item.
+func (r *Repo) GetUpgradeAttempts(ctx context.Context) (map[string]models.UpgradeAttempt, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT `+upgradeAttemptColumns+` FROM UpgradeAttempts`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query upgrade attempts: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]models.UpgradeAttempt{}
+	for rows.Next() {
+		a, err := scanUpgradeAttempt(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[a.ItemKey] = a
+	}
+	return out, rows.Err()
+}
+
+// ListUpgradeAttempts returns the most recently touched attempts.
+func (r *Repo) ListUpgradeAttempts(ctx context.Context, limit int) ([]models.UpgradeAttempt, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT `+upgradeAttemptColumns+` FROM UpgradeAttempts ORDER BY updated_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list upgrade attempts: %w", err)
+	}
+	defer rows.Close()
+	out := []models.UpgradeAttempt{}
+	for rows.Next() {
+		a, err := scanUpgradeAttempt(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// RecordUpgradeAttempt starts (or restarts) an attempt for an item, bumping
+// its attempt count.
+func (r *Repo) RecordUpgradeAttempt(ctx context.Context, a models.UpgradeAttempt) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO UpgradeAttempts (item_key, kind, title, season, episode, from_quality, to_quality, status, reason, attempts)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), 1)
+		ON CONFLICT (item_key) DO UPDATE SET
+		    kind = EXCLUDED.kind, title = EXCLUDED.title, season = EXCLUDED.season, episode = EXCLUDED.episode,
+		    from_quality = EXCLUDED.from_quality, to_quality = EXCLUDED.to_quality, status = EXCLUDED.status,
+		    reason = EXCLUDED.reason, attempts = UpgradeAttempts.attempts + 1, updated_at = now()`,
+		a.ItemKey, a.Kind, a.Title, a.Season, a.Episode, a.FromQuality, a.ToQuality, a.Status, a.Reason)
+	if err != nil {
+		return fmt.Errorf("failed to record upgrade attempt: %w", err)
+	}
+	return nil
+}
+
+// SetUpgradeAttemptStatus moves an attempt to a new status.
+func (r *Repo) SetUpgradeAttemptStatus(ctx context.Context, itemKey, status, reason string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE UpgradeAttempts SET status = $2, reason = NULLIF($3, ''), updated_at = now() WHERE item_key = $1`,
+		itemKey, status, reason)
+	if err != nil {
+		return fmt.Errorf("failed to update upgrade attempt: %w", err)
+	}
+	return nil
+}

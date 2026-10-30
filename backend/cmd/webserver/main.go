@@ -255,6 +255,11 @@ func main() {
 		settingsHandler.Relay(c, http.MethodPost, "/indexers/"+c.Param("id")+"/test")
 	})
 
+	// Quality upgrades, relayed to the torrenter
+	r.GET("/upgrades/candidates", func(c *gin.Context) { settingsHandler.Relay(c, http.MethodGet, "/upgrades/candidates") })
+	r.GET("/upgrades/attempts", func(c *gin.Context) { settingsHandler.Relay(c, http.MethodGet, "/upgrades/attempts") })
+	r.POST("/upgrades/run", func(c *gin.Context) { settingsHandler.Relay(c, http.MethodPost, "/upgrades/run") })
+
 	// Outbound notification targets
 	r.GET("/notification-targets", targetHandler.List)
 	r.POST("/notification-targets", targetHandler.Create)

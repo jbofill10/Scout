@@ -137,6 +137,9 @@ func main() {
 		SubtitlesEnabled:     cfg.Subtitles.APIKey != "",
 		AutoRotateRelay:      true,
 		RelayAgentConfigured: cfg.Relay.AgentURL != "",
+		UpgradesEnabled:      cfg.Upgrades.Enabled,
+		UpgradeCutoff:        cfg.Upgrades.Cutoff,
+		UpgradeBatch:         cfg.Upgrades.Batch,
 	}, logger)
 	settingsResolver.FreeSpace = service.DownloadsFreeSpace
 	qbitt.SetSettings(settingsResolver)
@@ -164,6 +167,10 @@ func main() {
 	// Initialize interactors
 	downloadInteractor := interactors.NewDownloadInteractor(qbitt, mp, repo, plexSync, logger)
 	mediaInteractor := interactors.NewMediaInteractor(repo)
+	// Upgrade pass: replaces library copies below the cutoff when enabled.
+	upgradeInteractor := interactors.NewUpgradeInteractor(qbitt, repo, settingsResolver, downloadInteractor,
+		cfg.Upgrades.CheckInterval, logger)
+	upgradeInteractor.Start(context.Background())
 	statusInteractor := interactors.NewStatusInteractor(repo, logger)
 	libraryInteractor := interactors.NewLibraryInteractor(repo, logger)
 
@@ -172,6 +179,7 @@ func main() {
 	controlHandler := handlers.NewControlHandler(downloadInteractor, logger)
 	settingsHandler := handlers.NewSettingsHandler(settingsResolver, repo, logger)
 	indexerHandler := handlers.NewIndexerHandler(healthMonitor, logger)
+	upgradeHandler := handlers.NewUpgradeHandler(upgradeInteractor, logger)
 	mediaHandler := handlers.NewMediaHandler(mediaInteractor, logger)
 	statusHandler := handlers.NewStatusHandler(statusInteractor, logger)
 	libraryHandler := handlers.NewLibraryHandler(libraryInteractor, logger)
@@ -216,6 +224,11 @@ func main() {
 	r.GET("/indexers/health", indexerHandler.Health)
 	r.POST("/indexers/rotate", indexerHandler.Rotate)
 	r.POST("/indexers/:id/test", indexerHandler.Test)
+
+	// Quality upgrades
+	r.GET("/upgrades/candidates", upgradeHandler.Candidates)
+	r.GET("/upgrades/attempts", upgradeHandler.Attempts)
+	r.POST("/upgrades/run", upgradeHandler.Run)
 	r.GET("/media/:hash", mediaHandler.MediaExists)
 	r.POST("/media/exists", mediaHandler.MediaExistsBatch)
 	r.POST("/status/batch", statusHandler.BatchStatus)

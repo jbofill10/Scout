@@ -13,10 +13,13 @@ const (
 	KeyPlexSyncInterval  = "plex_sync_interval"
 	KeyMinFreeSpaceGB    = "min_free_space_gb"
 	KeyAutoRotateRelay   = "auto_rotate_relay"
+	KeyUpgradesEnabled   = "upgrades_enabled"
+	KeyUpgradeCutoff     = "upgrade_cutoff"
+	KeyUpgradeBatch      = "upgrade_batch"
 )
 
 // Keys lists every settable key, in display order.
-var Keys = []string{KeyMinQuality, KeyMinFreeSpaceGB, KeySubtitleLanguages, KeySubtitlePreferSDH, KeyPlexSyncDelay, KeyPlexSyncInterval, KeyAutoRotateRelay}
+var Keys = []string{KeyMinQuality, KeyMinFreeSpaceGB, KeySubtitleLanguages, KeySubtitlePreferSDH, KeyPlexSyncDelay, KeyPlexSyncInterval, KeyAutoRotateRelay, KeyUpgradesEnabled, KeyUpgradeCutoff, KeyUpgradeBatch}
 
 // Values are the settings as the API presents them. Durations are Go
 // duration strings ("2m", "30m"); "0s" disables the periodic sync.
@@ -32,6 +35,11 @@ type Values struct {
 	// AutoRotateRelay lets the torrenter switch the Mullvad relay on its own
 	// when an indexer blocks the exit IP (needs the relay agent).
 	AutoRotateRelay bool `json:"auto_rotate_relay"`
+	// Upgrades: replace library copies below UpgradeCutoff, UpgradeBatch
+	// items per pass, when UpgradesEnabled.
+	UpgradesEnabled bool   `json:"upgrades_enabled"`
+	UpgradeCutoff   string `json:"upgrade_cutoff"`
+	UpgradeBatch    int    `json:"upgrade_batch"`
 }
 
 // Update is the body of PUT /settings: any subset of keys to override, plus
@@ -45,6 +53,9 @@ type Update struct {
 	PlexSyncDelay     *string   `json:"plex_sync_delay,omitempty"`
 	PlexSyncInterval  *string   `json:"plex_sync_interval,omitempty"`
 	AutoRotateRelay   *bool     `json:"auto_rotate_relay,omitempty"`
+	UpgradesEnabled   *bool     `json:"upgrades_enabled,omitempty"`
+	UpgradeCutoff     *string   `json:"upgrade_cutoff,omitempty"`
+	UpgradeBatch      *int      `json:"upgrade_batch,omitempty"`
 	Reset             []string  `json:"reset,omitempty"`
 }
 

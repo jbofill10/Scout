@@ -23,6 +23,21 @@ func Load() (models.TorrenterConf, error) {
 		return cfg, fmt.Errorf("invalid MIN_FREE_SPACE_GB value: %s", minFree)
 	}
 
+	// Upgrade pass defaults (the Settings page can override the first three)
+	cfg.Upgrades.Enabled = getEnv("UPGRADES_ENABLED", "false") == "true"
+	cfg.Upgrades.Cutoff = getEnv("UPGRADE_CUTOFF", "1080p")
+	upgradeBatch := getEnv("UPGRADE_BATCH", "3")
+	if val, err := strconv.Atoi(upgradeBatch); err == nil && val > 0 {
+		cfg.Upgrades.Batch = val
+	} else {
+		return cfg, fmt.Errorf("invalid UPGRADE_BATCH value: %s", upgradeBatch)
+	}
+	upgradeInterval, err := parseNonNegativeDuration("UPGRADE_CHECK_INTERVAL", "6h")
+	if err != nil {
+		return cfg, err
+	}
+	cfg.Upgrades.CheckInterval = upgradeInterval
+
 	// Relay agent (optional)
 	cfg.Relay.AgentURL = getEnv("RELAY_AGENT_URL", "")
 	cfg.Relay.AgentToken = getEnv("RELAY_AGENT_TOKEN", "")

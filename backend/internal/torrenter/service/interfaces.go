@@ -74,6 +74,13 @@ type Repository interface {
 	GetAllMovies(ctx context.Context) ([]library.LibraryMovie, error)
 	GetShowEpisodesWithStatus(ctx context.Context, tvdbId string) ([]library.EpisodeWithStatus, error)
 	GetMissingEpisodes(ctx context.Context) ([]library.MissingShow, error)
+
+	// Upgrade pass
+	GetUpgradeMedia(ctx context.Context) ([]models.UpgradeMediaRow, error)
+	GetUpgradeAttempts(ctx context.Context) (map[string]models.UpgradeAttempt, error)
+	ListUpgradeAttempts(ctx context.Context, limit int) ([]models.UpgradeAttempt, error)
+	RecordUpgradeAttempt(ctx context.Context, a models.UpgradeAttempt) error
+	SetUpgradeAttemptStatus(ctx context.Context, itemKey, status, reason string) error
 	UpsertTvdbEpisodes(ctx context.Context, seriesTvdbId string, episodes []library.TvdbEpisode) error
 	GetTvdbMetadataStatus(ctx context.Context, tvdbId string) (tvdbCount int, plexCount int, err error)
 }
@@ -88,6 +95,8 @@ type FileSystem interface {
 	WriteFile(path string, data []byte) error
 	// Exists reports whether path exists (file, directory or link).
 	Exists(path string) bool
+	// Remove deletes one file; a missing file is not an error.
+	Remove(path string) error
 }
 
 // SubtitleFetcher finds and writes subtitles for a video that just landed in

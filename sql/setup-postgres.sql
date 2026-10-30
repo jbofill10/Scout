@@ -288,3 +288,19 @@ CREATE TABLE IF NOT EXISTS NotificationTargets (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE Notifications ADD COLUMN IF NOT EXISTS notified_status TEXT;
+
+-- Upgrade pass bookkeeping. See backend/pkg/dbmigrate/migrations/012.
+CREATE TABLE IF NOT EXISTS UpgradeAttempts (
+    item_key TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    season INTEGER,
+    episode INTEGER,
+    from_quality TEXT,
+    to_quality TEXT,
+    status TEXT NOT NULL,
+    reason TEXT,
+    attempts INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

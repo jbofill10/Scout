@@ -28,6 +28,10 @@ type Defaults struct {
 	// AutoRotateRelay default; RelayAgentConfigured is reported to the UI.
 	AutoRotateRelay      bool
 	RelayAgentConfigured bool
+	// Upgrade pass defaults.
+	UpgradesEnabled bool
+	UpgradeCutoff   string
+	UpgradeBatch    int
 }
 
 // qualityOptions are the accepted quality floor labels, lowest first.
@@ -65,6 +69,12 @@ type Resolver struct {
 func NewResolver(store *Store, defaults Defaults, logger *slog.Logger) *Resolver {
 	if defaults.MinQuality == "" {
 		defaults.MinQuality = "1080p"
+	}
+	if defaults.UpgradeCutoff == "" {
+		defaults.UpgradeCutoff = "1080p"
+	}
+	if defaults.UpgradeBatch <= 0 {
+		defaults.UpgradeBatch = 3
 	}
 	return &Resolver{store: store, defaults: defaults, logger: logger, now: time.Now}
 }
@@ -108,6 +118,22 @@ func (r *Resolver) Apply(ctx context.Context, upd api.Update) (api.View, error) 
 	}
 	if upd.AutoRotateRelay != nil {
 		writes[api.KeyAutoRotateRelay] = *upd.AutoRotateRelay
+	}
+	if upd.UpgradesEnabled != nil {
+		writes[api.KeyUpgradesEnabled] = *upd.UpgradesEnabled
+	}
+	if upd.UpgradeCutoff != nil {
+		label, err := normalizeQuality(*upd.UpgradeCutoff)
+		if err != nil {
+			return api.View{}, &ValidationError{Field: api.KeyUpgradeCutoff, Msg: err.(*ValidationError).Msg}
+		}
+		writes[api.KeyUpgradeCutoff] = label
+	}
+	if upd.UpgradeBatch != nil {
+		if *upd.UpgradeBatch < 1 || *upd.UpgradeBatch > 50 {
+			return api.View{}, &ValidationError{Field: api.KeyUpgradeBatch, Msg: "must be between 1 and 50"}
+		}
+		writes[api.KeyUpgradeBatch] = *upd.UpgradeBatch
 	}
 	if upd.PlexSyncDelay != nil {
 		d, err := parseDuration(api.KeyPlexSyncDelay, *upd.PlexSyncDelay, 0, 24*time.Hour)
@@ -212,6 +238,39 @@ func (r *Resolver) AutoRotateRelay() bool {
 	return r.defaults.AutoRotateRelay
 }
 
+// UpgradesEnabled is whether the upgrade pass runs.
+func (r *Resolver) UpgradesEnabled() bool {
+	if v, ok := r.override(api.KeyUpgradesEnabled); ok {
+		var b bool
+		if json.Unmarshal(v, &b) == nil {
+			return b
+		}
+	}
+	return r.defaults.UpgradesEnabled
+}
+
+// UpgradeCutoff is the quality label upgrades stop at.
+func (r *Resolver) UpgradeCutoff() string {
+	if v, ok := r.override(api.KeyUpgradeCutoff); ok {
+		var s string
+		if json.Unmarshal(v, &s) == nil && s != "" {
+			return s
+		}
+	}
+	return r.defaults.UpgradeCutoff
+}
+
+// UpgradeBatch is how many items one pass searches for.
+func (r *Resolver) UpgradeBatch() int {
+	if v, ok := r.override(api.KeyUpgradeBatch); ok {
+		var n int
+		if json.Unmarshal(v, &n) == nil && n > 0 {
+			return n
+		}
+	}
+	return r.defaults.UpgradeBatch
+}
+
 // PlexSyncDelay is the effective quiet period before a post-download sync.
 func (r *Resolver) PlexSyncDelay() time.Duration {
 	return r.duration(api.KeyPlexSyncDelay, r.defaults.PlexSyncDelay)
@@ -292,6 +351,9 @@ func (r *Resolver) view() api.View {
 			PlexSyncDelay:     r.PlexSyncDelay().String(),
 			PlexSyncInterval:  r.PlexSyncInterval().String(),
 			AutoRotateRelay:   r.AutoRotateRelay(),
+			UpgradesEnabled:   r.UpgradesEnabled(),
+			UpgradeCutoff:     r.UpgradeCutoff(),
+			UpgradeBatch:      r.UpgradeBatch(),
 		},
 		Defaults: api.Values{
 			MinQuality:        r.defaults.MinQuality,
@@ -301,6 +363,9 @@ func (r *Resolver) view() api.View {
 			PlexSyncDelay:     r.defaults.PlexSyncDelay.String(),
 			PlexSyncInterval:  r.defaults.PlexSyncInterval.String(),
 			AutoRotateRelay:   r.defaults.AutoRotateRelay,
+			UpgradesEnabled:   r.defaults.UpgradesEnabled,
+			UpgradeCutoff:     r.defaults.UpgradeCutoff,
+			UpgradeBatch:      r.defaults.UpgradeBatch,
 		},
 		Overridden: overridden,
 		Options: api.Options{
