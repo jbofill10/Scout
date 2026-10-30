@@ -16,6 +16,12 @@ func Load() (models.TorrenterConf, error) {
 
 	// Resolution floor default; the Settings page can override it at runtime.
 	cfg.Downloads.MinQuality = getEnv("MIN_QUALITY", "1080p")
+	minFree := getEnv("MIN_FREE_SPACE_GB", "10")
+	if val, err := strconv.Atoi(minFree); err == nil && val >= 0 {
+		cfg.Downloads.MinFreeSpaceGB = val
+	} else {
+		return cfg, fmt.Errorf("invalid MIN_FREE_SPACE_GB value: %s", minFree)
+	}
 
 	// Load Prowlarr config
 	cfg.Prowlarr.Host = getEnv("PROWLARR_HOST", "")

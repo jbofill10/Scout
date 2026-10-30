@@ -127,12 +127,14 @@ func main() {
 	// overrides them, and the services read the effective value as they go.
 	settingsResolver := torrsettings.NewResolver(torrsettings.NewStore(repo.DB()), torrsettings.Defaults{
 		MinQuality:        cfg.Downloads.MinQuality,
+		MinFreeSpaceGB:    cfg.Downloads.MinFreeSpaceGB,
 		SubtitleLanguages: cfg.Subtitles.Languages,
 		SubtitlePreferSDH: cfg.Subtitles.PreferSDH,
 		PlexSyncDelay:     cfg.Plex.SyncDelay,
 		PlexSyncInterval:  cfg.Plex.SyncInterval,
 		SubtitlesEnabled:  cfg.Subtitles.APIKey != "",
 	}, logger)
+	settingsResolver.FreeSpace = service.DownloadsFreeSpace
 	qbitt.SetSettings(settingsResolver)
 	if subSvc, ok := subs.(*service.SubtitleSvc); ok && subSvc != nil {
 		subSvc.SetSettings(settingsResolver)

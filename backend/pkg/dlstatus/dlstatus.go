@@ -19,15 +19,16 @@ const (
 type FailureCode string
 
 const (
-	CodeIndexerUnreachable   FailureCode = "indexer_unreachable"   // transient
-	CodeNoTorrentFound       FailureCode = "no_torrent_found"      // transient
-	CodeTorrentClientError   FailureCode = "torrent_client_error"  // transient
-	CodeMonitorLost          FailureCode = "monitor_lost"          // transient
-	CodeTorrenterUnreachable FailureCode = "torrenter_unreachable" // transient (set by webserver client)
-	CodeProcessingError      FailureCode = "processing_error"      // permanent
-	CodeInvalidMedia         FailureCode = "invalid_media"         // permanent
-	CodeMaxRetries           FailureCode = "max_retries_exceeded"  // permanent
-	CodeCancelled            FailureCode = "cancelled"             // permanent: the user stopped it
+	CodeIndexerUnreachable    FailureCode = "indexer_unreachable"     // transient
+	CodeNoTorrentFound        FailureCode = "no_torrent_found"        // transient
+	CodeTorrentClientError    FailureCode = "torrent_client_error"    // transient
+	CodeMonitorLost           FailureCode = "monitor_lost"            // transient
+	CodeTorrenterUnreachable  FailureCode = "torrenter_unreachable"   // transient (set by webserver client)
+	CodeInsufficientDiskSpace FailureCode = "insufficient_disk_space" // transient: space may be freed
+	CodeProcessingError       FailureCode = "processing_error"        // permanent
+	CodeInvalidMedia          FailureCode = "invalid_media"           // permanent
+	CodeMaxRetries            FailureCode = "max_retries_exceeded"    // permanent
+	CodeCancelled             FailureCode = "cancelled"               // permanent: the user stopped it
 )
 
 // Outcome values describe the result of a per-episode (or per-movie) download attempt.
@@ -45,7 +46,8 @@ func (c FailureCode) Category() FailureCategory {
 		CodeNoTorrentFound,
 		CodeTorrentClientError,
 		CodeMonitorLost,
-		CodeTorrenterUnreachable:
+		CodeTorrenterUnreachable,
+		CodeInsufficientDiskSpace:
 		return CategoryTransient
 	case CodeProcessingError,
 		CodeInvalidMedia,
@@ -70,6 +72,8 @@ func (c FailureCode) HumanReason() string {
 		return "Lost track of the download — will retry"
 	case CodeTorrenterUnreachable:
 		return "Download service unreachable — will retry"
+	case CodeInsufficientDiskSpace:
+		return "Not enough free disk space — will retry"
 	case CodeProcessingError:
 		return "Failed to process the downloaded files"
 	case CodeInvalidMedia:

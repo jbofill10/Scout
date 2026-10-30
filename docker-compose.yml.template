@@ -103,6 +103,9 @@ services:
       context: .
       dockerfile: webserver/Dockerfile
     container_name: scout-webserver
+    # So a webhook target can reach services on the host (Home Assistant, ntfy)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       BIND_ADDRESS: 0.0.0.0:22920
       TVDB_PROXY_HOST: tvdb-proxy:22000

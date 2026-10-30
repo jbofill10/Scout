@@ -17,6 +17,7 @@ import (
 // Defaults are the environment-provided values the overrides sit on top of.
 type Defaults struct {
 	MinQuality        string
+	MinFreeSpaceGB    int
 	SubtitleLanguages []string
 	SubtitlePreferSDH bool
 	PlexSyncDelay     time.Duration
@@ -49,6 +50,9 @@ type Resolver struct {
 	defaults Defaults
 	logger   *slog.Logger
 	now      func() time.Time
+	// FreeSpace reports the downloads volume's free bytes for the view; nil
+	// or an error shows as unknown.
+	FreeSpace func() (uint64, error)
 
 	mu        sync.Mutex
 	loadedAt  time.Time
@@ -82,6 +86,12 @@ func (r *Resolver) Apply(ctx context.Context, upd api.Update) (api.View, error) 
 			return api.View{}, err
 		}
 		writes[api.KeyMinQuality] = label
+	}
+	if upd.MinFreeSpaceGB != nil {
+		if *upd.MinFreeSpaceGB < 0 || *upd.MinFreeSpaceGB > 100000 {
+			return api.View{}, &ValidationError{Field: api.KeyMinFreeSpaceGB, Msg: "must be between 0 and 100000"}
+		}
+		writes[api.KeyMinFreeSpaceGB] = *upd.MinFreeSpaceGB
 	}
 	if upd.SubtitleLanguages != nil {
 		langs, err := normalizeLanguages(*upd.SubtitleLanguages)
@@ -145,6 +155,22 @@ func (r *Resolver) MinQuality() string {
 		}
 	}
 	return r.defaults.MinQuality
+}
+
+// MinFreeSpaceGB is the effective free-space reserve in gigabytes.
+func (r *Resolver) MinFreeSpaceGB() int {
+	if v, ok := r.override(api.KeyMinFreeSpaceGB); ok {
+		var n int
+		if json.Unmarshal(v, &n) == nil && n >= 0 {
+			return n
+		}
+	}
+	return r.defaults.MinFreeSpaceGB
+}
+
+// MinFreeSpaceBytes is MinFreeSpaceGB in bytes (GiB).
+func (r *Resolver) MinFreeSpaceBytes() uint64 {
+	return uint64(r.MinFreeSpaceGB()) << 30
 }
 
 // SubtitleLanguages is the effective language list.
@@ -233,9 +259,17 @@ func (r *Resolver) view() api.View {
 	}
 	r.mu.Unlock()
 
+	freeSpace := int64(-1)
+	if r.FreeSpace != nil {
+		if free, err := r.FreeSpace(); err == nil {
+			freeSpace = int64(free)
+		}
+	}
+
 	return api.View{
 		Values: api.Values{
 			MinQuality:        r.MinQuality(),
+			MinFreeSpaceGB:    r.MinFreeSpaceGB(),
 			SubtitleLanguages: nonNil(r.SubtitleLanguages()),
 			SubtitlePreferSDH: r.SubtitlePreferSDH(),
 			PlexSyncDelay:     r.PlexSyncDelay().String(),
@@ -243,6 +277,7 @@ func (r *Resolver) view() api.View {
 		},
 		Defaults: api.Values{
 			MinQuality:        r.defaults.MinQuality,
+			MinFreeSpaceGB:    r.defaults.MinFreeSpaceGB,
 			SubtitleLanguages: nonNil(r.defaults.SubtitleLanguages),
 			SubtitlePreferSDH: r.defaults.SubtitlePreferSDH,
 			PlexSyncDelay:     r.defaults.PlexSyncDelay.String(),
@@ -252,6 +287,7 @@ func (r *Resolver) view() api.View {
 		Options: api.Options{
 			MinQuality:       append([]string{}, qualityOptions...),
 			SubtitlesEnabled: r.defaults.SubtitlesEnabled,
+			FreeSpaceBytes:   freeSpace,
 		},
 	}
 }

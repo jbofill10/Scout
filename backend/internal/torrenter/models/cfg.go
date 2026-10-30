@@ -37,6 +37,8 @@ type RefreshCfg struct {
 type DownloadsCfg struct {
 	// MinQuality is the resolution floor label (480p, 720p, 1080p, 2160p).
 	MinQuality string
+	// MinFreeSpaceGB is kept free on the downloads volume.
+	MinFreeSpaceGB int
 }
 
 type TorrenterConf struct {

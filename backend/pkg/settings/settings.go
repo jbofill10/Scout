@@ -11,15 +11,19 @@ const (
 	KeySubtitlePreferSDH = "subtitle_prefer_sdh"
 	KeyPlexSyncDelay     = "plex_sync_delay"
 	KeyPlexSyncInterval  = "plex_sync_interval"
+	KeyMinFreeSpaceGB    = "min_free_space_gb"
 )
 
 // Keys lists every settable key, in display order.
-var Keys = []string{KeyMinQuality, KeySubtitleLanguages, KeySubtitlePreferSDH, KeyPlexSyncDelay, KeyPlexSyncInterval}
+var Keys = []string{KeyMinQuality, KeyMinFreeSpaceGB, KeySubtitleLanguages, KeySubtitlePreferSDH, KeyPlexSyncDelay, KeyPlexSyncInterval}
 
 // Values are the settings as the API presents them. Durations are Go
 // duration strings ("2m", "30m"); "0s" disables the periodic sync.
 type Values struct {
-	MinQuality        string   `json:"min_quality"`
+	MinQuality string `json:"min_quality"`
+	// MinFreeSpaceGB is kept free on the downloads volume; a release that
+	// would eat into it is not started.
+	MinFreeSpaceGB    int      `json:"min_free_space_gb"`
 	SubtitleLanguages []string `json:"subtitle_languages"`
 	SubtitlePreferSDH bool     `json:"subtitle_prefer_sdh"`
 	PlexSyncDelay     string   `json:"plex_sync_delay"`
@@ -31,6 +35,7 @@ type Values struct {
 // alone.
 type Update struct {
 	MinQuality        *string   `json:"min_quality,omitempty"`
+	MinFreeSpaceGB    *int      `json:"min_free_space_gb,omitempty"`
 	SubtitleLanguages *[]string `json:"subtitle_languages,omitempty"`
 	SubtitlePreferSDH *bool     `json:"subtitle_prefer_sdh,omitempty"`
 	PlexSyncDelay     *string   `json:"plex_sync_delay,omitempty"`
@@ -45,6 +50,9 @@ type Options struct {
 	// SubtitlesEnabled is false when no OpenSubtitles API key is configured;
 	// the subtitle settings are then shown but have no effect.
 	SubtitlesEnabled bool `json:"subtitles_enabled"`
+	// FreeSpaceBytes is the downloads volume's free space right now; -1 when
+	// it could not be read.
+	FreeSpaceBytes int64 `json:"free_space_bytes"`
 }
 
 // View is the response of GET /settings and PUT /settings.

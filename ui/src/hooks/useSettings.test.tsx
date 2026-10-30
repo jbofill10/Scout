@@ -7,10 +7,10 @@ import { SETTINGS_QUERY_KEY, useAddUploader, useSettings, useUpdateSettings, typ
 vi.mock("../lib/logger", () => ({ logError: vi.fn() }));
 
 const view = (over: Partial<SettingsView["values"]> = {}): SettingsView => ({
-  values: { min_quality: "1080p", subtitle_languages: ["en"], subtitle_prefer_sdh: false, plex_sync_delay: "2m0s", plex_sync_interval: "30m0s", ...over },
-  defaults: { min_quality: "1080p", subtitle_languages: ["en"], subtitle_prefer_sdh: false, plex_sync_delay: "2m0s", plex_sync_interval: "30m0s" },
+  values: { min_quality: "1080p", min_free_space_gb: 10, subtitle_languages: ["en"], subtitle_prefer_sdh: false, plex_sync_delay: "2m0s", plex_sync_interval: "30m0s", ...over },
+  defaults: { min_quality: "1080p", min_free_space_gb: 10, subtitle_languages: ["en"], subtitle_prefer_sdh: false, plex_sync_delay: "2m0s", plex_sync_interval: "30m0s" },
   overridden: {},
-  options: { min_quality: ["480p", "720p", "1080p", "2160p"], subtitles_enabled: true },
+  options: { min_quality: ["480p", "720p", "1080p", "2160p"], subtitles_enabled: true, free_space_bytes: 5 * 1024 ** 4 },
 });
 
 const jsonResponse = (body: unknown, init?: ResponseInit) => new Response(JSON.stringify(body), { status: 200, ...init });

@@ -5,6 +5,8 @@ import { logError } from "../lib/logger";
 /** The settings as the API presents them; durations are Go strings ("2m"). */
 export interface SettingsValues {
   min_quality: string;
+  /** Gigabytes kept free on the downloads volume. */
+  min_free_space_gb: number;
   subtitle_languages: string[];
   subtitle_prefer_sdh: boolean;
   plex_sync_delay: string;
@@ -20,6 +22,8 @@ export interface SettingsView {
   options: {
     min_quality: string[];
     subtitles_enabled: boolean;
+    /** Free bytes on the downloads volume right now; -1 when unknown. */
+    free_space_bytes: number;
   };
 }
 

@@ -43,6 +43,7 @@ import {
   type TargetKind,
 } from "../hooks/useNotificationTargets";
 import { formatRelativeTime } from "../utils/downloadStage";
+import { formatBytes } from "../utils/formatBytes";
 
 /** A titled card holding one group of settings. */
 const SettingCard: React.FC<{ title: string; description: string; children: React.ReactNode }> = ({
@@ -100,10 +101,23 @@ const DefaultHint: React.FC<{ defaultLabel: string; overridden: boolean; onReset
 };
 
 const DownloadsSection: React.FC<{ view: SettingsView }> = ({ view }) => {
+  const theme = useTheme();
   const update = useUpdateSettings();
   const [quality, setQuality] = useState(view.values.min_quality);
+  const [reserve, setReserve] = useState(String(view.values.min_free_space_gb));
   useEffect(() => setQuality(view.values.min_quality), [view.values.min_quality]);
-  const dirty = quality !== view.values.min_quality;
+  useEffect(() => setReserve(String(view.values.min_free_space_gb)), [view.values.min_free_space_gb]);
+  const reserveNum = Number(reserve);
+  const reserveError = reserve.trim() === "" || !Number.isInteger(reserveNum) || reserveNum < 0 || reserveNum > 100000 ? "Whole number of gigabytes, 0 or more" : null;
+  const dirty = quality !== view.values.min_quality || (!reserveError && reserveNum !== view.values.min_free_space_gb);
+  const freeNow = view.options.free_space_bytes >= 0 ? formatBytes(view.options.free_space_bytes) : null;
+
+  const save = () => {
+    const body: Parameters<typeof update.mutate>[0] = {};
+    if (quality !== view.values.min_quality) body.min_quality = quality;
+    if (!reserveError && reserveNum !== view.values.min_free_space_gb) body.min_free_space_gb = reserveNum;
+    update.mutate(body);
+  };
 
   return (
     <SettingCard
@@ -131,8 +145,33 @@ const DownloadsSection: React.FC<{ view: SettingsView }> = ({ view }) => {
         onReset={() => update.mutate({ reset: ["min_quality"] })}
         busy={update.isPending}
       />
+
+      <Box sx={{ mt: 2.5 }}>
+        <TextField
+          size="small"
+          label="Keep free on the downloads volume (GB)"
+          value={reserve}
+          onChange={(e) => setReserve(e.target.value)}
+          error={!!reserveError}
+          helperText={reserveError ?? (freeNow ? `Free right now: ${freeNow}. A release that would eat into the reserve is not started.` : "A release that would eat into the reserve is not started.")}
+          slotProps={{ htmlInput: { inputMode: "numeric", pattern: "[0-9]*" } }}
+          sx={{ minWidth: 300 }}
+        />
+        <DefaultHint
+          defaultLabel={`${view.defaults.min_free_space_gb} GB`}
+          overridden={!!view.overridden.min_free_space_gb}
+          onReset={() => update.mutate({ reset: ["min_free_space_gb"] })}
+          busy={update.isPending}
+        />
+        {!freeNow && (
+          <Typography variant="caption" sx={{ color: theme.palette.text.disabled }}>
+            Free space could not be read.
+          </Typography>
+        )}
+      </Box>
+
       <Box sx={{ mt: 2 }}>
-        <Button variant="contained" size="small" disabled={!dirty || update.isPending} onClick={() => update.mutate({ min_quality: quality })}>
+        <Button variant="contained" size="small" disabled={!dirty || !!reserveError || update.isPending} onClick={save}>
           Save
         </Button>
       </Box>
