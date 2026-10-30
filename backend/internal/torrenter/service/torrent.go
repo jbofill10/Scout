@@ -52,6 +52,17 @@ type QualitySettings interface {
 	MinQuality() string
 	// MinFreeSpaceBytes is kept free on the downloads volume.
 	MinFreeSpaceBytes() uint64
+	// SeasonPacks and SeasonPackMinEpisodes gate the pack search.
+	SeasonPacks() bool
+	SeasonPackMinEpisodes() int
+}
+
+// packSettings returns whether packs are on and the episode threshold.
+func (q *QbittHandler) packSettings() (bool, int) {
+	if q.settings == nil {
+		return false, 0
+	}
+	return q.settings.SeasonPacks(), q.settings.SeasonPackMinEpisodes()
 }
 
 // SetSettings makes the picker read its quality floor from the runtime
@@ -207,11 +218,27 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 				"total", len(req.Metadata.Episodes), "to_download", len(episodesToDownload),
 				"show_aliases", req.Aliases)...)
 
+		// Process all episodes concurrently
+		var wg sync.WaitGroup
+
+		// Season packs (opt-in): one torrent for a season's worth of episodes,
+		// falling back to per-episode searches for whatever no pack covered.
+		if packResults, packed := q.tryPacks(ctx, req, episodesToDownload, done, &wg); len(packed) > 0 {
+			results = append(results, packResults...)
+			episodesToDownload = withoutEpisodes(episodesToDownload, packed)
+			if len(episodesToDownload) == 0 {
+				go func() {
+					wg.Wait()
+					close(done)
+					q.logger.InfoContext(ctx, "All season packs processed, channel closed")
+				}()
+				return results, nil
+			}
+		}
+
 		// Build search strategies for each episode
 		searchStrategies := q.buildSearchStrategies(ctx, req, episodesToDownload)
 
-		// Process all episodes concurrently
-		var wg sync.WaitGroup
 		ctx, searchSpan := torrentTracer.Start(ctx, "searchForEpisodes")
 		searchSpan.SetAttributes(
 			attribute.String("show_name", req.Name),
@@ -385,6 +412,11 @@ func (q *QbittHandler) initiateDownloadAndMonitor(
 
 	// Update notification: download has started successfully
 	q.updateNotificationStatus(ctx, ss.EpisodeTvdbID, "", notifications.StatusDownloading)
+	for _, id := range ss.Pack.EpisodeIDs() {
+		if id != ss.EpisodeTvdbID {
+			q.updateNotificationStatus(ctx, id, "", notifications.StatusDownloading)
+		}
+	}
 
 	// Record the torrent as in-flight before monitoring starts, so a restart in
 	// the next instant can still pick it back up. A failure here is not fatal —

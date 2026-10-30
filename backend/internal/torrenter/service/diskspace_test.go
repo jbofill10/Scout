@@ -15,8 +15,10 @@ type fakePickerSettings struct {
 	reserve uint64
 }
 
-func (f *fakePickerSettings) MinQuality() string        { return f.quality }
-func (f *fakePickerSettings) MinFreeSpaceBytes() uint64 { return f.reserve }
+func (f *fakePickerSettings) MinQuality() string         { return f.quality }
+func (f *fakePickerSettings) MinFreeSpaceBytes() uint64  { return f.reserve }
+func (f *fakePickerSettings) SeasonPacks() bool          { return false }
+func (f *fakePickerSettings) SeasonPackMinEpisodes() int { return 4 }
 
 func TestCheckDiskSpace(t *testing.T) {
 	q := &QbittHandler{logger: slog.New(slog.NewTextHandler(new(bytes.Buffer), nil))}

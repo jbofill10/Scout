@@ -2,6 +2,7 @@ package models
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
@@ -32,6 +33,9 @@ type TorrentCompleteEvent struct {
 	Hash        string
 	UUID        string
 	SpanContext trace.SpanContext
+	// PackResults is filled by the media processor for a season pack:
+	// episode tvdb id -> "linked" or the reason it was not.
+	PackResults map[string]string
 }
 
 type MediaExistsRequest struct {
@@ -116,6 +120,9 @@ type SearchStrategy struct {
 	MaxTier int
 	// Upgrade is set when this download replaces an existing library copy.
 	Upgrade *UpgradeInfo
+	// Pack is set when this torrent is a season pack covering several
+	// episodes; EpisodeTvdbID/EpisodeMeta then refer to the first of them.
+	Pack *PackInfo
 }
 
 type TorrentMatch struct {
@@ -138,4 +145,22 @@ func (tm *TorrentMatch) String() string {
 type UpgradeInfo struct {
 	FromQuality string   `json:"from_quality"`
 	OldFiles    []string `json:"old_files"`
+}
+
+// PackInfo describes the episodes a season-pack torrent is expected to hold.
+type PackInfo struct {
+	Season   int            `json:"season"`
+	Episodes []tvdb.Episode `json:"episodes"`
+}
+
+// EpisodeIDs lists the pack's episode tvdb ids as strings.
+func (p *PackInfo) EpisodeIDs() []string {
+	if p == nil {
+		return nil
+	}
+	out := make([]string, 0, len(p.Episodes))
+	for _, ep := range p.Episodes {
+		out = append(out, strconv.Itoa(ep.Id))
+	}
+	return out
 }

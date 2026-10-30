@@ -311,6 +311,56 @@ const LibrarySyncSection: React.FC<{ view: SettingsView }> = ({ view }) => {
   );
 };
 
+const SeasonPacksSection: React.FC<{ view: SettingsView }> = ({ view }) => {
+  const update = useUpdateSettings();
+  const [min, setMin] = useState(String(view.values.season_pack_min_episodes));
+  useEffect(() => setMin(String(view.values.season_pack_min_episodes)), [view.values.season_pack_min_episodes]);
+  const minNum = Number(min);
+  const minError = !Number.isInteger(minNum) || minNum < 2 || minNum > 100 ? "Whole number between 2 and 100" : null;
+  const dirty = !minError && minNum !== view.values.season_pack_min_episodes;
+
+  return (
+    <SettingCard
+      title="Season packs"
+      description="When a request covers enough episodes of one season, look for a single season pack first and fall back to episode-by-episode searches if none fits. One well-seeded pack beats ten searches against a rate-limited indexer; episodes the pack turns out not to contain are marked failed individually."
+    >
+      <FormControlLabel
+        control={<Switch checked={view.values.season_packs} disabled={update.isPending} onChange={(e) => update.mutate({ season_packs: e.target.checked })} />}
+        label="Try a season pack before searching per episode"
+      />
+      <DefaultHint
+        defaultLabel={view.defaults.season_packs ? "on" : "off"}
+        overridden={!!view.overridden.season_packs}
+        onReset={() => update.mutate({ reset: ["season_packs"] })}
+        busy={update.isPending}
+      />
+      <Box sx={{ mt: 2 }}>
+        <TextField
+          size="small"
+          label="Minimum episodes of a season"
+          value={min}
+          onChange={(e) => setMin(e.target.value)}
+          error={!!minError}
+          helperText={minError ?? "Fewer than this and the season is searched per episode"}
+          slotProps={{ htmlInput: { inputMode: "numeric", pattern: "[0-9]*" } }}
+          sx={{ width: 260 }}
+        />
+        <DefaultHint
+          defaultLabel={String(view.defaults.season_pack_min_episodes)}
+          overridden={!!view.overridden.season_pack_min_episodes}
+          onReset={() => update.mutate({ reset: ["season_pack_min_episodes"] })}
+          busy={update.isPending}
+        />
+      </Box>
+      <Box sx={{ mt: 2 }}>
+        <Button variant="contained" size="small" disabled={!dirty || update.isPending} onClick={() => update.mutate({ season_pack_min_episodes: minNum })}>
+          Save
+        </Button>
+      </Box>
+    </SettingCard>
+  );
+};
+
 const UpgradesSection: React.FC<{ view: SettingsView }> = ({ view }) => {
   const theme = useTheme();
   const update = useUpdateSettings();
@@ -742,6 +792,7 @@ const Settings: React.FC = () => {
             <UploadersSection />
             <SubtitlesSection view={data} />
             <LibrarySyncSection view={data} />
+            <SeasonPacksSection view={data} />
             <UpgradesSection view={data} />
             <IndexersSection view={data} />
             <NotificationsSection />
