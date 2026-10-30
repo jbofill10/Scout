@@ -40,6 +40,9 @@ func (h *SettingsHandler) DeleteUploader(c *gin.Context) {
 	h.relay(c, http.MethodDelete, "/settings/uploaders/"+c.Param("id"))
 }
 
+// Relay forwards any request to the torrenter path and passes the answer back.
+func (h *SettingsHandler) Relay(c *gin.Context, method, path string) { h.relay(c, method, path) }
+
 func (h *SettingsHandler) relay(c *gin.Context, method, path string) {
 	ctx := c.Request.Context()
 	var body []byte

@@ -248,6 +248,13 @@ func main() {
 	r.POST("/settings/uploaders", settingsHandler.AddUploader)
 	r.DELETE("/settings/uploaders/:id", settingsHandler.DeleteUploader)
 
+	// Indexer health and relay rotation, relayed to the torrenter
+	r.GET("/indexers/health", func(c *gin.Context) { settingsHandler.Relay(c, http.MethodGet, "/indexers/health") })
+	r.POST("/indexers/rotate", func(c *gin.Context) { settingsHandler.Relay(c, http.MethodPost, "/indexers/rotate") })
+	r.POST("/indexers/:id/test", func(c *gin.Context) {
+		settingsHandler.Relay(c, http.MethodPost, "/indexers/"+c.Param("id")+"/test")
+	})
+
 	// Outbound notification targets
 	r.GET("/notification-targets", targetHandler.List)
 	r.POST("/notification-targets", targetHandler.Create)

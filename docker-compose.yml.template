@@ -67,6 +67,10 @@ services:
       PLEX_SHOW_SECTIONS: ${PLEX_SHOW_SECTIONS:-4}
       PLEX_SYNC_DELAY: ${PLEX_SYNC_DELAY:-2m}
       PLEX_SYNC_INTERVAL: ${PLEX_SYNC_INTERVAL:-30m}
+      # Host relay agent (tools/relay-agent); leave RELAY_AGENT_URL empty to disable relay rotation
+      RELAY_AGENT_URL: ${RELAY_AGENT_URL:-}
+      RELAY_AGENT_TOKEN: ${RELAY_AGENT_TOKEN:-}
+      RELAY_ROTATE_COOLDOWN: ${RELAY_ROTATE_COOLDOWN:-30m}
       UI_ENDPOINT: ws://webserver:22920/status
       WEBSERVER_HOST: ${WEBSERVER_HOST:-http://webserver:22920}
       TVDB_REFRESH_INTERVAL: ${TVDB_REFRESH_INTERVAL:-6h}

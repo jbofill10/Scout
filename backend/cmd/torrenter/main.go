@@ -18,6 +18,8 @@ import (
 	torrsettings "github.com/jbofill10/scout/backend/internal/torrenter/settings"
 	"github.com/jbofill10/scout/backend/pkg/dbmigrate"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
+	"golift.io/starr"
+	"golift.io/starr/prowlarr"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
@@ -126,13 +128,15 @@ func main() {
 	// Runtime settings: the environment supplies defaults, the Settings page
 	// overrides them, and the services read the effective value as they go.
 	settingsResolver := torrsettings.NewResolver(torrsettings.NewStore(repo.DB()), torrsettings.Defaults{
-		MinQuality:        cfg.Downloads.MinQuality,
-		MinFreeSpaceGB:    cfg.Downloads.MinFreeSpaceGB,
-		SubtitleLanguages: cfg.Subtitles.Languages,
-		SubtitlePreferSDH: cfg.Subtitles.PreferSDH,
-		PlexSyncDelay:     cfg.Plex.SyncDelay,
-		PlexSyncInterval:  cfg.Plex.SyncInterval,
-		SubtitlesEnabled:  cfg.Subtitles.APIKey != "",
+		MinQuality:           cfg.Downloads.MinQuality,
+		MinFreeSpaceGB:       cfg.Downloads.MinFreeSpaceGB,
+		SubtitleLanguages:    cfg.Subtitles.Languages,
+		SubtitlePreferSDH:    cfg.Subtitles.PreferSDH,
+		PlexSyncDelay:        cfg.Plex.SyncDelay,
+		PlexSyncInterval:     cfg.Plex.SyncInterval,
+		SubtitlesEnabled:     cfg.Subtitles.APIKey != "",
+		AutoRotateRelay:      true,
+		RelayAgentConfigured: cfg.Relay.AgentURL != "",
 	}, logger)
 	settingsResolver.FreeSpace = service.DownloadsFreeSpace
 	qbitt.SetSettings(settingsResolver)
@@ -147,6 +151,16 @@ func main() {
 	plexSync := service.NewPlexSyncScheduler(plex, cfg.Plex.SyncDelay, cfg.Plex.SyncInterval, logger)
 	plexSync.SetSettings(settingsResolver)
 
+	// Indexer health: watches Prowlarr for disabled indexers and, with the
+	// host relay agent, rotates the Mullvad relay when the exit IP is blocked.
+	relayAgent := clients.NewRelayAgentClient(cfg.Relay.AgentURL, cfg.Relay.AgentToken)
+	healthMonitor := service.NewIndexerHealthMonitor(
+		prowlarr.New(starr.New(cfg.Prowlarr.Key, cfg.Prowlarr.Host, 60*time.Hour)).APIer,
+		relayAgent, settingsResolver, cfg.Relay.RotateCooldown, cfg.Relay.HealthInterval, logger)
+	healthMonitor.Start(context.Background())
+	logger.Info("Indexer health monitor started", "relay_agent", relayAgent.Configured(),
+		"rotate_cooldown", cfg.Relay.RotateCooldown.String(), "interval", cfg.Relay.HealthInterval.String())
+
 	// Initialize interactors
 	downloadInteractor := interactors.NewDownloadInteractor(qbitt, mp, repo, plexSync, logger)
 	mediaInteractor := interactors.NewMediaInteractor(repo)
@@ -157,6 +171,7 @@ func main() {
 	downloadHandler := handlers.NewDownloadHandler(downloadInteractor, logger)
 	controlHandler := handlers.NewControlHandler(downloadInteractor, logger)
 	settingsHandler := handlers.NewSettingsHandler(settingsResolver, repo, logger)
+	indexerHandler := handlers.NewIndexerHandler(healthMonitor, logger)
 	mediaHandler := handlers.NewMediaHandler(mediaInteractor, logger)
 	statusHandler := handlers.NewStatusHandler(statusInteractor, logger)
 	libraryHandler := handlers.NewLibraryHandler(libraryInteractor, logger)
@@ -196,6 +211,11 @@ func main() {
 	r.GET("/settings/uploaders", settingsHandler.ListUploaders)
 	r.POST("/settings/uploaders", settingsHandler.AddUploader)
 	r.DELETE("/settings/uploaders/:id", settingsHandler.DeleteUploader)
+
+	// Indexer health and relay rotation
+	r.GET("/indexers/health", indexerHandler.Health)
+	r.POST("/indexers/rotate", indexerHandler.Rotate)
+	r.POST("/indexers/:id/test", indexerHandler.Test)
 	r.GET("/media/:hash", mediaHandler.MediaExists)
 	r.POST("/media/exists", mediaHandler.MediaExistsBatch)
 	r.POST("/status/batch", statusHandler.BatchStatus)
