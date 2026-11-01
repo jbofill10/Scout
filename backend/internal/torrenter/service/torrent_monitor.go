@@ -198,6 +198,10 @@ func (q *QbittHandler) monitorTorrentCompletion(
 	// and the (paused) torrent resumed.
 	packTrimmed := match.Strategy.Pack == nil
 	packStarted := match.Strategy.Pack == nil
+	// packVerified is set once the trim has been repeated after the start: a
+	// priority change made while qBittorrent was busy has been seen not to
+	// stick, and the second pass is idempotent.
+	packVerified := match.Strategy.Pack == nil
 	for {
 		elapsed := time.Since(start)
 
@@ -345,6 +349,10 @@ func (q *QbittHandler) monitorTorrentCompletion(
 					telemetry.WithTraceContext(monitorCtx, "torrent_title", match.Torrent.Title, "torrent_hash", infoHash,
 						"size_bytes", torrent.Size)...)
 				continue
+			}
+			if packStarted && !packVerified {
+				packVerified = true
+				q.trimPackFiles(monitorCtx, infoHash, match.Strategy.Pack)
 			}
 			now := time.Now()
 			if isWaitingState(torrent.State) {

@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -108,6 +110,16 @@ func (f *fakeQbittorrent) handler() http.HandlerFunc {
 			_ = r.ParseForm()
 			f.mu.Lock()
 			f.prio = append(f.prio, r.Form.Get("id")+"="+r.Form.Get("priority"))
+			// Apply the change to the file list, as qBittorrent would.
+			prio, _ := strconv.Atoi(r.Form.Get("priority"))
+			for _, id := range strings.Split(r.Form.Get("id"), "|") {
+				idx, _ := strconv.Atoi(id)
+				for _, file := range f.files {
+					if v, ok := file["index"].(int); ok && v == idx {
+						file["priority"] = prio
+					}
+				}
+			}
 			f.mu.Unlock()
 			_, _ = w.Write([]byte("Ok."))
 		default:
