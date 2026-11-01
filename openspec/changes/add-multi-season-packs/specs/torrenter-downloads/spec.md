@@ -15,6 +15,24 @@ When `season_packs` is on and a show request has episodes to download from more 
 - **WHEN** no pack covers every wanted season
 - **THEN** seasons with enough episodes are searched for single-season packs and the rest per episode, as before
 
+### Requirement: Pack-first dispatch
+When season packs are on and a show request has at least `season_pack_min_episodes` episodes to download, the webserver SHALL first send the whole set to the torrenter as a pack-only request. The torrenter SHALL answer a pack-only request with the episodes a pack covered as downloading and every other episode with code `no_pack`, within the per-episode search deadline, and SHALL NOT search those episodes one by one itself. The webserver SHALL then send the `no_pack` episodes one at a time as before.
+
+#### Scenario: Pack covers part of the request
+- **WHEN** a request of seasons 5 to 7 is sent pack-only and a pack covers seasons 5 and 6
+- **THEN** the season 5 and 6 episodes read downloading and the season 7 episodes are sent to the torrenter one at a time
+
+#### Scenario: Packs off
+- **WHEN** `season_packs` is off
+- **THEN** the webserver sends episodes one at a time and never a pack-only request
+
+### Requirement: Multi-episode pack files
+A pack file named for a run of episodes of one season SHALL be linked once under the Plex multi-episode name "Show - S##E##-E##.ext", and every wanted episode in the run SHALL be marked linked. A pack none of whose files match a wanted episode SHALL be removed and its episodes marked lost.
+
+#### Scenario: Two segments in one file
+- **WHEN** a pack holds "Show - S07E01-E02.mkv" and both episodes were wanted
+- **THEN** the file is linked as "Show - S07E01-E02.mkv" and both episodes complete
+
 ### Requirement: Pack file selection
 The torrenter SHALL add a pack torrent paused. Once its file list is available in qBittorrent, it SHALL deselect the files that hold no wanted episode, matching files by their own season and episode numbers (or absolute number), with a bare episode number read against the season folder the file sits in; when no file can be matched the whole pack SHALL stay selected. It SHALL then apply the free-space guard to the size of the selected files and start the torrent when it fits, or remove it and report every episode of the pack short of disk space when it does not. When a pack torrent is given up on for any reason, every other episode it stood for SHALL be marked lost so the retry engine re-arms them.
 

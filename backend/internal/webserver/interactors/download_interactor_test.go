@@ -2,6 +2,7 @@ package interactors
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/notifications"
+	"github.com/jbofill10/scout/backend/pkg/settings"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -23,14 +25,17 @@ import (
 // It records what it was asked to download so tests can assert on the payload
 // handed to the torrenter.
 type fakeDispatcher struct {
-	resp     dlstatus.DownloadResponse
-	respFor  func(req tvdb.Media) dlstatus.DownloadResponse // when set, overrides resp per call
-	err      error
-	mu       sync.Mutex
-	reqs     []tvdb.Media
-	blockOn  chan struct{} // when set, Download blocks until it is closed
-	started  chan struct{} // when set, closed once Download is entered
-	startedO sync.Once
+	resp    dlstatus.DownloadResponse
+	respFor func(req tvdb.Media) dlstatus.DownloadResponse // when set, overrides resp per call
+	err     error
+	// settingsView, when set, is what Settings answers; nil means the
+	// torrenter's settings cannot be read (packs off).
+	settingsView *settings.View
+	mu           sync.Mutex
+	reqs         []tvdb.Media
+	blockOn      chan struct{} // when set, Download blocks until it is closed
+	started      chan struct{} // when set, closed once Download is entered
+	startedO     sync.Once
 }
 
 func (f *fakeDispatcher) Download(_ context.Context, req tvdb.Media) (dlstatus.DownloadResponse, error) {
@@ -48,6 +53,13 @@ func (f *fakeDispatcher) Download(_ context.Context, req tvdb.Media) (dlstatus.D
 		return f.respFor(req), f.err
 	}
 	return f.resp, f.err
+}
+
+func (f *fakeDispatcher) Settings(context.Context) (settings.View, error) {
+	if f.settingsView == nil {
+		return settings.View{}, errors.New("settings unavailable")
+	}
+	return *f.settingsView, nil
 }
 
 func (f *fakeDispatcher) callCount() int {

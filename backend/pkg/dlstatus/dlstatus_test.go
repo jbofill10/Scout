@@ -12,6 +12,7 @@ func TestFailureCode_Category(t *testing.T) {
 		{CodeTorrentClientError, CategoryTransient},
 		{CodeMonitorLost, CategoryTransient},
 		{CodeTorrenterUnreachable, CategoryTransient},
+		{CodeNoPack, CategoryTransient},
 		{CodeProcessingError, CategoryPermanent},
 		{CodeInvalidMedia, CategoryPermanent},
 		{CodeMaxRetries, CategoryPermanent},

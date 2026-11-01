@@ -292,7 +292,17 @@ func (q *QbittHandler) monitorTorrentCompletion(
 			break
 		} else {
 			if !packTrimmed && torrent.State != qbittorrent.TorrentStateMetaDl {
-				packTrimmed = q.trimPackFiles(monitorCtx, infoHash, match.Strategy.Pack)
+				var usable bool
+				packTrimmed, usable = q.trimPackFiles(monitorCtx, infoHash, match.Strategy.Pack)
+				if packTrimmed && !usable {
+					q.logger.WarnContext(monitorCtx, "Pack holds none of the wanted episodes under a readable name, giving up on it",
+						telemetry.WithTraceContext(monitorCtx, "torrent_title", match.Torrent.Title, "torrent_hash", infoHash)...)
+					q.giveUpOnTorrent(monitorCtx, match, infoHash, "no wanted episode could be matched in the pack", true)
+					q.losePackSiblings(monitorCtx, match.Strategy, "The pack's files could not be matched to episodes")
+					q.replaceDeadTorrent(monitorCtx, request, match.Strategy, done, wg, "The pack's files could not be matched to episodes")
+					monitorSpan.SetStatus(codes.Error, "unusable pack")
+					return
+				}
 				if packTrimmed {
 					continue // the next poll reports the size of the files left selected
 				}
