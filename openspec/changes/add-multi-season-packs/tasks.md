@@ -16,4 +16,4 @@
 
 ## 3. Verify
 - [x] 3.1 `go vet ./...`, `go test ./...`
-- [ ] 3.2 Deploy torrenter; turn `season_packs` on; request SpongeBob S5-S10 and confirm one pack is added and trimmed
+- [x] 3.2 Deployed torrenter, webserver, ui (PRs #69-#73); `season_packs` on; SpongeBob S5-S10 requested 2026-11-01: one pack-only request, "SpongeBob SquarePants S01-13 1080p COMPLETE" added from TPB, trimmed from 222 GB to the 132 title-matched files (~43 GB), downloading
