@@ -38,6 +38,14 @@ type fakeQbittorrent struct {
 	polls int
 	// rechecked collects the hashes sent to /torrents/recheck.
 	rechecked []string
+	// files, when set, answers /torrents/files; prio collects the file ids
+	// sent to /torrents/filePrio with their priority.
+	files []map[string]any
+	prio  []string
+	// resumed collects the hashes sent to /torrents/start (or resume);
+	// addPaused records the "paused" value of every add.
+	resumed   []string
+	addPaused []string
 }
 
 func (f *fakeQbittorrent) handler() http.HandlerFunc {
@@ -57,7 +65,18 @@ func (f *fakeQbittorrent) handler() http.HandlerFunc {
 				http.Error(w, "add failed", f.addStatus)
 				return
 			}
+			f.mu.Lock()
+			f.addPaused = append(f.addPaused, r.FormValue("paused"))
+			f.mu.Unlock()
 			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/start", "/api/v2/torrents/resume":
+			_ = r.ParseForm()
+			f.mu.Lock()
+			f.resumed = append(f.resumed, r.Form.Get("hashes"))
+			f.mu.Unlock()
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/app/webapiVersion":
+			_, _ = w.Write([]byte("2.8.3"))
 		case "/api/v2/torrents/info":
 			f.mu.Lock()
 			f.polls++
@@ -76,10 +95,37 @@ func (f *fakeQbittorrent) handler() http.HandlerFunc {
 			f.rechecked = append(f.rechecked, r.Form.Get("hashes"))
 			f.mu.Unlock()
 			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/files":
+			f.mu.Lock()
+			files := f.files
+			f.mu.Unlock()
+			if files == nil {
+				files = []map[string]any{}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(files)
+		case "/api/v2/torrents/filePrio":
+			_ = r.ParseForm()
+			f.mu.Lock()
+			f.prio = append(f.prio, r.Form.Get("id")+"="+r.Form.Get("priority"))
+			f.mu.Unlock()
+			_, _ = w.Write([]byte("Ok."))
 		default:
 			http.NotFound(w, r)
 		}
 	}
+}
+
+func (f *fakeQbittorrent) resumedHashes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.resumed...)
+}
+
+func (f *fakeQbittorrent) priorities() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.prio...)
 }
 
 func (f *fakeQbittorrent) deletedHashes() []string {

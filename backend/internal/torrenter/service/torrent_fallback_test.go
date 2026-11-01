@@ -36,6 +36,8 @@ type fakeProwlarr struct {
 	failing map[int64]bool
 	// requested is the indexerIds of every search request, in order.
 	requested [][]int64
+	// delay, when set, is how long every search takes to answer.
+	delay time.Duration
 }
 
 func (f *fakeProwlarr) handler() http.HandlerFunc {
@@ -52,6 +54,9 @@ func (f *fakeProwlarr) handler() http.HandlerFunc {
 			ids = append(ids, id)
 		}
 
+		if f.delay > 0 {
+			time.Sleep(f.delay)
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.requested = append(f.requested, ids)

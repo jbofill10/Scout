@@ -190,6 +190,14 @@ func (q *QbittHandler) monitorTorrentCompletion(
 	lastProgress := -1.0
 	lastProgressAt := time.Now()
 	grace := deadSwarmGrace()
+	// errorSince is when qBittorrent first reported the torrent in an error
+	// state; zero while it is not.
+	var errorSince time.Time
+	// packTrimmed is set once a pack's unwanted files have been deselected,
+	// packStarted once its trimmed size has been checked against free space
+	// and the (paused) torrent resumed.
+	packTrimmed := match.Strategy.Pack == nil
+	packStarted := match.Strategy.Pack == nil
 	for {
 		elapsed := time.Since(start)
 
@@ -283,7 +291,77 @@ func (q *QbittHandler) monitorTorrentCompletion(
 			}
 			break
 		} else {
-			stalledFor := time.Since(lastProgressAt)
+			if !packTrimmed && torrent.State != qbittorrent.TorrentStateMetaDl {
+				packTrimmed = q.trimPackFiles(monitorCtx, infoHash, match.Strategy.Pack)
+				if packTrimmed {
+					continue // the next poll reports the size of the files left selected
+				}
+			}
+			if packTrimmed && !packStarted {
+				// The pack was added paused. Now that only the wanted files are
+				// selected, torrent.Size is what will really be written.
+				if verdict := q.checkDiskSpace(monitorCtx, torrent.Size); !verdict.fits {
+					q.logger.WarnContext(monitorCtx, "Not enough free disk space for the pack's wanted files, removing it",
+						telemetry.WithTraceContext(monitorCtx, "torrent_title", match.Torrent.Title, "torrent_hash", infoHash,
+							"size_bytes", torrent.Size, "free_bytes", verdict.free, "reserve_bytes", verdict.reserve)...)
+					q.giveUpOnTorrent(monitorCtx, match, infoHash, "not enough free disk space for the pack's wanted files", false)
+					for _, id := range packEpisodeIDs(match.Strategy) {
+						q.applyFailureNotification(monitorCtx, id, dlstatus.CodeInsufficientDiskSpace)
+					}
+					monitorSpan.SetStatus(codes.Error, "insufficient disk space")
+					return
+				}
+				if err := q.c.ResumeCtx(monitorCtx, []string{infoHash}); err != nil {
+					q.logger.WarnContext(monitorCtx, "Failed to start the trimmed pack, will try again",
+						telemetry.WithTraceContext(monitorCtx, "torrent_hash", infoHash, "error", err.Error())...)
+					continue
+				}
+				packStarted = true
+				q.logger.InfoContext(monitorCtx, "Pack started",
+					telemetry.WithTraceContext(monitorCtx, "torrent_title", match.Torrent.Title, "torrent_hash", infoHash,
+						"size_bytes", torrent.Size)...)
+				continue
+			}
+			now := time.Now()
+			if isWaitingState(torrent.State) {
+				// Queued behind qBittorrent's active-download limit, being
+				// checked, or paused: the swarm cannot be read off a torrent in
+				// these states, so neither stall clock runs. Reading a queued
+				// torrent's zero seeds as a dead swarm once threw away a night's
+				// worth of well-seeded releases and blacklisted them.
+				lastProgressAt = now
+				errorSince = time.Time{}
+				q.logger.InfoContext(monitorCtx, "Torrent waiting in qBittorrent",
+					telemetry.WithTraceContext(monitorCtx,
+						"title", match.Torrent.Title,
+						"torrent_hash", infoHash,
+						"state", string(torrent.State),
+						"progress", torrent.Progress*100)...)
+				continue
+			}
+			if isErrorState(torrent.State) {
+				if errorSince.IsZero() {
+					errorSince = now
+				}
+				if now.Sub(errorSince) >= grace {
+					q.logger.WarnContext(monitorCtx, "qBittorrent reports the torrent in an error state, giving up on it",
+						telemetry.WithTraceContext(monitorCtx,
+							"torrent_title", match.Torrent.Title,
+							"torrent_hash", infoHash,
+							"state", string(torrent.State),
+							"progress", torrent.Progress*100)...)
+					reason := fmt.Sprintf("qBittorrent reported %s for %s", torrent.State, grace.Round(time.Minute))
+					// The release is not to blame for a client-side error, so it stays eligible.
+					q.giveUpOnTorrent(monitorCtx, match, infoHash, reason, false)
+					q.losePackSiblings(monitorCtx, match.Strategy, "qBittorrent could not download the pack")
+					q.replaceDeadTorrent(monitorCtx, request, match.Strategy, done, wg, "qBittorrent could not download it")
+					monitorSpan.SetStatus(codes.Error, "torrent error state")
+					return
+				}
+				continue
+			}
+			errorSince = time.Time{}
+			stalledFor := now.Sub(lastProgressAt)
 			if isDeadSwarm(stalledFor, torrent.NumSeeds, torrent.DlSpeed, grace) {
 				q.logger.WarnContext(monitorCtx, "Torrent has no seeds and has made no progress, giving up on it",
 					telemetry.WithTraceContext(monitorCtx,
@@ -293,7 +371,8 @@ func (q *QbittHandler) monitorTorrentCompletion(
 						"stalled_for", stalledFor.Round(time.Second).String(),
 						"leechers", torrent.NumLeechs)...)
 				reason := fmt.Sprintf("dead swarm: no seeds and no progress for %s", stalledFor.Round(time.Minute))
-				q.giveUpOnTorrent(monitorCtx, match, infoHash, reason)
+				q.giveUpOnTorrent(monitorCtx, match, infoHash, reason, true)
+				q.losePackSiblings(monitorCtx, match.Strategy, "The pack had no seeds")
 				q.replaceDeadTorrent(monitorCtx, request, match.Strategy, done, wg, "Chosen torrent had no seeds")
 				monitorSpan.SetStatus(codes.Error, "dead swarm")
 				return
@@ -309,7 +388,8 @@ func (q *QbittHandler) monitorTorrentCompletion(
 						"state", string(torrent.State),
 						"stalled_for", stalledFor.Round(time.Second).String())...)
 				reason := fmt.Sprintf("no progress for %s", stalledFor.Round(time.Minute))
-				q.giveUpOnTorrent(monitorCtx, match, infoHash, reason)
+				q.giveUpOnTorrent(monitorCtx, match, infoHash, reason, true)
+				q.losePackSiblings(monitorCtx, match.Strategy, "The pack made no progress for "+timeout.String())
 				q.replaceDeadTorrent(monitorCtx, request, match.Strategy, done, wg,
 					"The download made no progress for "+timeout.String())
 				monitorSpan.SetStatus(codes.Error, "stalled")
@@ -331,9 +411,51 @@ func (q *QbittHandler) monitorTorrentCompletion(
 // isDeadSwarm decides that a download will not finish: it has sat at the same
 // progress for at least grace while connected to no seeds and transferring
 // nothing. Leechers alone do not count; with no seed in the swarm the missing
-// pieces are not there to be had.
+// pieces are not there to be had. Callers only ask this of a torrent that is
+// actually downloading (see isWaitingState).
 func isDeadSwarm(stalledFor time.Duration, connectedSeeds, dlSpeed int64, grace time.Duration) bool {
 	return stalledFor >= grace && connectedSeeds == 0 && dlSpeed == 0
+}
+
+// packEpisodeIDs lists every notification id a strategy stands for: the
+// item itself, plus the other episodes of its pack.
+func packEpisodeIDs(ss *models.SearchStrategy) []string {
+	ids := []string{ss.EpisodeTvdbID}
+	for _, id := range ss.Pack.EpisodeIDs() {
+		if id != ss.EpisodeTvdbID {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// losePackSiblings marks the other episodes of a pack whose torrent was given
+// up on as lost, with the code the webserver retries on. The first episode
+// is handled by the replacement search that follows.
+func (q *QbittHandler) losePackSiblings(ctx context.Context, ss *models.SearchStrategy, why string) {
+	for _, id := range packEpisodeIDs(ss)[1:] {
+		q.failNotification(ctx, id, dlstatus.CodeMonitorLost, why)
+	}
+}
+
+// isWaitingState reports the qBittorrent states in which a torrent is not
+// trying to download at all, so its seed count and speed say nothing about
+// the swarm: queued behind the active-download limit, being checked or
+// allocated, moved, or paused by hand.
+func isWaitingState(state qbittorrent.TorrentState) bool {
+	switch state {
+	case qbittorrent.TorrentStateQueuedDl, qbittorrent.TorrentStateCheckingDl, qbittorrent.TorrentStateCheckingUp,
+		qbittorrent.TorrentStateCheckingResumeData, qbittorrent.TorrentStateAllocating, qbittorrent.TorrentStateMoving,
+		qbittorrent.TorrentStatePausedDl, qbittorrent.TorrentStateStoppedDl:
+		return true
+	}
+	return false
+}
+
+// isErrorState reports the states in which qBittorrent itself has stopped the
+// torrent: a client-side failure that says nothing about the release.
+func isErrorState(state qbittorrent.TorrentState) bool {
+	return state == qbittorrent.TorrentStateError || state == qbittorrent.TorrentStateMissingFiles
 }
 
 // deadSwarmGrace reads how long a download may make no progress with no seeds

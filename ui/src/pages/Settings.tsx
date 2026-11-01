@@ -324,7 +324,7 @@ const SeasonPacksSection: React.FC<{ view: SettingsView }> = ({ view }) => {
   return (
     <SettingCard
       title="Season packs"
-      description="When a request covers enough episodes of one season, look for a single season pack first and fall back to episode-by-episode searches if none fits. One well-seeded pack beats ten searches against a rate-limited indexer; episodes the pack turns out not to contain are marked failed individually."
+      description="When a request covers enough episodes, look for one pack first: a single pack spanning every requested season, then a pack per season, then episode-by-episode searches for whatever no pack covered. Only the files of the requested episodes are downloaded from a pack; episodes a pack turns out not to contain are marked failed individually."
     >
       <FormControlLabel
         control={<Switch checked={view.values.season_packs} disabled={update.isPending} onChange={(e) => update.mutate({ season_packs: e.target.checked })} />}

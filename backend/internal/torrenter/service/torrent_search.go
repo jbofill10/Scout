@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"html"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -182,9 +183,26 @@ func (ex *excludedTorrents) drop(results *[]*prowlarr.Search) int {
 	return dropped
 }
 
-// loadExcludedTorrents fetches the releases already given up on for an item.
-// A lookup failure excludes nothing: the search still runs, at the risk of
-// re-picking a torrent that failed before.
+// defaultFailedTorrentTTL is how long a release stays excluded for an item
+// after it was given up on. A swarm with no seeds last month may have one
+// again, and a verdict reached while qBittorrent itself was the problem
+// should not bar the release for good.
+const defaultFailedTorrentTTL = 14 * 24 * time.Hour
+
+// failedTorrentTTL reads the exclusion lifetime from FAILED_TORRENT_TTL (a
+// Go duration such as "336h"), falling back to defaultFailedTorrentTTL.
+func failedTorrentTTL() time.Duration {
+	if v := os.Getenv("FAILED_TORRENT_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultFailedTorrentTTL
+}
+
+// loadExcludedTorrents fetches the releases given up on for an item within
+// the exclusion lifetime. A lookup failure excludes nothing: the search still
+// runs, at the risk of re-picking a torrent that failed before.
 func (q *QbittHandler) loadExcludedTorrents(ctx context.Context, tvdbID string, season, episode int) *excludedTorrents {
 	failed, err := q.repo.GetFailedTorrents(ctx, tvdbID, season, episode)
 	if err != nil {
@@ -192,10 +210,17 @@ func (q *QbittHandler) loadExcludedTorrents(ctx context.Context, tvdbID string, 
 			telemetry.WithTraceContext(ctx, "error", err.Error(), "tvdb_id", tvdbID, "season", season, "episode", episode)...)
 		return nil
 	}
-	if len(failed) == 0 {
+	cutoff := time.Now().Add(-failedTorrentTTL())
+	live := make([]*models.FailedTorrent, 0, len(failed))
+	for _, f := range failed {
+		if f.FailedAt.IsZero() || f.FailedAt.After(cutoff) {
+			live = append(live, f)
+		}
+	}
+	if len(live) == 0 {
 		return nil
 	}
-	return newExcludedTorrents(failed)
+	return newExcludedTorrents(live)
 }
 
 // searchOutcome is what searchForMatch learned about one episode (or movie) across
@@ -229,14 +254,28 @@ func (q *QbittHandler) searchForMatch(ctx context.Context, strategies []*models.
 	var weak *models.TorrentMatch
 	var weakCtx context.Context
 
-	for tierIdx, indexerIDs := range q.indexerTiers(req.Category, req.Anime) {
+	// The search deadline is shared out between the indexer tiers so that
+	// the fallback indexer always gets its turn: before this, a show with
+	// many aliases spent the whole budget on the preferred indexer and every
+	// fallback query was "not run: context deadline exceeded". Time a tier
+	// does not use rolls over to the next, and the last tier has whatever
+	// is left.
+	indexerTiers := q.indexerTiers(req.Category, req.Anime)
+	deadline, hasDeadline := ctx.Deadline()
+
+	for tierIdx, indexerIDs := range indexerTiers {
 		if tierIdx > 0 {
 			q.logger.InfoContext(ctx, "Preferred indexers had no usable torrent, trying fallback indexers",
 				telemetry.WithTraceContext(ctx, "media", req.Name, "indexer_ids", indexerIDs, "have_weak_pick", weak != nil)...)
 		}
+		var tierDeadline time.Time
+		if hasDeadline && tierIdx < len(indexerTiers)-1 {
+			tierDeadline = time.Now().Add(time.Until(deadline) / time.Duration(len(indexerTiers)-tierIdx))
+		}
 
 		for _, tier := range relaxTiers {
-			bestMatches, strategyContexts, allIndexersFailed := q.executeSearchStrategies(ctx, tier, req, indexerIDs, excluded)
+			bestMatches, strategyContexts, allIndexersFailed := q.executeSearchStrategies(ctx, tier, req, indexerIDs, excluded,
+				tierDeadline)
 			outcome.attemptedAny = true
 			if !allIndexersFailed {
 				outcome.erroredAll = false
@@ -351,19 +390,32 @@ func groupStrategiesByRelaxLevel(strategies []*models.SearchStrategy) [][]*model
 // allIndexersFailed flag is true only when EVERY strategy errored (and at least one strategy was
 // attempted), signalling an unreachable indexer. If any strategy executed successfully — even with
 // zero results — the caller proceeds with whatever matches were collected.
+//
+// tierDeadline, when set, is the share of the search deadline this indexer tier may use: a
+// strategy that would start after it is skipped, and one cut off by it is skipped rather than
+// counted as an indexer error. The zero time means no bound beyond ctx's own.
 func (q *QbittHandler) executeSearchStrategies(
 	ctx context.Context,
 	strategies []*models.SearchStrategy,
 	req *tvdb.Media,
 	indexerIDs []int64,
 	excluded *excludedTorrents,
+	tierDeadline time.Time,
 ) ([]*models.TorrentMatch, map[*models.SearchStrategy]context.Context, bool) {
 	bestMatches := []*models.TorrentMatch{}
 	strategyContexts := make(map[*models.SearchStrategy]context.Context)
 
 	erroredStrategies := 0
+	skippedStrategies := 0
 
 	for strategyIdx, ss := range strategies {
+		if !tierDeadline.IsZero() && !time.Now().Before(tierDeadline) {
+			skippedStrategies++
+			q.logger.InfoContext(ctx, "Search not run", "query", ss.Query, "indexer_ids", indexerIDs,
+				"reason", "this indexer's share of the search deadline is used up")
+			continue
+		}
+
 		strategyCtx, strategySpan := torrentTracer.Start(ctx, "searchStrategy")
 		strategySpan.SetAttributes(
 			attribute.Int("strategy_index", strategyIdx),
@@ -376,7 +428,25 @@ func (q *QbittHandler) executeSearchStrategies(
 		)
 
 		q.logger.InfoContext(strategyCtx, "Search Query", telemetry.WithTraceContext(strategyCtx, "query", ss.Query)...)
-		pResp, err := q.searchProwlarr(strategyCtx, ss.Query, req.Category, indexerIDs)
+		// The indexer call (and its wait at the gate) is bounded by the tier's share of the
+		// deadline, while strategyCtx itself keeps the full search deadline: it goes on to be the
+		// winning strategy's context, under which the torrent is added to qBittorrent.
+		searchCtx, cancelSearch := strategyCtx, context.CancelFunc(func() {})
+		if !tierDeadline.IsZero() {
+			searchCtx, cancelSearch = context.WithDeadline(strategyCtx, tierDeadline)
+		}
+		pResp, err := q.searchProwlarr(searchCtx, ss.Query, req.Category, indexerIDs)
+		cutOffByTier := err != nil && searchCtx.Err() != nil && strategyCtx.Err() == nil
+		cancelSearch()
+		if cutOffByTier {
+			// Cut off by the tier budget, not by the indexer.
+			skippedStrategies++
+			q.logger.InfoContext(strategyCtx, "Search not run", "query", ss.Query, "indexer_ids", indexerIDs,
+				"reason", "this indexer's share of the search deadline is used up")
+			strategySpan.SetStatus(codes.Ok, "skipped: tier deadline")
+			strategySpan.End()
+			continue
+		}
 		if err != nil {
 			// Record the failure and continue with the remaining strategies instead of aborting.
 			erroredStrategies++
@@ -434,7 +504,8 @@ func (q *QbittHandler) executeSearchStrategies(
 	}
 
 	// Indexer is considered unreachable only when every attempted strategy errored.
-	allIndexersFailed := len(strategies) > 0 && erroredStrategies == len(strategies)
+	attempted := len(strategies) - skippedStrategies
+	allIndexersFailed := attempted > 0 && erroredStrategies == attempted
 	return bestMatches, strategyContexts, allIndexersFailed
 }
 

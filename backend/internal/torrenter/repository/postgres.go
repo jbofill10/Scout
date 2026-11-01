@@ -598,7 +598,7 @@ func (r *Repo) InsertFailedTorrent(ctx context.Context, ft *models.FailedTorrent
 // GetFailedTorrents lists every torrent previously given up on for an item.
 func (r *Repo) GetFailedTorrents(ctx context.Context, tvdbID string, season, episode int) ([]*models.FailedTorrent, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT tvdb_id, season, episode, info_hash, torrent_title, COALESCE(reason, '')
+		SELECT tvdb_id, season, episode, info_hash, torrent_title, COALESCE(reason, ''), failed_at
 		FROM FailedTorrents WHERE tvdb_id = $1 AND season = $2 AND episode = $3
 	`, tvdbID, season, episode)
 	if err != nil {
@@ -609,7 +609,7 @@ func (r *Repo) GetFailedTorrents(ctx context.Context, tvdbID string, season, epi
 	failed := []*models.FailedTorrent{}
 	for rows.Next() {
 		var ft models.FailedTorrent
-		if err := rows.Scan(&ft.TvdbID, &ft.Season, &ft.Episode, &ft.InfoHash, &ft.Title, &ft.Reason); err != nil {
+		if err := rows.Scan(&ft.TvdbID, &ft.Season, &ft.Episode, &ft.InfoHash, &ft.Title, &ft.Reason, &ft.FailedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan failed torrent: %w", err)
 		}
 		failed = append(failed, &ft)

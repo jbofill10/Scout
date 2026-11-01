@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strconv"
 	"testing"
+	"time"
 
 	qbittorrent "github.com/autobrr/go-qbittorrent"
 	"github.com/stretchr/testify/suite"
@@ -363,8 +364,8 @@ func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithSpaces() {
 	}
 
 	s.True(hasSpaced)
-	// Tier 0 (strict): 2 query formats for non-anime.
-	s.Equal(2, countRelaxLevel(strategies, 0))
+	// Tier 0 (strict): one S##E## query for non-anime.
+	s.Equal(1, countRelaxLevel(strategies, 0))
 }
 
 // countRelaxLevel counts strategies at a given relaxation tier.
@@ -392,8 +393,8 @@ func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithAliases() {
 
 	strategies := s.handler.createSearchStrategy(media, episode)
 
-	// Tier 0 (strict): 3 names × 2 query formats = 6 strategies
-	s.Equal(6, countRelaxLevel(strategies, 0))
+	// Tier 0 (strict): one S##E## query per name
+	s.Equal(3, countRelaxLevel(strategies, 0))
 
 	// Verify all three names are present in strategies
 	mediaNames := make(map[string]bool)
@@ -421,8 +422,8 @@ func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithDuplicateAliases() 
 	strategies := s.handler.createSearchStrategy(media, episode)
 
 	// Should deduplicate: "Test Show" appears once, "TestShow" appears once
-	// Tier 0 (strict): 2 unique names × 2 query formats = 4 strategies
-	s.Equal(4, countRelaxLevel(strategies, 0))
+	// Tier 0 (strict): one S##E## query per unique name
+	s.Equal(2, countRelaxLevel(strategies, 0))
 
 	// Verify only unique names are used
 	mediaNames := make(map[string]bool)
@@ -450,8 +451,8 @@ func (s *QbittHandlerTestSuite) TestCreateSearchStrategy_WithEmptyAliases() {
 	strategies := s.handler.createSearchStrategy(media, episode)
 
 	// Should filter empty strings: "Test Show" + "Valid Alias"
-	// Tier 0 (strict): 2 names × 2 query formats = 4 strategies
-	s.Equal(4, countRelaxLevel(strategies, 0))
+	// Tier 0 (strict): one S##E## query per name
+	s.Equal(2, countRelaxLevel(strategies, 0))
 
 	// Verify only non-empty names are used
 	for _, strategy := range strategies {
@@ -813,6 +814,7 @@ func (s *QbittHandlerTestSuite) TestExecuteSearchStrategies_NoStrategies() {
 		&tvdb.Media{Name: "Test", Category: "series"},
 		[]int64{ONE337x_ID},
 		nil,
+		time.Time{},
 	)
 
 	s.Empty(matches)

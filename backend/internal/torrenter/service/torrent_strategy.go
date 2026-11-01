@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
@@ -22,26 +23,105 @@ func searchRequestFor(req *tvdb.Media, ss *models.SearchStrategy) *models.Search
 	return sr
 }
 
-func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episode) []*models.SearchStrategy {
-	var ss []*models.SearchStrategy
+// maxSearchNames caps how many names (the title plus aliases) a search
+// ladder is built from. TVDB lists per-season titles and other-script
+// variants as aliases, and every name multiplies the queries sent to a
+// rate-limited indexer: six names took one episode past the search deadline
+// before the fallback indexer was ever asked.
+const maxSearchNames = 4
 
-	// Build media names from req.Name + all aliases, with deduplication
-	mediaNames := []string{req.Name}
-	mediaNames = append(mediaNames, req.Aliases...)
-
-	// Deduplicate
-	seen := make(map[string]bool)
-	uniqueNames := []string{}
-	for _, name := range mediaNames {
-		if !seen[name] && name != "" {
-			seen[name] = true
-			uniqueNames = append(uniqueNames, name)
+// searchNames returns the distinct names to search a show under: the title
+// first, then aliases in TVDB order with Latin-script ones ahead of the
+// rest, capped at maxSearchNames. Names that differ only by case,
+// punctuation or a trailing year count as one, and an alias written as
+// "Title (Other-script title)" contributes both titles.
+func searchNames(req *tvdb.Media) []string {
+	seen := map[string]bool{}
+	var latin, other []string
+	add := func(name string) {
+		name = strings.Join(strings.Fields(name), " ")
+		if name == "" {
+			return
+		}
+		key := nameKey(name)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		if hasLatinLetter(name) {
+			latin = append(latin, name)
+		} else {
+			other = append(other, name)
 		}
 	}
-	showNames := uniqueNames
+
+	names := []string{}
+	if primary := strings.Join(strings.Fields(req.Name), " "); primary != "" {
+		seen[nameKey(primary)] = true
+		names = append(names, primary)
+	}
+	for _, alias := range req.Aliases {
+		if i := strings.Index(alias, " ("); i > 0 && strings.HasSuffix(alias, ")") && !trailingYearRe.MatchString(alias) {
+			add(alias[:i])
+			add(strings.TrimSuffix(alias[i+2:], ")"))
+			continue
+		}
+		add(alias)
+	}
+	names = append(names, latin...)
+	names = append(names, other...)
+	if len(names) > maxSearchNames {
+		names = names[:maxSearchNames]
+	}
+	return names
+}
+
+// nameKey is the form two names are compared in: case, punctuation and a
+// trailing year do not make a different name. A name with no Latin letters
+// or digits (a Japanese title, say) is compared as written, lower-cased.
+func nameKey(name string) string {
+	stripped := stripNamePunctuation(name)
+	if key := normalizeMovieName(stripped); key != "" {
+		return key
+	}
+	return strings.ToLower(strings.Join(strings.Fields(stripped), " "))
+}
+
+// hasLatinLetter reports whether the name has at least one Latin letter.
+func hasLatinLetter(s string) bool {
+	for _, r := range s {
+		if r < 0x250 && unicode.IsLetter(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// createSearchStrategy builds the query ladder for one episode. Every query
+// costs a rate-limited indexer call, so the ladder is kept short: the
+// "S##E##" form (and the padded absolute number for anime) is tried under
+// every name, the rarer forms only under the title, and a query that would
+// repeat an earlier one is dropped.
+func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episode) []*models.SearchStrategy {
+	names := searchNames(req)
+	if len(names) == 0 {
+		return nil
+	}
+	primary := names[0]
 
 	paddedSeason := standardizeNumber(episode.SeasonNumber)
 	paddedEpisode := standardizeNumber(episode.Number)
+
+	var ss []*models.SearchStrategy
+	seen := map[string]bool{}
+	add := func(s *models.SearchStrategy) {
+		key := strings.ToLower(s.Query)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		ss = append(ss, s)
+	}
 
 	// newShowStrategy builds a seasonal show strategy with the given query and relax level.
 	newShowStrategy := func(query, name string, relax int) *models.SearchStrategy {
@@ -54,6 +134,7 @@ func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episo
 			TvdbId:         req.Id,
 			EpisodeTvdbID:  strconv.Itoa(episode.Id),
 			ImdbID:         req.ImdbID,
+			ReleaseYear:    req.Year,
 			RuntimeMinutes: episode.Runtime,
 			RelaxLevel:     relax,
 		}
@@ -72,60 +153,51 @@ func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episo
 			TvdbId:         req.Id,
 			EpisodeTvdbID:  strconv.Itoa(episode.Id),
 			ImdbID:         req.ImdbID,
+			ReleaseYear:    req.Year,
 			RuntimeMinutes: episode.Runtime,
 			RelaxLevel:     relax,
 		}
 	}
 
-	// ----- Tier 0: strict (existing behavior) -----
-	if req.Anime {
-		for _, showName := range showNames {
-			// Only create absolute number strategy if TVDB provided one (absoluteNumber > 0).
-			if episode.AbsoluteNumber > 0 {
-				ss = append(ss, newAbsoluteStrategy(
-					fmt.Sprint(showName, " ", standardizeNumber(episode.AbsoluteNumber)), showName, 0))
-			}
+	absolute := req.Anime && episode.AbsoluteNumber > 0
+
+	// ----- Tier 0: strict -----
+	if absolute {
+		for _, name := range names {
+			add(newAbsoluteStrategy(fmt.Sprint(name, " ", standardizeNumber(episode.AbsoluteNumber)), name, 0))
 		}
 	}
-
-	for _, format := range []string{"%s S%sE%s", "%s Season %s Episode %s"} {
-		for _, showName := range showNames {
-			ss = append(ss, newShowStrategy(
-				fmt.Sprintf(format, showName, paddedSeason, paddedEpisode), showName, 0))
-		}
+	for _, name := range names {
+		add(newShowStrategy(fmt.Sprintf("%s S%sE%s", name, paddedSeason, paddedEpisode), name, 0))
 	}
 
 	// ----- Tier 1: relaxed -----
-	for _, showName := range showNames {
-		// "{name} {S}x{EE}" e.g. "Show 1x05"
-		ss = append(ss, newShowStrategy(
-			fmt.Sprintf("%s %dx%s", showName, episode.SeasonNumber, paddedEpisode), showName, 1))
-
-		// Anime absolute UNPADDED "{name} {absolute}"
-		if req.Anime && episode.AbsoluteNumber > 0 {
-			ss = append(ss, newAbsoluteStrategy(
-				fmt.Sprintf("%s %d", showName, episode.AbsoluteNumber), showName, 1))
+	// "{name} {S}x{EE}" e.g. "Show 1x05", and the long form, under the title only.
+	add(newShowStrategy(fmt.Sprintf("%s %dx%s", primary, episode.SeasonNumber, paddedEpisode), primary, 1))
+	add(newShowStrategy(fmt.Sprintf("%s Season %s Episode %s", primary, paddedSeason, paddedEpisode), primary, 1))
+	// Anime absolute UNPADDED "{name} {absolute}" (a repeat of tier 0 from episode 10 on).
+	if absolute {
+		for _, name := range names {
+			add(newAbsoluteStrategy(fmt.Sprintf("%s %d", name, episode.AbsoluteNumber), name, 1))
 		}
-
-		// Punctuation-stripped name variant applied to the S##E## format.
-		if stripped := stripNamePunctuation(showName); stripped != "" && stripped != showName {
-			ss = append(ss, newShowStrategy(
-				fmt.Sprintf("%s S%sE%s", stripped, paddedSeason, paddedEpisode), stripped, 1))
+	}
+	// Punctuation-stripped name variants applied to the S##E## format.
+	for _, name := range names {
+		if stripped := stripNamePunctuation(name); stripped != "" && stripped != name {
+			add(newShowStrategy(fmt.Sprintf("%s S%sE%s", stripped, paddedSeason, paddedEpisode), stripped, 1))
 		}
 	}
 
 	// ----- Tier 2: broad -----
-	for _, showName := range showNames {
-		// Loose episode token "{name} E{EE}"
-		ss = append(ss, newShowStrategy(
-			fmt.Sprintf("%s E%s", showName, paddedEpisode), showName, 2))
-
-		// For anime, name-only — rely on validators/parser to match S/E or absolute.
-		if req.Anime {
+	// Loose episode token "{name} E{EE}", under the title only.
+	add(newShowStrategy(fmt.Sprintf("%s E%s", primary, paddedEpisode), primary, 2))
+	// For anime, name-only — rely on validators/parser to match S/E or absolute.
+	if req.Anime {
+		for _, name := range names {
 			if episode.AbsoluteNumber > 0 {
-				ss = append(ss, newAbsoluteStrategy(showName, showName, 2))
+				add(newAbsoluteStrategy(name, name, 2))
 			} else {
-				ss = append(ss, newShowStrategy(showName, showName, 2))
+				add(newShowStrategy(name, name, 2))
 			}
 		}
 	}

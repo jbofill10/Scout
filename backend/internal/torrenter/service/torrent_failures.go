@@ -82,13 +82,19 @@ func (q *QbittHandler) recordFailedTorrent(ctx context.Context, match *models.To
 }
 
 // giveUpOnTorrent removes a download that will not finish: out of qBittorrent
-// with its files, into the failed list, and off the in-flight table.
-func (q *QbittHandler) giveUpOnTorrent(ctx context.Context, match *models.TorrentMatch, infoHash, reason string) {
+// with its files and off the in-flight table. When blameRelease is set the
+// release also goes on the item's failed list so later searches skip it; a
+// download that failed because of qBittorrent itself (an error state) says
+// nothing about the release, which stays eligible.
+func (q *QbittHandler) giveUpOnTorrent(ctx context.Context, match *models.TorrentMatch, infoHash, reason string,
+	blameRelease bool) {
 	if err := q.c.DeleteTorrentsCtx(ctx, []string{infoHash}, true); err != nil {
 		q.logger.ErrorContext(ctx, "Failed to remove dead torrent from qBittorrent",
 			telemetry.WithTraceContext(ctx, "error", err.Error(), "torrent_hash", infoHash)...)
 	}
 	q.recordStrategyFailure(ctx, match.Strategy, reason)
-	q.recordFailedTorrent(ctx, match, infoHash, reason)
+	if blameRelease {
+		q.recordFailedTorrent(ctx, match, infoHash, reason)
+	}
 	q.clearActiveTorrent(ctx, infoHash)
 }
