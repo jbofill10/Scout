@@ -71,7 +71,7 @@ func TestValidatePack(t *testing.T) {
 		"Severance.S01.COMPLETE.2160p.WEB.x265":  true,
 	}
 	for title, want := range accept {
-		ok, why, _, _ := q.validatePack(&prowlarr.Search{Title: title, Seeders: 20}, show, 1, eps)
+		ok, why, _, _ := q.validatePack(&prowlarr.Search{Title: title, Seeders: 20}, show, []int{1}, eps)
 		assert.Equal(t, want, ok, "%s: %s", title, why)
 	}
 }
@@ -81,9 +81,9 @@ func TestValidatePack_AnimeBatch(t *testing.T) {
 	q.minQualityTier = QualityTier("1080p")
 	show, eps := packShow()
 	show.Anime = true
-	ok, why, _, _ := q.validatePack(&prowlarr.Search{Title: "[SubsPlease] Severance (01-08) (1080p) [Batch]", Seeders: 20}, show, 1, eps)
+	ok, why, _, _ := q.validatePack(&prowlarr.Search{Title: "[SubsPlease] Severance (01-08) (1080p) [Batch]", Seeders: 20}, show, []int{1}, eps)
 	assert.True(t, ok, why)
-	ok, _, _, _ = q.validatePack(&prowlarr.Search{Title: "[SubsPlease] Severance (01-04) (1080p) [Batch]", Seeders: 20}, show, 1, eps)
+	ok, _, _, _ = q.validatePack(&prowlarr.Search{Title: "[SubsPlease] Severance (01-04) (1080p) [Batch]", Seeders: 20}, show, []int{1}, eps)
 	assert.False(t, ok, "a batch that stops at 4 does not cover 8 episodes")
 }
 
@@ -102,7 +102,7 @@ func TestSearchForPack_PicksLivePackAndBuildsStrategy(t *testing.T) {
 	q.minQualityTier = QualityTier("1080p")
 	show, eps := packShow()
 
-	match := q.searchForPack(context.Background(), show, 1, eps, nil)
+	match := q.searchForPack(context.Background(), show, []int{1}, eps, nil)
 
 	require.NotNil(t, match)
 	assert.Equal(t, "Severance S01 1080p WEB-DL DDP5.1 H.264-NTb", match.Torrent.Title, "the live 1080p pack beats the dead 4K one and the 720p one is below the floor")

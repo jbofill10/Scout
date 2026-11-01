@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -20,22 +21,32 @@ import (
 
 // packTitle is what the pack parser reads off a release name.
 type packTitle struct {
-	ShowName   string
-	Season     int // 0 when the title names no season
+	ShowName string
+	Season   int // first (or only) season named; 0 when the title names none
+	// SeasonEnd is the last season of a range such as "S01-S05" or
+	// "Seasons 1-5"; 0 when the title names a single season.
+	SeasonEnd  int
 	EpStart    int // episode range, when present
 	EpEnd      int
 	Complete   bool // "complete" / "batch" wording
+	Series     bool // "complete series" and the like: every season there is
 	Quality    string
 	SingleEp   bool // a single S##E## release, never a pack
 	ParseError bool
 }
 
 var (
+	packSeasonRangeRe = regexp.MustCompile(
+		`(?i)\b(?:S|Seasons?[ ._-]?)(\d{1,2})[ ._-]?(?:-|–|to|and|&|\+)[ ._-]?S?(\d{1,2})\b`)
 	packSeasonRe   = regexp.MustCompile(`(?i)\b(?:S|Season[ ._-]?)(\d{1,2})(?:E|\b)`)
 	packSingleEpRe = regexp.MustCompile(`(?i)\bS\d{1,2}[ ._-]?E\d{1,3}\b`)
 	packRangeRe    = regexp.MustCompile(`(?i)\b(?:S\d{1,2})?[ ._-]?E?(\d{1,3})[ ._-]?-[ ._-]?E?(\d{1,3})\b`)
 	packQualityRe  = regexp.MustCompile(`(?i)\b(2160p|1080p|720p|480p|4k)\b`)
 	packCompleteRe = regexp.MustCompile(`(?i)\b(complete|batch|full season|season pack)\b`)
+	packSeriesRe   = regexp.MustCompile(
+		`(?i)\b(complete series|complete collection|complete show|full series|entire series|all seasons|the complete)\b`)
+	// packDirSeasonRe matches a season folder inside a pack: "Season 05", "S05", "Season.5".
+	packDirSeasonRe = regexp.MustCompile(`(?i)^(?:season|s)[ ._-]?(\d{1,2})$`)
 )
 
 // parsePack reads a season-pack style title. It is deliberately separate from
@@ -46,17 +57,36 @@ func parsePack(title string) packTitle {
 	if packSingleEpRe.MatchString(clean) && !packRangeRe.MatchString(clean) {
 		pt.SingleEp = true
 	}
-	if m := packSeasonRe.FindStringSubmatch(clean); m != nil {
-		pt.Season, _ = strconv.Atoi(m[1])
+
+	// A season range ("S01-S13", "Seasons 1-5", "S08 and S09") is read first
+	// and removed, or its digits would pass for an episode range.
+	rest := clean
+	if m := packSeasonRangeRe.FindStringSubmatch(clean); m != nil {
+		a, _ := strconv.Atoi(m[1])
+		b, _ := strconv.Atoi(m[2])
+		if a > b {
+			a, b = b, a
+		}
+		joined := strings.Contains(strings.ToLower(m[0]), "and") || strings.ContainsAny(m[0], "&+")
+		if a > 0 && b > a && (!joined || b == a+1) {
+			pt.Season, pt.SeasonEnd = a, b
+			rest = packSeasonRangeRe.ReplaceAllString(clean, " ")
+		}
 	}
-	if m := packRangeRe.FindStringSubmatch(clean); m != nil {
+	if pt.SeasonEnd == 0 {
+		if m := packSeasonRe.FindStringSubmatch(rest); m != nil {
+			pt.Season, _ = strconv.Atoi(m[1])
+		}
+	}
+	if m := packRangeRe.FindStringSubmatch(rest); m != nil {
 		pt.EpStart, _ = strconv.Atoi(m[1])
 		pt.EpEnd, _ = strconv.Atoi(m[2])
 		if pt.EpEnd < pt.EpStart {
 			pt.EpStart, pt.EpEnd = 0, 0
 		}
 	}
-	pt.Complete = packCompleteRe.MatchString(clean)
+	pt.Series = packSeriesRe.MatchString(clean)
+	pt.Complete = pt.Series || packCompleteRe.MatchString(clean)
 	if m := packQualityRe.FindStringSubmatch(clean); m != nil {
 		pt.Quality = strings.ToLower(m[1])
 		if pt.Quality == "4k" {
@@ -65,7 +95,7 @@ func parsePack(title string) packTitle {
 	}
 	// The show name is whatever precedes the first season / range / quality marker.
 	cut := len(clean)
-	for _, re := range []*regexp.Regexp{packSeasonRe, packRangeRe, packQualityRe, packCompleteRe} {
+	for _, re := range []*regexp.Regexp{packSeasonRangeRe, packSeasonRe, packRangeRe, packQualityRe, packCompleteRe, packSeriesRe} {
 		if loc := re.FindStringIndex(clean); loc != nil && loc[0] < cut {
 			cut = loc[0]
 		}
@@ -83,12 +113,25 @@ func parsePack(title string) packTitle {
 	return pt
 }
 
+// spannedSeasons is how many seasons a pack title claims: the range it
+// names, one for a single season, and 0 when it does not say (a "complete
+// series" pack).
+func (pt packTitle) spannedSeasons() int {
+	switch {
+	case pt.SeasonEnd > 0:
+		return pt.SeasonEnd - pt.Season + 1
+	case pt.Season > 0:
+		return 1
+	}
+	return 0
+}
+
 // packStrategy builds the one strategy a pack download is tracked under: the
 // first wanted episode's identity, plus the pack itself.
-func (q *QbittHandler) packStrategy(req *tvdb.Media, season int, episodes []tvdb.Episode, query string) *models.SearchStrategy {
+func (q *QbittHandler) packStrategy(req *tvdb.Media, seasons []int, episodes []tvdb.Episode, query string) *models.SearchStrategy {
 	first := episodes[0]
 	base := q.createSearchStrategy(req, &first)
-	ss := &models.SearchStrategy{MediaName: req.Name, Query: query, Season: season, Episode: first.Number, TvdbId: req.Id,
+	ss := &models.SearchStrategy{MediaName: req.Name, Query: query, Season: seasons[0], Episode: first.Number, TvdbId: req.Id,
 		EpisodeTvdbID: strconv.Itoa(first.Id), EpisodeMeta: &first}
 	if len(base) > 0 {
 		ss.ReleaseYear = base[0].ReleaseYear
@@ -96,13 +139,14 @@ func (q *QbittHandler) packStrategy(req *tvdb.Media, season int, episodes []tvdb
 		ss.RuntimeMinutes = base[0].RuntimeMinutes
 	}
 	eps := append([]tvdb.Episode{}, episodes...)
-	ss.Pack = &models.PackInfo{Season: season, Episodes: eps}
+	ss.Pack = &models.PackInfo{Season: seasons[0], Seasons: append([]int{}, seasons...), Episodes: eps}
 	return ss
 }
 
-// packQueries are the searches tried for a season pack, strictest first.
-func packQueries(req *tvdb.Media, season int) []string {
-	names := append([]string{req.Name}, req.Aliases...)
+// packQueries are the searches tried for a pack of the given seasons,
+// strictest first: one season's pack, or for several seasons the range and
+// complete-series forms.
+func packQueries(req *tvdb.Media, seasons []int) []string {
 	queries := []string{}
 	seen := map[string]bool{}
 	add := func(s string) {
@@ -111,18 +155,26 @@ func packQueries(req *tvdb.Media, season int) []string {
 			queries = append(queries, s)
 		}
 	}
-	for _, name := range names {
-		if name == "" {
+	first, last := seasons[0], seasons[len(seasons)-1]
+	for _, name := range searchNames(req) {
+		if len(seasons) > 1 {
+			add(fmt.Sprintf("%s S%02d-S%02d", name, first, last))
+			add(fmt.Sprintf("%s complete series", name))
+			if req.Anime {
+				add(fmt.Sprintf("%s batch", name))
+			}
+			add(fmt.Sprintf("%s seasons %d-%d", name, first, last))
+			add(fmt.Sprintf("%s complete", name))
 			continue
 		}
 		if req.Anime {
 			add(fmt.Sprintf("%s batch", name))
-			add(fmt.Sprintf("%s season %d", name, season))
+			add(fmt.Sprintf("%s season %d", name, first))
 			continue
 		}
-		add(fmt.Sprintf("%s S%02d", name, season))
-		add(fmt.Sprintf("%s season %d", name, season))
-		add(fmt.Sprintf("%s S%02d complete", name, season))
+		add(fmt.Sprintf("%s S%02d", name, first))
+		add(fmt.Sprintf("%s season %d", name, first))
+		add(fmt.Sprintf("%s S%02d complete", name, first))
 	}
 	if len(queries) > 6 {
 		queries = queries[:6]
@@ -131,16 +183,24 @@ func packQueries(req *tvdb.Media, season int) []string {
 }
 
 // validatePack decides whether a release is a usable pack for the wanted
-// episodes: the show matches, the season is named (or an episode range covers
-// every wanted number), it is not a single episode, and it clears the quality
-// floor. It returns the parsed quality tier for scoring.
-func (q *QbittHandler) validatePack(torrent *prowlarr.Search, req *tvdb.Media, season int, wanted []tvdb.Episode) (bool, string, int, float64) {
+// episodes of the given seasons (ascending): the show matches, the title
+// names every wanted season (a single season, a season range covering them
+// all, a complete series, or an episode range covering every wanted number),
+// it is not a single episode, and it clears the quality floor. It returns the
+// parsed quality tier, the name score and how many seasons the pack spans
+// beyond the wanted ones (for scoring).
+func (q *QbittHandler) validatePack(torrent *prowlarr.Search, req *tvdb.Media, seasons []int, wanted []tvdb.Episode) (bool, string, int, float64) {
+	ok, why, tier, score, _ := q.validatePackSpan(torrent, req, seasons, wanted)
+	return ok, why, tier, score
+}
+
+func (q *QbittHandler) validatePackSpan(torrent *prowlarr.Search, req *tvdb.Media, seasons []int, wanted []tvdb.Episode) (bool, string, int, float64, int) {
 	pt := parsePack(torrent.Title)
 	if pt.ParseError {
-		return false, "could not parse title", 0, 0
+		return false, "could not parse title", 0, 0, 0
 	}
 	if pt.SingleEp {
-		return false, "single episode, not a pack", 0, 0
+		return false, "single episode, not a pack", 0, 0, 0
 	}
 	nameScore := q.scoreNameMatch(pt.ShowName, req.Name)
 	for _, alias := range req.Aliases {
@@ -149,8 +209,9 @@ func (q *QbittHandler) validatePack(torrent *prowlarr.Search, req *tvdb.Media, s
 		}
 	}
 	if nameScore < 0.3 {
-		return false, fmt.Sprintf("show name mismatch: parsed=%q", pt.ShowName), 0, 0
+		return false, fmt.Sprintf("show name mismatch: parsed=%q", pt.ShowName), 0, 0, 0
 	}
+	first, last := seasons[0], seasons[len(seasons)-1]
 	covers := func() bool {
 		if pt.EpStart == 0 {
 			return false
@@ -166,21 +227,35 @@ func (q *QbittHandler) validatePack(torrent *prowlarr.Search, req *tvdb.Media, s
 		}
 		return true
 	}
+	extra := 0
 	switch {
-	case pt.Season == season && pt.EpStart == 0:
+	case pt.Series && pt.SeasonEnd == 0 && pt.EpStart == 0:
+		// "complete series": every season, however many that is
+		extra = 1
+	case pt.SeasonEnd > 0 && pt.Season <= first && pt.SeasonEnd >= last:
+		extra = pt.spannedSeasons() - len(seasons)
+	case len(seasons) == 1 && pt.Season == first && pt.EpStart == 0:
 		// season-only title ("Show S01", "Show Season 1 Complete")
-	case pt.Season == season && covers():
+	case len(seasons) == 1 && pt.Season == first && covers():
 	case pt.Season == 0 && (pt.Complete || req.Anime) && covers():
-	case pt.Season == 0 && pt.Complete && pt.EpStart == 0 && season == 1 && req.Anime:
+	case pt.Season == 0 && pt.Complete && pt.EpStart == 0 && len(seasons) == 1 && first == 1 && req.Anime:
 		// anime "batch" with no numbering at all: only trust it for season 1
 	default:
-		return false, fmt.Sprintf("does not cover season %d", season), 0, 0
+		return false, fmt.Sprintf("does not cover season %s", seasonLabel(seasons)), 0, 0, 0
 	}
 	tier := QualityTier(pt.Quality)
 	if floor := q.qualityFloor(); floor > 0 && tier < floor {
-		return false, fmt.Sprintf("%s is below the minimum quality", orLabel(pt.Quality)), tier, nameScore
+		return false, fmt.Sprintf("%s is below the minimum quality", orLabel(pt.Quality)), tier, nameScore, 0
 	}
-	return true, "", tier, nameScore
+	return true, "", tier, nameScore, extra
+}
+
+// seasonLabel renders wanted seasons for a message: "7" or "5-10".
+func seasonLabel(seasons []int) string {
+	if len(seasons) == 1 {
+		return strconv.Itoa(seasons[0])
+	}
+	return fmt.Sprintf("%d-%d", seasons[0], seasons[len(seasons)-1])
 }
 
 func orLabel(q string) string {
@@ -191,8 +266,11 @@ func orLabel(q string) string {
 }
 
 // searchForPack runs the pack queries across the indexer tiers and returns
-// the best acceptable pack, or nil.
-func (q *QbittHandler) searchForPack(ctx context.Context, req *tvdb.Media, season int, wanted []tvdb.Episode, excluded *excludedTorrents) *models.TorrentMatch {
+// the best acceptable pack for the wanted episodes of the given seasons, or
+// nil. A pack that spans more seasons than wanted still qualifies, scored
+// below an exact one: it is a bigger download, though only the wanted files
+// are selected once it is added.
+func (q *QbittHandler) searchForPack(ctx context.Context, req *tvdb.Media, seasons []int, wanted []tvdb.Episode, excluded *excludedTorrents) *models.TorrentMatch {
 	type scored struct {
 		torrent *prowlarr.Search
 		score   float64
@@ -201,7 +279,7 @@ func (q *QbittHandler) searchForPack(ctx context.Context, req *tvdb.Media, seaso
 	var best *scored
 	seen := map[string]bool{}
 	for _, indexerIDs := range q.indexerTiers(req.Category, req.Anime) {
-		for _, query := range packQueries(req, season) {
+		for _, query := range packQueries(req, seasons) {
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -216,7 +294,7 @@ func (q *QbittHandler) searchForPack(ctx context.Context, req *tvdb.Media, seaso
 					continue
 				}
 				seen[key] = true
-				ok, why, tier, nameScore := q.validatePack(t, req, season, wanted)
+				ok, why, tier, nameScore, extra := q.validatePackSpan(t, req, seasons, wanted)
 				if !ok {
 					q.logger.DebugContext(ctx, "Pack rejected", "title", t.Title, "reason", why)
 					continue
@@ -224,6 +302,9 @@ func (q *QbittHandler) searchForPack(ctx context.Context, req *tvdb.Media, seaso
 				score := nameScore + calculateYearAwareQualityBoost(tier, "") + seederBoost(t.Seeders)
 				if t.Seeders <= suspectSeederCount {
 					score -= 1.0 // a dead pack wastes a whole season's wait
+				}
+				if extra > 0 {
+					score -= min(0.1*float64(extra), 0.5)
 				}
 				if best == nil || score > best.score {
 					best = &scored{torrent: t, score: score, query: query}
@@ -238,15 +319,17 @@ func (q *QbittHandler) searchForPack(ctx context.Context, req *tvdb.Media, seaso
 		return nil
 	}
 	q.logger.InfoContext(ctx, "Season pack selected",
-		telemetry.WithTraceContext(ctx, "show", req.Name, "season", season, "title", best.torrent.Title,
+		telemetry.WithTraceContext(ctx, "show", req.Name, "seasons", seasonLabel(seasons), "title", best.torrent.Title,
 			"seeders", best.torrent.Seeders, "score", best.score, "episodes", len(wanted))...)
-	return &models.TorrentMatch{Strategy: q.packStrategy(req, season, wanted, best.query), Torrent: best.torrent}
+	return &models.TorrentMatch{Strategy: q.packStrategy(req, seasons, wanted, best.query), Torrent: best.torrent}
 }
 
-// tryPacks groups the episodes to download by season and, when packs are on
-// and a season has enough of them, downloads one pack per such season. It
-// returns the per-episode results for packed episodes and which episodes were
-// covered; anything else goes through the per-episode path.
+// tryPacks groups the episodes to download by season and, when packs are on,
+// downloads packs for what they can cover: first one pack spanning every
+// season with episodes to download when there are several, then one pack
+// per season that has enough of them. It returns the per-episode results
+// for packed episodes and which episodes were covered; anything else goes
+// through the per-episode path.
 func (q *QbittHandler) tryPacks(ctx context.Context, req *tvdb.Media, episodes []tvdb.Episode, done chan<- models.TorrentCompleteEvent, wg *sync.WaitGroup) ([]dlstatus.EpisodeResult, map[int]bool) {
 	enabled, minEpisodes := q.packSettings()
 	if !enabled || len(episodes) < minEpisodes {
@@ -261,34 +344,56 @@ func (q *QbittHandler) tryPacks(ctx context.Context, req *tvdb.Media, episodes [
 		seasons = append(seasons, s)
 	}
 	sort.Ints(seasons)
+	for _, s := range seasons {
+		sort.Slice(bySeason[s], func(i, j int) bool { return bySeason[s][i].Number < bySeason[s][j].Number })
+	}
 
 	results := []dlstatus.EpisodeResult{}
 	packed := map[int]bool{}
+	download := func(span []int, wanted []tvdb.Episode) bool {
+		packCtx, packSpan := torrentTracer.Start(ctx, "searchForSeasonPack")
+		defer packSpan.End()
+		packSpan.SetAttributes(attribute.String("show", req.Name), attribute.String("seasons", seasonLabel(span)),
+			attribute.Int("episodes", len(wanted)))
+		excluded := q.loadExcludedTorrents(packCtx, req.Id, span[0], wanted[0].Number)
+		match := q.searchForPack(packCtx, req, span, wanted, excluded)
+		if match == nil {
+			q.logger.InfoContext(packCtx, "No pack found",
+				telemetry.WithTraceContext(packCtx, "show", req.Name, "seasons", seasonLabel(span))...)
+			return false
+		}
+		result := q.initiateDownloadAndMonitor(packCtx, match, searchRequestFor(req, match.Strategy), done, wg)
+		if result.Outcome != dlstatus.OutcomeDownloading {
+			return false // the add failed; let the narrower searches have a go
+		}
+		for _, ep := range wanted {
+			packed[ep.Id] = true
+			results = append(results, dlstatus.EpisodeResult{TvdbID: strconv.Itoa(ep.Id), Season: ep.SeasonNumber, Episode: ep.Number, Outcome: dlstatus.OutcomeDownloading})
+		}
+		return true
+	}
+
+	// Several seasons: one pack for all of them first.
+	if len(seasons) > 1 {
+		wanted := []tvdb.Episode{}
+		for _, s := range seasons {
+			wanted = append(wanted, bySeason[s]...)
+		}
+		if download(seasons, wanted) {
+			return results, packed
+		}
+		q.logger.InfoContext(ctx, "No multi-season pack, trying one season at a time",
+			telemetry.WithTraceContext(ctx, "show", req.Name, "seasons", seasonLabel(seasons))...)
+	}
+
 	for _, season := range seasons {
 		wanted := bySeason[season]
 		if len(wanted) < minEpisodes {
 			continue
 		}
-		sort.Slice(wanted, func(i, j int) bool { return wanted[i].Number < wanted[j].Number })
-		packCtx, span := torrentTracer.Start(ctx, "searchForSeasonPack")
-		span.SetAttributes(attribute.String("show", req.Name), attribute.Int("season", season), attribute.Int("episodes", len(wanted)))
-		excluded := q.loadExcludedTorrents(packCtx, req.Id, season, wanted[0].Number)
-		match := q.searchForPack(packCtx, req, season, wanted, excluded)
-		if match == nil {
-			q.logger.InfoContext(packCtx, "No season pack found, searching per episode",
-				telemetry.WithTraceContext(packCtx, "show", req.Name, "season", season)...)
-			span.End()
-			continue
-		}
-		result := q.initiateDownloadAndMonitor(packCtx, match, searchRequestFor(req, match.Strategy), done, wg)
-		span.End()
-		if result.Outcome != dlstatus.OutcomeDownloading {
-			// The add failed; let the per-episode path have a go.
-			continue
-		}
-		for _, ep := range wanted {
-			packed[ep.Id] = true
-			results = append(results, dlstatus.EpisodeResult{TvdbID: strconv.Itoa(ep.Id), Season: ep.SeasonNumber, Episode: ep.Number, Outcome: dlstatus.OutcomeDownloading})
+		if !download([]int{season}, wanted) {
+			q.logger.InfoContext(ctx, "No season pack found, searching per episode",
+				telemetry.WithTraceContext(ctx, "show", req.Name, "season", season)...)
 		}
 	}
 	return results, packed
@@ -303,4 +408,111 @@ func withoutEpisodes(episodes []tvdb.Episode, packed map[int]bool) []tvdb.Episod
 		}
 	}
 	return out
+}
+
+// packEpisodeIndex keys a pack's wanted episodes by season/episode and by
+// absolute number, for matching file names against them.
+func packEpisodeIndex(pack *models.PackInfo) map[string]tvdb.Episode {
+	byKey := map[string]tvdb.Episode{}
+	for _, ep := range pack.Episodes {
+		byKey[fmt.Sprintf("s%de%d", ep.SeasonNumber, ep.Number)] = ep
+		if ep.AbsoluteNumber > 0 {
+			byKey[fmt.Sprintf("abs%d", ep.AbsoluteNumber)] = ep
+		}
+	}
+	return byKey
+}
+
+// packFileSeason is the season a file inside a pack belongs to when its name
+// does not say: the season folder it sits in, else the pack's first season.
+func packFileSeason(path string, pack *models.PackInfo) int {
+	dir := filepath.Dir(filepath.ToSlash(path))
+	for dir != "." && dir != "/" && dir != "" {
+		if m := packDirSeasonRe.FindStringSubmatch(filepath.Base(dir)); m != nil {
+			if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+				return n
+			}
+		}
+		dir = filepath.Dir(dir)
+	}
+	return pack.Season
+}
+
+// packFileEpisode matches one file of a landed or listed pack to the wanted
+// episode it holds, by the file's own numbering: S##E##, an absolute number,
+// or a bare episode number read against the season folder it sits in.
+func packFileEpisode(parser *TorrentParser, path string, pack *models.PackInfo, byKey map[string]tvdb.Episode) (tvdb.Episode, bool) {
+	name := filepath.Base(path)
+	parsed := parser.Parse(name)
+	if parsed == nil {
+		// Bare "E05" / "05" names inside a season folder.
+		parsed = parsePackFileFallback(name, packFileSeason(path, pack))
+	}
+	if parsed == nil || parsed.IsMultiEpisode() {
+		return tvdb.Episode{}, false
+	}
+	if parsed.IsAbsolute {
+		if ep, ok := byKey[fmt.Sprintf("abs%d", parsed.Episode)]; ok {
+			return ep, true
+		}
+		ep, ok := byKey[fmt.Sprintf("s%de%d", packFileSeason(path, pack), parsed.Episode)]
+		return ep, ok
+	}
+	season := parsed.Season
+	if season == 0 {
+		season = packFileSeason(path, pack)
+	}
+	ep, ok := byKey[fmt.Sprintf("s%de%d", season, parsed.Episode)]
+	return ep, ok
+}
+
+// trimPackFiles deselects, in qBittorrent, the files of a pack that hold no
+// wanted episode, so a complete-series pack fetched for six seasons does not
+// download the other seven. It reports whether the pack has been dealt with:
+// false means the file list was not available yet (a magnet still fetching
+// metadata) and the caller should try again. Any failure to trim leaves the
+// whole pack downloading, which is only slower.
+func (q *QbittHandler) trimPackFiles(ctx context.Context, infoHash string, pack *models.PackInfo) bool {
+	if pack == nil {
+		return true
+	}
+	files, err := q.c.GetFilesInformationCtx(ctx, infoHash)
+	if err != nil {
+		q.logger.WarnContext(ctx, "Could not list the pack's files, downloading all of it",
+			telemetry.WithTraceContext(ctx, "torrent_hash", infoHash, "error", err.Error())...)
+		return true
+	}
+	if files == nil || len(*files) == 0 {
+		return false
+	}
+	if len(*files) == 1 {
+		return true
+	}
+	byKey := packEpisodeIndex(pack)
+	wanted, skip := 0, []string{}
+	for _, f := range *files {
+		if isVideoFile(f.Name) {
+			if _, ok := packFileEpisode(q.parser, f.Name, pack, byKey); ok {
+				wanted++
+				continue
+			}
+		}
+		skip = append(skip, strconv.Itoa(f.Index))
+	}
+	if wanted == 0 {
+		q.logger.WarnContext(ctx, "No file in the pack matched a wanted episode, downloading all of it",
+			telemetry.WithTraceContext(ctx, "torrent_hash", infoHash, "files", len(*files))...)
+		return true
+	}
+	if len(skip) == 0 {
+		return true
+	}
+	if err := q.c.SetFilePriorityCtx(ctx, infoHash, strings.Join(skip, "|"), 0); err != nil {
+		q.logger.WarnContext(ctx, "Could not deselect the pack's unwanted files, downloading all of it",
+			telemetry.WithTraceContext(ctx, "torrent_hash", infoHash, "error", err.Error())...)
+		return true
+	}
+	q.logger.InfoContext(ctx, "Pack trimmed to the wanted episodes",
+		telemetry.WithTraceContext(ctx, "torrent_hash", infoHash, "wanted_files", wanted, "skipped_files", len(skip))...)
+	return true
 }

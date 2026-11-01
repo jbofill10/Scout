@@ -77,6 +77,8 @@ type FailedTorrent struct {
 	InfoHash string
 	Title    string
 	Reason   string
+	// FailedAt is when the torrent was given up on; zero when unknown.
+	FailedAt time.Time
 }
 
 // FileEntry is a single file discovered underneath a download directory.
@@ -149,8 +151,25 @@ type UpgradeInfo struct {
 
 // PackInfo describes the episodes a season-pack torrent is expected to hold.
 type PackInfo struct {
-	Season   int            `json:"season"`
+	// Season is the first season the pack covers; the only one for a
+	// single-season pack.
+	Season int `json:"season"`
+	// Seasons lists every season the pack is expected to cover, ascending.
+	// Empty on packs recorded before multi-season packs existed.
+	Seasons  []int          `json:"seasons,omitempty"`
 	Episodes []tvdb.Episode `json:"episodes"`
+}
+
+// SeasonList is every season the pack covers, falling back to Season for
+// packs recorded without the list.
+func (p *PackInfo) SeasonList() []int {
+	if p == nil {
+		return nil
+	}
+	if len(p.Seasons) > 0 {
+		return p.Seasons
+	}
+	return []int{p.Season}
 }
 
 // EpisodeIDs lists the pack's episode tvdb ids as strings.

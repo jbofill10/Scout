@@ -64,10 +64,11 @@ func TestCreateSearchStrategy_TiersAndRelaxLevels(t *testing.T) {
 
 	tier0 := queriesAtLevel(ss, 0)
 	assert.Contains(t, tier0, "Re:Zero S01E05")
-	assert.Contains(t, tier0, "Re:Zero Season 01 Episode 05")
+	assert.NotContains(t, tier0, "Re:Zero Season 01 Episode 05", "the long form is a relaxed query")
 
 	tier1 := queriesAtLevel(ss, 1)
 	assert.Contains(t, tier1, "Re:Zero 1x05", "alternate season-x-episode format")
+	assert.Contains(t, tier1, "Re:Zero Season 01 Episode 05")
 	assert.Contains(t, tier1, "ReZero S01E05", "punctuation-stripped name on S##E## format")
 
 	tier2 := queriesAtLevel(ss, 2)
@@ -201,9 +202,10 @@ func TestPickBestTorrent_RelaxGuardrail(t *testing.T) {
 				RelaxLevel: relax,
 			},
 			Torrent: &prowlarr.Search{
-				// Marginal valid match (~0.69 confidence): clears base cutoff but
-				// falls below the bumped cutoff applied to broad queries.
-				Title:   "Some Show Extra S01E05",
+				// Marginal valid match: the leading article costs the name score
+				// (0.8), so the confidence clears the base cutoff but falls below
+				// the bumped cutoff applied to broad queries.
+				Title:   "The Some Show S01E05",
 				Seeders: 100,
 			},
 		}

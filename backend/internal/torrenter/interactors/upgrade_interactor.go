@@ -323,7 +323,12 @@ func (u *UpgradeInteractor) mediaFor(c models.UpgradeCandidate) (tvdb.Media, *tv
 	}
 	id, _ := strconv.Atoi(c.ItemKey)
 	ep := &tvdb.Episode{Id: id, SeasonNumber: c.Season, Number: c.Episode}
-	return tvdb.Media{Id: c.ShowTvdbID, Name: c.Title, Category: "series", Source: "upgrade", Metadata: tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{*ep}}}, ep
+	m := tvdb.Media{Id: c.ShowTvdbID, Name: c.Title, Category: "series", Source: "upgrade",
+		Metadata: tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{*ep}}}
+	if c.Year > 0 {
+		m.Year = strconv.Itoa(c.Year)
+	}
+	return m, ep
 }
 
 // upsertNotification reuses the item's notification when one exists (the

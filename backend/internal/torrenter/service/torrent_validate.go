@@ -331,25 +331,86 @@ func normalizeMovieName(name string) string {
 	return strings.TrimSpace(normalized)
 }
 
-// scoreNameMatch scores how well the parsed show name matches the expected name
-// Simplified to use substring matching since Prowlarr's search already filters relevant results
-func (q *QbittHandler) scoreNameMatch(parsedName, expectedName string) float64 {
-	// Normalize both names for more lenient matching
-	normalizedParsed := normalizeMovieName(parsedName)
-	normalizedExpected := normalizeMovieName(expectedName)
+// benignNameTokens are words whose presence or absence does not make a
+// different title: articles, and the country tags release groups add.
+var benignNameTokens = map[string]bool{
+	"the": true, "a": true, "an": true,
+	"us": true, "usa": true, "uk": true, "au": true, "ca": true, "nz": true,
+}
 
-	// Exact match after normalization
-	if normalizedParsed == normalizedExpected {
+// scoreNameMatch scores how well a parsed title names the expected show or
+// movie. The two are compared word by word after normalisation: the same
+// words score 1.0; the same words once articles, years and country tags are
+// set aside score 0.8, as does one extra leading possessive such as
+// "Marvel's". Anything else is another title. A trailing word in particular
+// is what tells a spin-off or sequel from its parent ("Dragon Ball DAIMA",
+// "Star Trek: Discovery", "The Godfather Part II"), so a title that merely
+// contains the expected name is not a match.
+func (q *QbittHandler) scoreNameMatch(parsedName, expectedName string) float64 {
+	parsed := nameTokens(parsedName)
+	expected := nameTokens(expectedName)
+	if len(parsed) == 0 || len(expected) == 0 {
+		return 0.0
+	}
+	if sameTokens(parsed, expected) {
 		return 1.0
 	}
 
-	// Substring match (bidirectional)
-	if strings.Contains(normalizedParsed, normalizedExpected) ||
-		strings.Contains(normalizedExpected, normalizedParsed) {
+	p, e := essentialTokens(parsed), essentialTokens(expected)
+	if len(p) == 0 || len(e) == 0 {
+		return 0.0
+	}
+	if sameTokens(p, e) {
 		return 0.8
 	}
-
+	if len(p) == len(e)+1 && strings.HasSuffix(p[0], "s") && sameTokens(p[1:], e) {
+		return 0.8 // "Marvels The Punisher" for "The Punisher"
+	}
 	return 0.0
+}
+
+// nameTokens splits a title into normalised words; dots and underscores are
+// word separators in release names.
+func nameTokens(name string) []string {
+	return strings.Fields(normalizeMovieName(strings.NewReplacer(".", " ", "_", " ").Replace(name)))
+}
+
+// essentialTokens drops the words that do not distinguish one title from
+// another: articles, country tags and four-digit years.
+func essentialTokens(tokens []string) []string {
+	out := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		if benignNameTokens[t] || isYearToken(t) {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// isYearToken reports whether a token is a plausible release year.
+func isYearToken(t string) bool {
+	if len(t) != 4 || !(strings.HasPrefix(t, "19") || strings.HasPrefix(t, "20")) {
+		return false
+	}
+	for _, r := range t {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func sameTokens(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // calculateConfidence calculates overall confidence score for a match

@@ -3,20 +3,18 @@ package service
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"strconv"
 
 	"github.com/jbofill10/scout/backend/internal/torrenter/models"
-	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 )
 
 // packFileEpRe matches "E05", " - 05 ", "ep05" style numbering in a file name.
 var packFileEpRe = regexp.MustCompile(`(?i)(?:\bE|\bep\.? ?|- )0?(\d{1,3})\b`)
 
-// processPack links every video file of a season pack that matches a wanted
-// episode, and records per episode what happened in event.PackResults. The
-// call fails only when nothing at all could be linked.
+// processPack links every video file of a pack that matches a wanted episode,
+// and records per episode what happened in event.PackResults. The call fails
+// only when nothing at all could be linked.
 func (mp *MediaProcessSvc) processPack(ctx context.Context, event *models.TorrentCompleteEvent) error {
 	pack := event.Req.Pack
 	event.PackResults = map[string]string{}
@@ -30,44 +28,16 @@ func (mp *MediaProcessSvc) processPack(ctx context.Context, event *models.Torren
 	}
 
 	// Match each video file to a wanted episode by its own numbering.
-	byKey := map[string]tvdb.Episode{}
-	for _, ep := range pack.Episodes {
-		byKey[fmt.Sprintf("s%de%d", ep.SeasonNumber, ep.Number)] = ep
-		if ep.AbsoluteNumber > 0 {
-			byKey[fmt.Sprintf("abs%d", ep.AbsoluteNumber)] = ep
-		}
-	}
+	byKey := packEpisodeIndex(pack)
 	parser := NewTorrentParser()
 	linked := 0
 	for _, f := range files {
 		if !isVideoFile(f.Path) {
 			continue
 		}
-		name := filepath.Base(f.Path)
-		parsed := parser.Parse(name)
-		if parsed == nil {
-			// Bare "E05" / "05" names inside a season folder.
-			parsed = parsePackFileFallback(name, pack.Season)
-		}
-		if parsed == nil || parsed.IsMultiEpisode() {
-			mp.Logger.InfoContext(ctx, "Pack file not matched to an episode", "file", f.Path)
-			continue
-		}
-		var ep tvdb.Episode
-		var ok bool
-		if parsed.IsAbsolute {
-			ep, ok = byKey[fmt.Sprintf("abs%d", parsed.Episode)]
-			if !ok {
-				ep, ok = byKey[fmt.Sprintf("s%de%d", pack.Season, parsed.Episode)]
-			}
-		} else {
-			season := parsed.Season
-			if season == 0 {
-				season = pack.Season
-			}
-			ep, ok = byKey[fmt.Sprintf("s%de%d", season, parsed.Episode)]
-		}
+		ep, ok := packFileEpisode(parser, f.Path, pack, byKey)
 		if !ok {
+			mp.Logger.InfoContext(ctx, "Pack file not matched to an episode", "file", f.Path)
 			continue
 		}
 		id := strconv.Itoa(ep.Id)
@@ -92,7 +62,7 @@ func (mp *MediaProcessSvc) processPack(ctx context.Context, event *models.Torren
 		linked++
 	}
 
-	mp.Logger.InfoContext(ctx, "Season pack processed", "show", event.Req.MediaName, "season", pack.Season,
+	mp.Logger.InfoContext(ctx, "Season pack processed", "show", event.Req.MediaName, "seasons", seasonLabel(pack.SeasonList()),
 		"wanted", len(pack.Episodes), "linked", linked)
 	if linked == 0 {
 		return fmt.Errorf("no wanted episode found in the season pack at %s", event.SavePath)

@@ -23,7 +23,10 @@ func (q *QbittHandler) clearActiveTorrent(ctx context.Context, infoHash string) 
 	}
 }
 
-func (q *QbittHandler) downloadTorrent(ctx context.Context, torrent *prowlarr.Search) (string, string, error) {
+// downloadTorrent adds a torrent to qBittorrent and returns its info hash and
+// tracking tag. A pack is added paused: its unwanted files are deselected and
+// the free space checked against what is left before it is started.
+func (q *QbittHandler) downloadTorrent(ctx context.Context, torrent *prowlarr.Search, paused bool) (string, string, error) {
 	// Generate UUID for torrent tracking
 	trackingUUID := uuid.New().String()
 
@@ -48,6 +51,7 @@ func (q *QbittHandler) downloadTorrent(ctx context.Context, torrent *prowlarr.Se
 		SavePath: torrentSavePath,
 		Category: scoutTag,
 		Tags:     trackingUUID,
+		Paused:   paused,
 	}
 	options := addOpts.Prepare()
 
