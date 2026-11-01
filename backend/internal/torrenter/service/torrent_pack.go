@@ -47,6 +47,8 @@ var (
 		`(?i)\b(complete series|complete collection|complete show|full series|entire series|all seasons|the complete)\b`)
 	// packDirSeasonRe matches a season folder inside a pack: "Season 05", "S05", "Season.5".
 	packDirSeasonRe = regexp.MustCompile(`(?i)^(?:season|s)[ ._-]?(\d{1,2})$`)
+	// packSegmentRe matches segment letters after an episode number ("S07E01a", "S05E03ab").
+	packSegmentRe = regexp.MustCompile(`(?i)\bS\d{1,2}E\d{1,3}[a-c]{1,3}\b`)
 	// packFileRunRe reads the last episode of a run named "S07E01-E02",
 	// "S07E01-02" or "S07E01E02" off a file name.
 	packFileRunRe = regexp.MustCompile(`(?i)\bS\d{1,2}E(\d{1,3})(?:[ ._-]?(?:-|–)?[ ._-]?E|-)(\d{1,3})\b`)
@@ -442,13 +444,24 @@ func packFileSeason(path string, pack *models.PackInfo) int {
 }
 
 // packFileEpisodes matches one file of a landed or listed pack to the wanted
-// episodes it holds, by the file's own numbering: S##E##, an absolute number,
-// or a bare episode number read against the season folder it sits in. A
-// file named for a run of episodes ("S07E01-E02", common for shows whose
-// segments TVDB lists separately) yields every wanted episode in the run,
-// in order. An empty result means the file holds nothing that was wanted.
+// episodes it holds. Episode titles in the file name are matched first,
+// because for shows whose segments TVDB lists separately (SpongeBob's
+// "S09E01ab - Extreme Spots + Squirrel Record" is TVDB's S10E01 and S10E02)
+// the release numbering says nothing about the TVDB one. Failing that, the
+// file's own numbering is read: S##E##, an absolute number, or a bare
+// episode number against the season folder it sits in, with a run such as
+// "S07E01-E02" yielding every wanted episode in it. The result is in
+// episode order; empty means the file holds nothing that was wanted.
 func packFileEpisodes(parser *TorrentParser, path string, pack *models.PackInfo, byKey map[string]tvdb.Episode) []tvdb.Episode {
 	name := filepath.Base(path)
+	if byTitle := packFileEpisodesByTitle(name, pack); len(byTitle) > 0 {
+		return byTitle
+	}
+	if packSegmentRe.MatchString(name) {
+		// Segment letters ("S07E01a") mean the release numbers half-episodes
+		// that TVDB counts whole, so a number alone cannot be trusted.
+		return nil
+	}
 	parsed := parser.Parse(name)
 	if parsed == nil {
 		// Bare "E05" / "05" names inside a season folder.
@@ -490,6 +503,34 @@ func packFileEpisodes(parser *TorrentParser, path string, pack *models.PackInfo,
 	return out
 }
 
+// packFileEpisodesByTitle matches a file to the wanted episodes whose titles
+// appear in its name, as whole words after normalisation. Titles shorter
+// than five letters are not trusted on their own.
+func packFileEpisodesByTitle(name string, pack *models.PackInfo) []tvdb.Episode {
+	base := strings.TrimSuffix(name, filepath.Ext(name))
+	haystack := " " + normalizeMovieName(strings.NewReplacer(".", " ", "_", " ").Replace(base)) + " "
+	if strings.TrimSpace(haystack) == "" {
+		return nil
+	}
+	out := []tvdb.Episode{}
+	for _, ep := range pack.Episodes {
+		title := normalizeMovieName(ep.Name)
+		if len(strings.ReplaceAll(title, " ", "")) < 5 {
+			continue
+		}
+		if strings.Contains(haystack, " "+title+" ") {
+			out = append(out, ep)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].SeasonNumber != out[j].SeasonNumber {
+			return out[i].SeasonNumber < out[j].SeasonNumber
+		}
+		return out[i].Number < out[j].Number
+	})
+	return out
+}
+
 // packFileEpisode is packFileEpisodes for callers that only need to know the
 // first wanted episode a file holds.
 func packFileEpisode(parser *TorrentParser, path string, pack *models.PackInfo, byKey map[string]tvdb.Episode) (tvdb.Episode, bool) {
@@ -522,20 +563,33 @@ func (q *QbittHandler) trimPackFiles(ctx context.Context, infoHash string, pack 
 		return false, true
 	}
 	byKey := packEpisodeIndex(pack)
-	wanted, skip := 0, []string{}
+	wanted, skip, restore := 0, []string{}, []string{}
 	for _, f := range *files {
 		if isVideoFile(f.Name) {
 			if _, ok := packFileEpisode(q.parser, f.Name, pack, byKey); ok {
 				wanted++
+				if f.Priority == 0 {
+					restore = append(restore, strconv.Itoa(f.Index))
+				}
 				continue
 			}
 		}
-		skip = append(skip, strconv.Itoa(f.Index))
+		if f.Priority != 0 {
+			skip = append(skip, strconv.Itoa(f.Index))
+		}
 	}
 	if wanted == 0 {
 		q.logger.WarnContext(ctx, "No file in the pack matched a wanted episode",
 			telemetry.WithTraceContext(ctx, "torrent_hash", infoHash, "files", len(*files))...)
 		return true, false
+	}
+	// A trim is repeated when a monitor resumes, and may then find wanted
+	// files an earlier pass deselected; they are switched back on.
+	if len(restore) > 0 {
+		if err := q.c.SetFilePriorityCtx(ctx, infoHash, strings.Join(restore, "|"), 1); err != nil {
+			q.logger.WarnContext(ctx, "Could not reselect the pack's wanted files",
+				telemetry.WithTraceContext(ctx, "torrent_hash", infoHash, "error", err.Error())...)
+		}
 	}
 	if len(skip) == 0 {
 		return true, true
@@ -546,6 +600,7 @@ func (q *QbittHandler) trimPackFiles(ctx context.Context, infoHash string, pack 
 		return true, true
 	}
 	q.logger.InfoContext(ctx, "Pack trimmed to the wanted episodes",
-		telemetry.WithTraceContext(ctx, "torrent_hash", infoHash, "wanted_files", wanted, "skipped_files", len(skip))...)
+		telemetry.WithTraceContext(ctx, "torrent_hash", infoHash, "wanted_files", wanted, "skipped_files", len(skip),
+			"reselected_files", len(restore))...)
 	return true, true
 }

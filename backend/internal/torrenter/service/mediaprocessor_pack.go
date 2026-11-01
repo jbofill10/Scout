@@ -53,8 +53,8 @@ func (mp *MediaProcessSvc) processPack(ctx context.Context, event *models.Torren
 		strategy.Season = ep.SeasonNumber
 		strategy.Episode = ep.Number
 		strategy.Pack = nil
-		if last := eps[len(eps)-1]; last.Number > ep.Number && last.SeasonNumber == ep.SeasonNumber {
-			strategy.EpisodeEnd = last.Number // one file, a run of episodes: "S07E01-E02"
+		if last := eps[len(eps)-1]; len(eps) > 1 && last.SeasonNumber == ep.SeasonNumber && last.Number-ep.Number == len(eps)-1 {
+			strategy.EpisodeEnd = last.Number // one file, a consecutive run of episodes: "S07E01-E02"
 		}
 		single.Req = &strategy
 		if err := mp.linkFile(ctx, &single, f.Path); err != nil {
