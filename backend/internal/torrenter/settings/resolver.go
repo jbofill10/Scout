@@ -213,11 +213,17 @@ func (r *Resolver) Apply(ctx context.Context, upd api.Update) (api.View, error) 
 			return api.View{}, err
 		}
 	}
-	for key, value := range writes {
+	// Written in key order so the sequence of writes is the same every time.
+	keys := make([]string, 0, len(writes))
+	for key := range writes {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
 		if resets[key] {
 			continue // a reset and a value for the same key: the reset wins
 		}
-		if err := r.store.Set(ctx, key, value); err != nil {
+		if err := r.store.Set(ctx, key, writes[key]); err != nil {
 			return api.View{}, err
 		}
 	}

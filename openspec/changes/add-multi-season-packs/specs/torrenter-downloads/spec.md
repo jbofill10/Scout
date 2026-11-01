@@ -34,7 +34,7 @@ A pack file named for a run of episodes of one season SHALL be linked once under
 - **THEN** the file is linked as "Show - S07E01-E02.mkv" and both episodes complete
 
 ### Requirement: Pack file selection
-The torrenter SHALL add a pack torrent paused, starting it only to fetch its metadata when it has no file list (a magnet). Once its file list is available in qBittorrent, it SHALL deselect the files that hold no wanted episode, matching files by their own season and episode numbers (or absolute number), with a bare episode number read against the season folder the file sits in; when no file can be matched the whole pack SHALL stay selected. It SHALL then apply the free-space guard to the size of the selected files and start the torrent when it fits, or remove it and report every episode of the pack short of disk space when it does not. When a pack torrent is given up on for any reason, every other episode it stood for SHALL be marked lost so the retry engine re-arms them.
+The torrenter SHALL add a pack torrent paused, starting it only to fetch its metadata when it has no file list (a magnet). Once its file list is available in qBittorrent, it SHALL deselect the files that hold no wanted episode, matching files first by the wanted episodes' titles in the file name, then by their own season and episode numbers (or absolute number), with a bare episode number read against the season folder the file sits in, and never by number alone when the name carries segment letters ("S07E01a"); a repeated trim SHALL reselect wanted files an earlier pass deselected; when no file can be matched the whole pack SHALL stay selected. It SHALL then apply the free-space guard to the size of the selected files and start the torrent when it fits, or remove it and report every episode of the pack short of disk space when it does not. When a pack torrent is given up on for any reason, every other episode it stood for SHALL be marked lost so the retry engine re-arms them.
 
 #### Scenario: Six of thirteen seasons
 - **WHEN** a thirteen-season pack is added for a request of seasons 5 to 10
@@ -43,6 +43,10 @@ The torrenter SHALL add a pack torrent paused, starting it only to fetch its met
 #### Scenario: Trimmed pack still too big
 - **WHEN** the selected files of a pack exceed the free space less the reserve
 - **THEN** the torrent is removed before it starts, the release is not blacklisted, and each of the pack's episodes reads insufficient disk space
+
+#### Scenario: Titles decide for segment-numbered shows
+- **WHEN** a pack file is named "S09E01ab - Extreme Spots + Squirrel Record" and TVDB lists those titles as S10E01 and S10E02
+- **THEN** the file is selected and linked as "Show - S10E01-E02.mkv"
 
 #### Scenario: Landing reads season folders
 - **WHEN** the pack's files are named "Season 07/Show - 03.mkv"

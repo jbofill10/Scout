@@ -103,9 +103,10 @@ func TestResolver_ApplyWritesNormalisedValuesAndResets(t *testing.T) {
 	langs := []string{" EN", "es", "en", ""}
 	zero := "0s"
 	mock.ExpectExec(`DELETE FROM Settings WHERE key = \$1`).WithArgs(api.KeyPlexSyncDelay).WillReturnResult(sqlmock.NewResult(0, 1))
+	// Writes land in key order.
 	mock.ExpectExec(`INSERT INTO Settings`).WithArgs(api.KeyMinQuality, []byte(`"2160p"`)).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`INSERT INTO Settings`).WithArgs(api.KeySubtitleLanguages, []byte(`["en","es"]`)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO Settings`).WithArgs(api.KeyPlexSyncInterval, []byte(`"0s"`)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO Settings`).WithArgs(api.KeySubtitleLanguages, []byte(`["en","es"]`)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT key, value FROM Settings`).WillReturnRows(settingsRows(
 		api.KeyMinQuality, `"2160p"`, api.KeySubtitleLanguages, `["en","es"]`, api.KeyPlexSyncInterval, `"0s"`))
 

@@ -674,3 +674,83 @@ func TestMonitor_PausedMagnetPackIsStartedForMetadata(t *testing.T) {
 	assert.GreaterOrEqual(t, len(qb.resumedHashes()), 2, "started for metadata, then started after the space check")
 	assert.Empty(t, qb.deletedHashes())
 }
+
+// File names that carry episode titles are matched by title, which is the
+// only numbering that agrees with TVDB for shows whose segments it lists
+// separately.
+func TestPackFileEpisodes_ByTitle(t *testing.T) {
+	eps := []tvdb.Episode{
+		{Id: 1, SeasonNumber: 5, Number: 1, Name: "Rise and Shine"},
+		{Id: 2, SeasonNumber: 5, Number: 2, Name: "Waiting"},
+		{Id: 3, SeasonNumber: 5, Number: 5, Name: "Friend or Foe"},
+		{Id: 4, SeasonNumber: 10, Number: 1, Name: "Extreme Spots"},
+		{Id: 5, SeasonNumber: 10, Number: 2, Name: "Squirrel Record"},
+		{Id: 6, SeasonNumber: 10, Number: 9, Name: "Gary's New Toy"},
+		{Id: 7, SeasonNumber: 7, Number: 1, Name: "Shell Shocked"},
+	}
+	pack := &models.PackInfo{Season: 5, Seasons: []int{5, 7, 10}, Episodes: eps}
+	byKey := packEpisodeIndex(pack)
+	parser := NewTorrentParser()
+	ids := func(path string) []int {
+		out := []int{}
+		for _, e := range packFileEpisodes(parser, path, pack, byKey) {
+			out = append(out, e.Id)
+		}
+		return out
+	}
+
+	assert.Equal(t, []int{1, 2}, ids("Season 5/SpongeBob SquarePants - S05E03ab - Rise and Shine & Waiting (1080p).mp4"),
+		"two titles in one file, numbered differently from TVDB")
+	assert.Equal(t, []int{3}, ids("Season 5/SpongeBob SquarePants - S05E01 - Friend or Foe - Bluray-1080p.mp4"),
+		"the title wins over the release's own S05E01")
+	assert.Equal(t, []int{4, 5}, ids("Season 9/Spongebob Squarepents S09E01ab - Extreme Spots + Squirrel Record.mkv"),
+		"release season 9 is TVDB season 10")
+	assert.Equal(t, []int{6}, ids("Season 9/Spongebob Squarepents S09E02ab - Patrick-Man + Garys New Toy.mkv"),
+		"punctuation in the title is ignored")
+	assert.Equal(t, []int{7}, ids("SpongeBob.SquarePants.S07E01.1080p.WEB.mkv"), "no title in the name: numbering applies")
+	assert.Empty(t, ids("Season 7/SpongeBob SquarePants S07E01a - Tentacle-Vision (1080p).mkv"),
+		"segment letters mean the number cannot stand in for an unmatched title")
+}
+
+// A repeated trim reselects wanted files an earlier pass had deselected.
+func TestTrimPackFiles_ReselectsWantedFiles(t *testing.T) {
+	qb := &fakeQbittorrent{files: []map[string]any{
+		{"index": 0, "name": "Pack/Season 05/SpongeBob SquarePants - S05E01.mkv", "size": 100, "priority": 0},
+		{"index": 1, "name": "Pack/Season 07/SpongeBob SquarePants - S07E03.mkv", "size": 100, "priority": 1},
+		{"index": 2, "name": "Pack/Season 11/SpongeBob SquarePants - S11E01.mkv", "size": 100, "priority": 0},
+		{"index": 3, "name": "Pack/Season 12/SpongeBob SquarePants - S12E01.mkv", "size": 100, "priority": 1},
+	}}
+	q := newCancelTestHandler(t, repomocks.NewRepository(t), qb)
+	_, seasons, eps := multiSeasonShow()
+	pack := &models.PackInfo{Season: 5, Seasons: seasons, Episodes: eps}
+
+	done, usable := q.trimPackFiles(context.Background(), "pack-hash", pack)
+	assert.True(t, done)
+	assert.True(t, usable)
+	assert.Equal(t, []string{"0=1", "3=0"}, qb.priorities(), "wanted file 0 back on, unwanted file 3 off, the rest untouched")
+}
+
+// A landed file holding two consecutive TVDB episodes under their titles is
+// linked once as a range; non-consecutive matches link under the first only.
+func TestProcessPack_TitleMatchedFilesLinkAsRange(t *testing.T) {
+	fs := mocks.NewFileSystem(t)
+	repo := repomocks.NewRepository(t)
+	fs.On("WalkFiles", "/dl/SB").Return([]models.FileEntry{
+		{Path: "Season 9/Spongebob Squarepents S09E01ab - Extreme Spots + Squirrel Record.mkv", Size: 100},
+	}, nil)
+	repo.On("GetShowBaseDirectory", mock.Anything, "75886").Return("/lib/SpongeBob", nil)
+	fs.On("MkDir", "/lib/SpongeBob/Season 10").Return(nil)
+	fs.On("HardLink", "/dl/SB/Season 9/Spongebob Squarepents S09E01ab - Extreme Spots + Squirrel Record.mkv",
+		"/lib/SpongeBob/Season 10/SpongeBob SquarePants - S10E01-E02.mkv").Return(nil)
+
+	mp := NewMediaProcessSvc(slog.New(slog.NewTextHandler(new(bytes.Buffer), nil)), repo, fs, nil)
+	eps := []tvdb.Episode{{Id: 1001, SeasonNumber: 10, Number: 1, Name: "Extreme Spots"},
+		{Id: 1002, SeasonNumber: 10, Number: 2, Name: "Squirrel Record"}, {Id: 1003, SeasonNumber: 10, Number: 3, Name: "Squid Baby"}}
+	event := &models.TorrentCompleteEvent{SavePath: "/dl/SB", Req: &models.SearchStrategy{
+		MediaName: "SpongeBob SquarePants", TvdbId: "75886", EpisodeTvdbID: "1001", Season: 10, Episode: 1, EpisodeMeta: &eps[0],
+		Pack: &models.PackInfo{Season: 10, Seasons: []int{10}, Episodes: eps},
+	}}
+
+	require.NoError(t, mp.ProcessDownloadedTorrent(context.Background(), event))
+	assert.Equal(t, map[string]string{"1001": "linked", "1002": "linked", "1003": "not in the season pack"}, event.PackResults)
+}
