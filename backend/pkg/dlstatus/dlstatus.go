@@ -25,6 +25,7 @@ const (
 	CodeMonitorLost           FailureCode = "monitor_lost"            // transient
 	CodeTorrenterUnreachable  FailureCode = "torrenter_unreachable"   // transient (set by webserver client)
 	CodeInsufficientDiskSpace FailureCode = "insufficient_disk_space" // transient: space may be freed
+	CodeNoPack                FailureCode = "no_pack"                 // transient: a pack-only request left it uncovered
 	CodeProcessingError       FailureCode = "processing_error"        // permanent
 	CodeInvalidMedia          FailureCode = "invalid_media"           // permanent
 	CodeMaxRetries            FailureCode = "max_retries_exceeded"    // permanent
@@ -47,7 +48,8 @@ func (c FailureCode) Category() FailureCategory {
 		CodeTorrentClientError,
 		CodeMonitorLost,
 		CodeTorrenterUnreachable,
-		CodeInsufficientDiskSpace:
+		CodeInsufficientDiskSpace,
+		CodeNoPack:
 		return CategoryTransient
 	case CodeProcessingError,
 		CodeInvalidMedia,
@@ -74,6 +76,8 @@ func (c FailureCode) HumanReason() string {
 		return "Download service unreachable — will retry"
 	case CodeInsufficientDiskSpace:
 		return "Not enough free disk space — will retry"
+	case CodeNoPack:
+		return "No season pack covers it — searching per episode"
 	case CodeProcessingError:
 		return "Failed to process the downloaded files"
 	case CodeInvalidMedia:

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"sync"
 	"time"
 
@@ -233,7 +234,13 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 
 		// Season packs (opt-in): one torrent for a season's worth of episodes,
 		// falling back to per-episode searches for whatever no pack covered.
-		if packResults, packed := q.tryPacks(ctx, req, episodesToDownload, done, &wg); len(packed) > 0 {
+		// The pack phase is bounded like one episode's search, so a request
+		// that goes on to hand its episodes over one by one gets an answer
+		// within the caller's deadline.
+		packCtx, cancelPacks := context.WithTimeout(ctx, episodeSearchDeadline)
+		packResults, packed := q.tryPacks(packCtx, req, episodesToDownload, done, &wg)
+		cancelPacks()
+		if len(packed) > 0 {
 			results = append(results, packResults...)
 			episodesToDownload = withoutEpisodes(episodesToDownload, packed)
 			if len(episodesToDownload) == 0 {
@@ -244,6 +251,28 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 				}()
 				return results, nil
 			}
+		}
+
+		// A pack-only request stops here: the episodes no pack covered go
+		// back to the caller as "no_pack", to be searched one at a time.
+		if req.PackOnly {
+			for _, ep := range episodesToDownload {
+				results = append(results, dlstatus.EpisodeResult{
+					TvdbID:  strconv.Itoa(ep.Id),
+					Season:  ep.SeasonNumber,
+					Episode: ep.Number,
+					Outcome: dlstatus.OutcomeFailed,
+					Code:    dlstatus.CodeNoPack,
+					Reason:  dlstatus.CodeNoPack.HumanReason(),
+				})
+			}
+			q.logger.InfoContext(ctx, "Pack-only request answered",
+				telemetry.WithTraceContext(ctx, "show", req.Name, "packed", len(packed), "uncovered", len(episodesToDownload))...)
+			go func() {
+				wg.Wait()
+				close(done)
+			}()
+			return results, nil
 		}
 
 		// Build search strategies for each episode

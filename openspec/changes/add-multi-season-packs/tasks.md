@@ -10,7 +10,9 @@
 - [x] 2.2 `validatePack`/`packQueries`/`searchForPack` take the wanted seasons; oversize packs scored below exact ones
 - [x] 2.3 `tryPacks` tries one pack across all seasons, then per season, then per episode
 - [x] 2.4 Shared file matcher reads season folders; packs are added paused, `trimPackFiles` deselects unwanted files once the list is known, the space guard runs on the trimmed size, then the torrent is started; pack siblings are marked lost when a pack torrent is given up on
-- [x] 2.5 Tests: name matching, names and ladder size, waiting/error states, exclusion expiry, tier budget, range parsing, multi-season validation and selection, file matching, trimming, landing
+- [x] 2.5 Webserver pack-first dispatch (`dispatchPacksFirst`, `PackOnly`, `no_pack`); torrenter answers pack-only requests within the search deadline
+- [x] 2.6 Multi-episode pack files linked as "S##E##-E##"; unusable packs given up on
+- [x] 2.7 Tests: name matching, names and ladder size, waiting/error states, exclusion expiry, tier budget, range parsing, multi-season validation and selection, file matching, trimming, landing
 
 ## 3. Verify
 - [x] 3.1 `go vet ./...`, `go test ./...`

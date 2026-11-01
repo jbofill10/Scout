@@ -389,20 +389,25 @@ func TestTrimPackFiles_DeselectsUnwantedFiles(t *testing.T) {
 	_, seasons, eps := multiSeasonShow()
 	pack := &models.PackInfo{Season: 5, Seasons: seasons, Episodes: eps}
 
-	assert.True(t, q.trimPackFiles(context.Background(), "pack-hash", pack))
+	done, usable := q.trimPackFiles(context.Background(), "pack-hash", pack)
+	assert.True(t, done)
+	assert.True(t, usable)
 	assert.Equal(t, []string{"1|3|4=0"}, qb.priorities())
 
 	// No file list yet (a magnet still fetching metadata): try again later.
 	qb.files = nil
-	assert.False(t, q.trimPackFiles(context.Background(), "pack-hash", pack))
+	done, _ = q.trimPackFiles(context.Background(), "pack-hash", pack)
+	assert.False(t, done)
 
-	// Nothing matched: keep the whole pack rather than download nothing.
+	// Nothing matched: the pack is not usable, nothing is deselected.
 	qb.files = []map[string]any{
 		{"index": 0, "name": "Pack/disc1.iso", "size": 100, "priority": 1},
 		{"index": 1, "name": "Pack/disc2.iso", "size": 100, "priority": 1},
 	}
 	qb.prio = nil
-	assert.True(t, q.trimPackFiles(context.Background(), "pack-hash", pack))
+	done, usable = q.trimPackFiles(context.Background(), "pack-hash", pack)
+	assert.True(t, done)
+	assert.False(t, usable)
 	assert.Empty(t, qb.priorities())
 }
 
@@ -549,4 +554,71 @@ func TestMonitor_PackRemovedWhenTrimmedFilesDoNotFit(t *testing.T) {
 		statuses, "both pack episodes wait for the retry engine")
 	repo.AssertNotCalled(t, "InsertFailedTorrent", mock.Anything, mock.Anything)
 	repo.AssertExpectations(t)
+}
+
+// A file named for a run of episodes holds every wanted episode in the run.
+func TestPackFileEpisodes_MultiEpisodeFile(t *testing.T) {
+	_, seasons, eps := multiSeasonShow()
+	pack := &models.PackInfo{Season: 5, Seasons: seasons, Episodes: eps}
+	byKey := packEpisodeIndex(pack)
+	parser := NewTorrentParser()
+
+	got := packFileEpisodes(parser, "Pack/Season 07/SpongeBob SquarePants S07E01-E02 1080p.mkv", pack, byKey)
+	require.Len(t, got, 2)
+	assert.Equal(t, [2]int{7, 1}, [2]int{got[0].SeasonNumber, got[0].Number})
+	assert.Equal(t, [2]int{7, 2}, [2]int{got[1].SeasonNumber, got[1].Number})
+
+	got = packFileEpisodes(parser, "Pack/Season 07/SpongeBob SquarePants S07E03-E04 1080p.mkv", pack, byKey)
+	require.Len(t, got, 1, "only episode 3 of the run was wanted")
+	assert.Equal(t, 3, got[0].Number)
+
+	assert.Empty(t, packFileEpisodes(parser, "Pack/Season 07/SpongeBob SquarePants S07E10-E11 1080p.mkv", pack, byKey))
+}
+
+// A landed multi-episode file is linked once under Plex's multi-episode name
+// and both episodes are reported linked.
+func TestProcessPack_MultiEpisodeFileLinkedAsRange(t *testing.T) {
+	fs := mocks.NewFileSystem(t)
+	repo := repomocks.NewRepository(t)
+	fs.On("WalkFiles", "/dl/SpongeBob.S07").Return([]models.FileEntry{
+		{Path: "SpongeBob.SquarePants.S07E01-E02.1080p.WEB.mkv", Size: 100},
+	}, nil)
+	repo.On("GetShowBaseDirectory", mock.Anything, "75886").Return("/lib/SpongeBob", nil)
+	fs.On("MkDir", "/lib/SpongeBob/Season 07").Return(nil)
+	fs.On("HardLink", "/dl/SpongeBob.S07/SpongeBob.SquarePants.S07E01-E02.1080p.WEB.mkv",
+		"/lib/SpongeBob/Season 07/SpongeBob SquarePants - S07E01-E02.mkv").Return(nil)
+
+	mp := NewMediaProcessSvc(slog.New(slog.NewTextHandler(new(bytes.Buffer), nil)), repo, fs, nil)
+	eps := []tvdb.Episode{{Id: 701, SeasonNumber: 7, Number: 1}, {Id: 702, SeasonNumber: 7, Number: 2}, {Id: 703, SeasonNumber: 7, Number: 3}}
+	event := &models.TorrentCompleteEvent{SavePath: "/dl/SpongeBob.S07", Req: &models.SearchStrategy{
+		MediaName: "SpongeBob SquarePants", TvdbId: "75886", EpisodeTvdbID: "701", Season: 7, Episode: 1, EpisodeMeta: &eps[0],
+		Pack: &models.PackInfo{Season: 7, Seasons: []int{7}, Episodes: eps},
+	}}
+
+	require.NoError(t, mp.ProcessDownloadedTorrent(context.Background(), event))
+	assert.Equal(t, map[string]string{"701": "linked", "702": "linked", "703": "not in the season pack"}, event.PackResults)
+	fs.AssertNumberOfCalls(t, "HardLink", 1)
+}
+
+// A pack-only request never searches per episode: with packs off, every
+// episode comes back as no_pack for the caller to send one at a time.
+func TestHandleDownload_PackOnlyAnswersNoPack(t *testing.T) {
+	repo := repomocks.NewRepository(t)
+	repo.On("EpisodeExistsByTvdbId", mock.Anything, "75886", mock.Anything, mock.Anything).Return(false, nil)
+	repo.On("GetActiveTorrents", mock.Anything).Return(nil, nil)
+	q := newResumeTestHandler(t, repo)
+	q.inflight = newInflightRegistry()
+	req := &tvdb.Media{Id: "75886", Name: "SpongeBob SquarePants", Category: "series", PackOnly: true}
+	req.Metadata.Episodes = []tvdb.Episode{{Id: 701, SeasonNumber: 7, Number: 1}, {Id: 702, SeasonNumber: 7, Number: 2}}
+	done := make(chan models.TorrentCompleteEvent, 1)
+
+	results, err := q.HandleDownload(context.Background(), req, done)
+
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+	for _, r := range results {
+		assert.Equal(t, dlstatus.OutcomeFailed, r.Outcome)
+		assert.Equal(t, dlstatus.CodeNoPack, r.Code)
+	}
+	assert.True(t, closed(t, done), "done is closed once the pack phase is over")
 }

@@ -47,6 +47,9 @@ var (
 		`(?i)\b(complete series|complete collection|complete show|full series|entire series|all seasons|the complete)\b`)
 	// packDirSeasonRe matches a season folder inside a pack: "Season 05", "S05", "Season.5".
 	packDirSeasonRe = regexp.MustCompile(`(?i)^(?:season|s)[ ._-]?(\d{1,2})$`)
+	// packFileRunRe reads the last episode of a run named "S07E01-E02",
+	// "S07E01-02" or "S07E01E02" off a file name.
+	packFileRunRe = regexp.MustCompile(`(?i)\bS\d{1,2}E(\d{1,3})(?:[ ._-]?(?:-|–)?[ ._-]?E|-)(\d{1,3})\b`)
 )
 
 // parsePack reads a season-pack style title. It is deliberately separate from
@@ -438,55 +441,85 @@ func packFileSeason(path string, pack *models.PackInfo) int {
 	return pack.Season
 }
 
-// packFileEpisode matches one file of a landed or listed pack to the wanted
-// episode it holds, by the file's own numbering: S##E##, an absolute number,
-// or a bare episode number read against the season folder it sits in.
-func packFileEpisode(parser *TorrentParser, path string, pack *models.PackInfo, byKey map[string]tvdb.Episode) (tvdb.Episode, bool) {
+// packFileEpisodes matches one file of a landed or listed pack to the wanted
+// episodes it holds, by the file's own numbering: S##E##, an absolute number,
+// or a bare episode number read against the season folder it sits in. A
+// file named for a run of episodes ("S07E01-E02", common for shows whose
+// segments TVDB lists separately) yields every wanted episode in the run,
+// in order. An empty result means the file holds nothing that was wanted.
+func packFileEpisodes(parser *TorrentParser, path string, pack *models.PackInfo, byKey map[string]tvdb.Episode) []tvdb.Episode {
 	name := filepath.Base(path)
 	parsed := parser.Parse(name)
 	if parsed == nil {
 		// Bare "E05" / "05" names inside a season folder.
 		parsed = parsePackFileFallback(name, packFileSeason(path, pack))
 	}
-	if parsed == nil || parsed.IsMultiEpisode() {
+	if parsed == nil {
+		return nil
+	}
+	last := parsed.Episode
+	if parsed.IsMultiEpisode() {
+		last = parsed.EpisodeEnd
+	} else if m := packFileRunRe.FindStringSubmatch(name); m != nil && !parsed.IsAbsolute {
+		if first, err := strconv.Atoi(m[1]); err == nil && first == parsed.Episode {
+			if end, err := strconv.Atoi(m[2]); err == nil && end > first && end-first < 10 {
+				last = end
+			}
+		}
+	}
+	out := []tvdb.Episode{}
+	for n := parsed.Episode; n <= last; n++ {
+		if parsed.IsAbsolute {
+			if ep, ok := byKey[fmt.Sprintf("abs%d", n)]; ok {
+				out = append(out, ep)
+				continue
+			}
+			if ep, ok := byKey[fmt.Sprintf("s%de%d", packFileSeason(path, pack), n)]; ok {
+				out = append(out, ep)
+			}
+			continue
+		}
+		season := parsed.Season
+		if season == 0 {
+			season = packFileSeason(path, pack)
+		}
+		if ep, ok := byKey[fmt.Sprintf("s%de%d", season, n)]; ok {
+			out = append(out, ep)
+		}
+	}
+	return out
+}
+
+// packFileEpisode is packFileEpisodes for callers that only need to know the
+// first wanted episode a file holds.
+func packFileEpisode(parser *TorrentParser, path string, pack *models.PackInfo, byKey map[string]tvdb.Episode) (tvdb.Episode, bool) {
+	eps := packFileEpisodes(parser, path, pack, byKey)
+	if len(eps) == 0 {
 		return tvdb.Episode{}, false
 	}
-	if parsed.IsAbsolute {
-		if ep, ok := byKey[fmt.Sprintf("abs%d", parsed.Episode)]; ok {
-			return ep, true
-		}
-		ep, ok := byKey[fmt.Sprintf("s%de%d", packFileSeason(path, pack), parsed.Episode)]
-		return ep, ok
-	}
-	season := parsed.Season
-	if season == 0 {
-		season = packFileSeason(path, pack)
-	}
-	ep, ok := byKey[fmt.Sprintf("s%de%d", season, parsed.Episode)]
-	return ep, ok
+	return eps[0], true
 }
 
 // trimPackFiles deselects, in qBittorrent, the files of a pack that hold no
 // wanted episode, so a complete-series pack fetched for six seasons does not
-// download the other seven. It reports whether the pack has been dealt with:
-// false means the file list was not available yet (a magnet still fetching
-// metadata) and the caller should try again. Any failure to trim leaves the
-// whole pack downloading, which is only slower.
-func (q *QbittHandler) trimPackFiles(ctx context.Context, infoHash string, pack *models.PackInfo) bool {
+// download the other seven. done is false while the file list is not
+// available yet (a magnet still fetching metadata) and the caller should try
+// again. usable is false when not one file could be matched to a wanted
+// episode: downloading a whole pack blind is not what was asked for, so the
+// caller gives it up. A failure to trim a usable pack leaves all of it
+// downloading, which is only slower.
+func (q *QbittHandler) trimPackFiles(ctx context.Context, infoHash string, pack *models.PackInfo) (done, usable bool) {
 	if pack == nil {
-		return true
+		return true, true
 	}
 	files, err := q.c.GetFilesInformationCtx(ctx, infoHash)
 	if err != nil {
 		q.logger.WarnContext(ctx, "Could not list the pack's files, downloading all of it",
 			telemetry.WithTraceContext(ctx, "torrent_hash", infoHash, "error", err.Error())...)
-		return true
+		return true, true
 	}
 	if files == nil || len(*files) == 0 {
-		return false
-	}
-	if len(*files) == 1 {
-		return true
+		return false, true
 	}
 	byKey := packEpisodeIndex(pack)
 	wanted, skip := 0, []string{}
@@ -500,19 +533,19 @@ func (q *QbittHandler) trimPackFiles(ctx context.Context, infoHash string, pack 
 		skip = append(skip, strconv.Itoa(f.Index))
 	}
 	if wanted == 0 {
-		q.logger.WarnContext(ctx, "No file in the pack matched a wanted episode, downloading all of it",
+		q.logger.WarnContext(ctx, "No file in the pack matched a wanted episode",
 			telemetry.WithTraceContext(ctx, "torrent_hash", infoHash, "files", len(*files))...)
-		return true
+		return true, false
 	}
 	if len(skip) == 0 {
-		return true
+		return true, true
 	}
 	if err := q.c.SetFilePriorityCtx(ctx, infoHash, strings.Join(skip, "|"), 0); err != nil {
 		q.logger.WarnContext(ctx, "Could not deselect the pack's unwanted files, downloading all of it",
 			telemetry.WithTraceContext(ctx, "torrent_hash", infoHash, "error", err.Error())...)
-		return true
+		return true, true
 	}
 	q.logger.InfoContext(ctx, "Pack trimmed to the wanted episodes",
 		telemetry.WithTraceContext(ctx, "torrent_hash", infoHash, "wanted_files", wanted, "skipped_files", len(skip))...)
-	return true
+	return true, true
 }

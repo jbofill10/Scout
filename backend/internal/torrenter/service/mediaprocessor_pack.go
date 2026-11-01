@@ -35,11 +35,12 @@ func (mp *MediaProcessSvc) processPack(ctx context.Context, event *models.Torren
 		if !isVideoFile(f.Path) {
 			continue
 		}
-		ep, ok := packFileEpisode(parser, f.Path, pack, byKey)
-		if !ok {
+		eps := packFileEpisodes(parser, f.Path, pack, byKey)
+		if len(eps) == 0 {
 			mp.Logger.InfoContext(ctx, "Pack file not matched to an episode", "file", f.Path)
 			continue
 		}
+		ep := eps[0]
 		id := strconv.Itoa(ep.Id)
 		if event.PackResults[id] == "linked" {
 			continue // a second copy of the same episode (sample, alt audio)
@@ -52,13 +53,20 @@ func (mp *MediaProcessSvc) processPack(ctx context.Context, event *models.Torren
 		strategy.Season = ep.SeasonNumber
 		strategy.Episode = ep.Number
 		strategy.Pack = nil
+		if last := eps[len(eps)-1]; last.Number > ep.Number && last.SeasonNumber == ep.SeasonNumber {
+			strategy.EpisodeEnd = last.Number // one file, a run of episodes: "S07E01-E02"
+		}
 		single.Req = &strategy
 		if err := mp.linkFile(ctx, &single, f.Path); err != nil {
 			mp.Logger.ErrorContext(ctx, "Failed to link pack episode", "file", f.Path, "episode", ep.Number, "error", err)
-			event.PackResults[id] = "failed to link: " + err.Error()
+			for _, e := range eps {
+				event.PackResults[strconv.Itoa(e.Id)] = "failed to link: " + err.Error()
+			}
 			continue
 		}
-		event.PackResults[id] = "linked"
+		for _, e := range eps {
+			event.PackResults[strconv.Itoa(e.Id)] = "linked"
+		}
 		linked++
 	}
 

@@ -15,6 +15,7 @@ import (
 	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 	"github.com/jbofill10/scout/backend/pkg/notifications"
+	"github.com/jbofill10/scout/backend/pkg/settings"
 	status "github.com/jbofill10/scout/backend/pkg/status"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
@@ -484,7 +485,8 @@ func (i *DownloadInteractor) dispatchShowDownload(
 
 	traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
 	unhandled := 0
-	for _, ep := range payload.Metadata.Episodes {
+	episodes := i.dispatchPacksFirst(ctx, payload, extendedInfo, isAnime, traceID, spanID)
+	for _, ep := range episodes {
 		single := payload
 		single.Metadata.Episodes = []tvdb.Episode{ep}
 
@@ -630,6 +632,88 @@ func (i *DownloadInteractor) dispatchMovieDownload(ctx context.Context, req tvdb
 		i.logger.ErrorContext(ctx, "Movie download failure could not be scheduled for retry",
 			"error", scheduleErr, "movie", req.Name)
 	}
+}
+
+// packSettingsReader is what the torrenter client offers beyond dispatching:
+// the runtime settings, which say whether packs are on.
+type packSettingsReader interface {
+	Settings(ctx context.Context) (settings.View, error)
+}
+
+// dispatchPacksFirst hands the whole episode set to the torrenter as a
+// pack-only request when season packs are on and the request has enough
+// episodes for one, records the episodes a pack covered, settles any other
+// failure, and returns the episodes still to be sent one at a time. With
+// packs off, or when the torrenter cannot be asked, every episode is returned.
+func (i *DownloadInteractor) dispatchPacksFirst(
+	ctx context.Context,
+	payload tvdb.Media,
+	extendedInfo tvdb.TVDBSeriesExtendedResponse,
+	isAnime bool,
+	traceID, spanID string,
+) []tvdb.Episode {
+	episodes := payload.Metadata.Episodes
+	reader, ok := i.torrenterClient.(packSettingsReader)
+	if !ok || len(episodes) < 2 {
+		return episodes
+	}
+	view, err := reader.Settings(ctx)
+	if err != nil {
+		i.logger.WarnContext(ctx, "Could not read torrenter settings, sending episodes one at a time", "error", err)
+		return episodes
+	}
+	if !view.Values.SeasonPacks || len(episodes) < view.Values.SeasonPackMinEpisodes {
+		return episodes
+	}
+
+	packReq := payload
+	packReq.PackOnly = true
+	resp, err := i.torrenterClient.Download(ctx, packReq)
+	if err != nil {
+		i.logger.WarnContext(ctx, "Pack request failed, sending episodes one at a time",
+			"error", err, "media", payload.Name, "episodes", len(episodes))
+		return episodes
+	}
+
+	episodeByID := make(map[string]tvdb.Episode, len(episodes))
+	for _, ep := range episodes {
+		episodeByID[strconv.Itoa(ep.Id)] = ep
+	}
+	answered := map[string]bool{}
+	others := dlstatus.DownloadResponse{}
+	packed := 0
+	for _, r := range resp.Results {
+		answered[r.TvdbID] = true
+		switch {
+		case r.Outcome == dlstatus.OutcomeDownloading:
+			packed++
+			if ep, ok := episodeByID[r.TvdbID]; ok {
+				i.recordDispatched(ctx, i.buildScheduledMedia(payload, extendedInfo, isAnime, ep), traceID, spanID)
+			}
+		case r.Outcome == dlstatus.OutcomeExists:
+		case r.Code == dlstatus.CodeNoPack:
+			answered[r.TvdbID] = false
+		default:
+			others.Results = append(others.Results, r)
+		}
+	}
+	if len(others.Results) > 0 {
+		if allScheduled, scheduleErr := i.handleImmediateShowFailures(ctx, packReq, extendedInfo, isAnime, others,
+			traceID, spanID); !allScheduled || scheduleErr != nil {
+			i.logger.ErrorContext(ctx, "Pack request failure could not be scheduled for retry", "error", scheduleErr,
+				"media", payload.Name)
+		}
+	}
+
+	rest := []tvdb.Episode{}
+	for _, ep := range episodes {
+		if !answered[strconv.Itoa(ep.Id)] {
+			rest = append(rest, ep)
+		}
+	}
+	i.logger.InfoContext(ctx, "Pack-first dispatch", "media", payload.Name, "episodes", len(episodes),
+		"packed", packed, "per_episode", len(rest))
+	return rest
 }
 
 // handleImmediateShowFailures inspects an immediate show download response and,

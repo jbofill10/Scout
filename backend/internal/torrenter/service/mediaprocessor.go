@@ -152,6 +152,9 @@ func (mp *MediaProcessSvc) linkFile(ctx context.Context, media *models.TorrentCo
 	if !media.Req.IsMovie && media.Req.EpisodeMeta != nil {
 		// Show: Always use seasonal format regardless of search strategy
 		fileName = mp.constructPlexFilename(media.Req.MediaName, media.Req.EpisodeMeta, originalFileName)
+		if media.Req.EpisodeEnd > media.Req.EpisodeMeta.Number {
+			fileName = mp.constructPlexFilenameRange(media.Req.MediaName, media.Req.EpisodeMeta, media.Req.EpisodeEnd, originalFileName)
+		}
 		mp.Logger.InfoContext(ctx, "Constructed Plex filename",
 			"original", originalFileName,
 			"plex_format", fileName,
@@ -327,6 +330,18 @@ func standardizeNumber(num int) string {
 		return "0" + fmt.Sprintf("%d", num)
 	}
 	return fmt.Sprintf("%d", num)
+}
+
+// constructPlexFilenameRange names a file that holds episodes first through
+// end of one season the way Plex reads a multi-episode file: "ShowName - S##E##-E##.ext".
+func (mp *MediaProcessSvc) constructPlexFilenameRange(mediaName string, first *tvdb.Episode, end int, originalFileName string) string {
+	return fmt.Sprintf("%s - S%sE%s-E%s%s",
+		mediaName,
+		standardizeNumber(first.SeasonNumber),
+		standardizeNumber(first.Number),
+		standardizeNumber(end),
+		filepath.Ext(originalFileName),
+	)
 }
 
 // constructPlexFilename creates a Plex-friendly filename in the format "ShowName - S##E##.ext"

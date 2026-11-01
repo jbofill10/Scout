@@ -90,6 +90,11 @@ type Media struct {
 	// "scheduled" (an air-date dispatch), "follow", "missing" or "upgrade".
 	// The torrenter orders its indexer searches by it.
 	Source string `json:"source,omitempty"`
+	// PackOnly asks the torrenter to cover the request's episodes with season
+	// packs only: episodes no pack covers come back with code "no_pack"
+	// instead of being searched one by one, so the caller can hand them over
+	// one at a time within its own deadline.
+	PackOnly bool `json:"packOnly,omitempty"`
 	// Information about series, such as episodes, date aired, etc.
 	Metadata TVDBSeriesMetadata `json:"metadata"`
 }

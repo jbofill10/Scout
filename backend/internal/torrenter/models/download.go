@@ -125,6 +125,10 @@ type SearchStrategy struct {
 	// Pack is set when this torrent is a season pack covering several
 	// episodes; EpisodeTvdbID/EpisodeMeta then refer to the first of them.
 	Pack *PackInfo
+	// EpisodeEnd is set when one landed file holds a run of episodes
+	// (Episode through EpisodeEnd of the same season), so it is linked under
+	// a multi-episode name Plex reads as all of them.
+	EpisodeEnd int
 }
 
 type TorrentMatch struct {
