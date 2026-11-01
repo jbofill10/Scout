@@ -622,3 +622,55 @@ func TestHandleDownload_PackOnlyAnswersNoPack(t *testing.T) {
 	}
 	assert.True(t, closed(t, done), "done is closed once the pack phase is over")
 }
+
+// A pack added from a magnet has no file list while paused: qBittorrent only
+// fetches metadata for a running torrent. The monitor starts it, trims once
+// the files are known, checks the space, and the download completes.
+func TestMonitor_PausedMagnetPackIsStartedForMetadata(t *testing.T) {
+	fastPolls(t)
+	orig := freeSpaceFn
+	freeSpaceFn = func(string) (uint64, error) { return 500, nil }
+	t.Cleanup(func() { freeSpaceFn = orig })
+
+	qb := &fakeQbittorrent{}
+	qb.info = func(poll int) []map[string]any {
+		resumed := len(qb.resumedHashes())
+		switch {
+		case resumed == 0: // paused magnet, no metadata yet
+			tr := qbitTorrent("pack-hash", 0, 0, 0, "pausedDL")
+			tr["size"] = int64(0)
+			return []map[string]any{tr}
+		case len(qb.priorities()) == 0: // started: metadata arrives, files appear
+			qb.mu.Lock()
+			qb.files = packTestFiles()
+			qb.mu.Unlock()
+			tr := qbitTorrent("pack-hash", 0, 2, 100, "downloading")
+			tr["size"] = int64(1000)
+			return []map[string]any{tr}
+		case resumed < 2: // trimmed, waiting for the space check to start it
+			tr := qbitTorrent("pack-hash", 0, 2, 100, "downloading")
+			tr["size"] = int64(200)
+			return []map[string]any{tr}
+		}
+		return []map[string]any{qbitTorrent("pack-hash", 1, 3, 0, "uploading")}
+	}
+	repo := repomocks.NewRepository(t)
+	q := newCancelTestHandler(t, repo, qb)
+	q.settings = &fakePickerSettings{reserve: 100}
+
+	var wg sync.WaitGroup
+	done := make(chan models.TorrentCompleteEvent, 1)
+	wg.Add(1)
+	go q.monitorTorrentCompletion(context.Background(), packTestMatch(), nil, "pack-hash", "uuid-1", time.Now(), done, &wg)
+
+	select {
+	case ev := <-done:
+		assert.Equal(t, "pack-hash", ev.Hash)
+	case <-time.After(5 * time.Second):
+		t.Fatal("a paused magnet pack must be started for its metadata and complete")
+	}
+	wg.Wait()
+	assert.Equal(t, []string{"2=0"}, qb.priorities(), "trimmed once the files were known")
+	assert.GreaterOrEqual(t, len(qb.resumedHashes()), 2, "started for metadata, then started after the space check")
+	assert.Empty(t, qb.deletedHashes())
+}

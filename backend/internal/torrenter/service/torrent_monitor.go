@@ -306,6 +306,20 @@ func (q *QbittHandler) monitorTorrentCompletion(
 				if packTrimmed {
 					continue // the next poll reports the size of the files left selected
 				}
+				if isWaitingState(torrent.State) {
+					// A paused magnet never fetches its metadata, so there is no
+					// file list to trim. Start it; trimming and the space check
+					// follow as soon as the files are known, a poll or two of
+					// downloading at most.
+					if err := q.c.ResumeCtx(monitorCtx, []string{infoHash}); err != nil {
+						q.logger.WarnContext(monitorCtx, "Failed to start the pack to fetch its metadata, will try again",
+							telemetry.WithTraceContext(monitorCtx, "torrent_hash", infoHash, "error", err.Error())...)
+					} else {
+						q.logger.InfoContext(monitorCtx, "Starting the pack to fetch its metadata",
+							telemetry.WithTraceContext(monitorCtx, "torrent_title", match.Torrent.Title, "torrent_hash", infoHash)...)
+					}
+					continue
+				}
 			}
 			if packTrimmed && !packStarted {
 				// The pack was added paused. Now that only the wanted files are
