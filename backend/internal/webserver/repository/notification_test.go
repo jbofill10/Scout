@@ -463,3 +463,22 @@ func (s *NotificationRepoTestSuite) TestExistingTvdbIDs() {
 	s.Empty(empty)
 	s.NoError(s.mock.ExpectationsWereMet())
 }
+
+// ActiveTvdbIDs only counts rows still in flight: scheduled, searching or
+// downloading, and not dismissed. Terminal rows do not stop a new request.
+func (s *NotificationRepoTestSuite) TestActiveTvdbIDs() {
+	live := []string{"scheduled", "searching", "downloading"}
+	s.mock.ExpectQuery(`SELECT DISTINCT tvdb_id FROM Notifications\s+WHERE tvdb_id = ANY\(\$1\) AND auto_dismissed = false AND status = ANY\(\$2\)`).
+		WithArgs(pq.Array([]string{"1", "2", "3"}), pq.Array(live)).
+		WillReturnRows(sqlmock.NewRows([]string{"tvdb_id"}).AddRow("3"))
+
+	found, err := s.repo.ActiveTvdbIDs(context.Background(), []string{"1", "2", "3"})
+
+	s.NoError(err)
+	s.Equal(map[string]bool{"3": true}, found)
+
+	empty, err := s.repo.ActiveTvdbIDs(context.Background(), nil)
+	s.NoError(err)
+	s.Empty(empty)
+	s.NoError(s.mock.ExpectationsWereMet())
+}

@@ -45,7 +45,7 @@ func (h *DownloadHandler) DownloadShow(c *gin.Context) {
 
 	h.logger.InfoContext(ctx, "Successfully processed show",
 		telemetry.WithTraceContext(ctx, "show", req.Name,
-			"queued_now", summary.QueuedNow, "scheduled", summary.Scheduled, "skipped", summary.Skipped)...)
+			"queued_now", summary.QueuedNow, "scheduled", summary.Scheduled, "skipped", summary.Skipped, "in_progress", summary.InProgress)...)
 	// 202: the episodes are accepted and being searched for in the background.
 	c.JSON(202, summary)
 }
@@ -81,7 +81,7 @@ func (h *DownloadHandler) DownloadMovie(c *gin.Context) {
 
 	h.logger.InfoContext(ctx, "Successfully processed movie",
 		telemetry.WithTraceContext(ctx, "movie", req.Name,
-			"queued_now", summary.QueuedNow, "scheduled", summary.Scheduled, "skipped", summary.Skipped)...)
+			"queued_now", summary.QueuedNow, "scheduled", summary.Scheduled, "skipped", summary.Skipped, "in_progress", summary.InProgress)...)
 	// 202: the movie is accepted and being searched for in the background.
 	c.JSON(202, summary)
 }

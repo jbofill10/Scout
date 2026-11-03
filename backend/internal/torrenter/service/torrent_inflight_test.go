@@ -101,3 +101,69 @@ func TestHandleDownload_MovieAlreadyInFlightIsReportedDownloading(t *testing.T) 
 	assert.Equal(t, dlstatus.EpisodeResult{TvdbID: "900", Outcome: dlstatus.OutcomeDownloading}, results[0])
 	assert.True(t, closed(t, done), "done must be closed so the completion handler exits")
 }
+
+// A search another request started counts as in flight too, so a repeat
+// request made while it runs does not start a second one. The notification is
+// that search's to update, so it is not touched here.
+func TestFilterInFlightEpisodes_SkipsEpisodesBeingSearched(t *testing.T) {
+	repo := repomocks.NewRepository(t)
+	repo.On("GetActiveTorrents", mock.Anything).Return([]*models.ActiveTorrent{}, nil)
+
+	q := newResumeTestHandler(t, repo)
+	q.inflight = newInflightRegistry()
+	unregister := q.inflight.add("12", &inflightWork{cancel: func() {}})
+	defer unregister()
+	req := &tvdb.Media{Id: "555", Name: "Test Show", Category: "series"}
+
+	toDownload, skipped := q.filterInFlightEpisodes(context.Background(), req, inFlightTestEpisodes())
+
+	require.Len(t, toDownload, 2)
+	assert.Equal(t, 11, toDownload[0].Id)
+	assert.Equal(t, 13, toDownload[1].Id)
+	require.Len(t, skipped, 1)
+	assert.Equal(t, dlstatus.EpisodeResult{TvdbID: "12", Season: 1, Episode: 2, Outcome: dlstatus.OutcomeDownloading}, skipped[0])
+	repo.AssertNotCalled(t, "GetNotification", mock.Anything, "12")
+}
+
+// Two requests for the same movie seconds apart used to run two searches and
+// leave one of their notifications stranded on "searching"; the second now
+// defers to the first without touching the database.
+func TestHandleDownload_MovieBeingSearchedIsReportedDownloading(t *testing.T) {
+	repo := repomocks.NewRepository(t)
+	repo.On("MovieExistsByTvdbId", mock.Anything, "900").Return(false, nil)
+
+	q := newResumeTestHandler(t, repo)
+	q.inflight = newInflightRegistry()
+	unregister := q.inflight.add("900", &inflightWork{cancel: func() {}})
+	defer unregister()
+	req := &tvdb.Media{Id: "900", Name: "Test Movie", Category: "movie"}
+	done := make(chan models.TorrentCompleteEvent, 1)
+
+	results, err := q.HandleDownload(context.Background(), req, done)
+
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, dlstatus.EpisodeResult{TvdbID: "900", Outcome: dlstatus.OutcomeDownloading}, results[0])
+	assert.True(t, closed(t, done), "done must be closed so the completion handler exits")
+}
+
+// Only a running search counts: a monitored download is found through
+// ActiveTorrents, and a nil registry (handlers built by hand) is inert.
+func TestInflightRegistry_Searching(t *testing.T) {
+	var none *inflightRegistry
+	assert.False(t, none.searching("1"))
+
+	r := newInflightRegistry()
+	assert.False(t, r.searching("1"))
+
+	unregisterMonitor := r.add("1", &inflightWork{cancel: func() {}, infoHash: "abc"})
+	assert.False(t, r.searching("1"), "a monitored torrent is not a search")
+
+	unregisterSearch := r.add("1", &inflightWork{cancel: func() {}})
+	assert.True(t, r.searching("1"))
+
+	unregisterSearch()
+	assert.False(t, r.searching("1"))
+	unregisterMonitor()
+	assert.False(t, r.searching("1"))
+}

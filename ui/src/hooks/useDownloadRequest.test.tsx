@@ -169,6 +169,8 @@ describe("describeSummary", () => {
     ["queued and scheduled", { queued_now: 1, scheduled: 1 }, undefined, "Severance: searching for 1 episode now, 1 episode scheduled for release"],
     ["scheduled movie", { category: "movie", queued_now: 0, scheduled: 1 }, undefined, "Severance: 1 movie scheduled for release"],
     ["skipped only", { queued_now: 0, skipped: 2 }, undefined, "Severance: already tracked — nothing new to download"],
+    ["movie already in progress", { category: "movie", queued_now: 0, in_progress: 1 }, undefined, "Severance: already in progress"],
+    ["episodes already in progress", { queued_now: 1, in_progress: 2 }, undefined, "Severance: searching for 1 episode now, 2 episodes already in progress"],
     ["nothing at all", { queued_now: 0 }, undefined, "Severance: nothing to download"],
     ["fallback title", { media_title: "", queued_now: 0 }, "Fallback", "Fallback: nothing to download"],
     ["no title anywhere", { media_title: "", queued_now: 0 }, undefined, "Media: nothing to download"],

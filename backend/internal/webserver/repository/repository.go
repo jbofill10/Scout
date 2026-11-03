@@ -26,6 +26,11 @@ type NotificationRepository interface {
 	// notification (any status), so a follow check can skip them
 	ExistingTvdbIDs(ctx context.Context, tvdbIDs []string) (map[string]bool, error)
 
+	// ActiveTvdbIDs reports which of the given item keys have a notification
+	// still in flight (scheduled, searching or downloading, not dismissed), so
+	// a repeat request can skip what Scout is already working on
+	ActiveTvdbIDs(ctx context.Context, tvdbIDs []string) (map[string]bool, error)
+
 	// PendingDeliveries returns terminal notifications whose status has not been
 	// delivered to outbound targets yet, oldest change first
 	PendingDeliveries(ctx context.Context, limit int) ([]notifications.Notification, error)
