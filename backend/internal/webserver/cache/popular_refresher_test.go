@@ -27,6 +27,9 @@ type mockTVDBClient struct {
 	getGenresCalls        atomic.Int64
 	getPopularShowsCalls  atomic.Int64
 	getPopularMoviesCalls atomic.Int64
+	// failShowsCalls makes the first N GetPopularShows calls fail, to stand in
+	// for a tvdb-proxy that is still building its rows.
+	failShowsCalls atomic.Int64
 }
 
 func (m *mockTVDBClient) GetGenres(ctx context.Context) ([]clients.Genre, error) {
@@ -35,9 +38,12 @@ func (m *mockTVDBClient) GetGenres(ctx context.Context) ([]clients.Genre, error)
 }
 
 func (m *mockTVDBClient) GetPopularShows(ctx context.Context, genre string, limit int) ([]tvdb.Media, error) {
-	m.getPopularShowsCalls.Add(1)
+	call := m.getPopularShowsCalls.Add(1)
 	if m.popularShowsErr != nil {
 		return nil, m.popularShowsErr
+	}
+	if call <= m.failShowsCalls.Load() {
+		return nil, errors.New("tvdb-proxy still building rows")
 	}
 	if shows, ok := m.popularShows[genre]; ok {
 		return shows, nil
@@ -320,17 +326,21 @@ func TestStartStop(t *testing.T) {
 	// Override refresh interval for faster testing
 	refresher.refreshInterval = 100 * time.Millisecond
 
-	// Start refresher (immediate refresh + background goroutine)
+	// Start refresher (background refresh + periodic goroutine)
 	refresher.Start()
 
-	// Wait a bit for background goroutine to start
-	time.Sleep(50 * time.Millisecond)
-
-	// Verify initial refresh happened
+	// The first refresh runs in the background; wait for it to land
 	ctx := context.Background()
-	genres, hit := cache.GetGenres(ctx)
-	if !hit || len(genres) != 1 {
-		t.Error("Expected initial refresh to populate cache")
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		genres, hit := cache.GetGenres(ctx)
+		if hit && len(genres) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Expected initial refresh to populate cache")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 
 	// Stop refresher
@@ -446,5 +456,45 @@ func TestRefreshAll_CacheStatsUpdate(t *testing.T) {
 
 	if stats.GenresCount != 1 {
 		t.Errorf("Expected 1 genre, got %d", stats.GenresCount)
+	}
+}
+
+// A refresh that leaves categories empty is retried after retryInterval
+// instead of waiting for the next six-hourly tick.
+func TestStart_RetriesPartialRefresh(t *testing.T) {
+	cache := NewPopularCache()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	tvdbClient := &mockTVDBClient{
+		genres:        []clients.Genre{{ID: 1, Name: "Action", Slug: "action"}},
+		popularShows:  map[string][]tvdb.Media{"": {{Id: "1", Name: "Show"}}},
+		popularMovies: map[string][]tvdb.Media{"": {{Id: "2", Name: "Movie"}}},
+	}
+	// The first refresh asks for shows once per category (7); every one fails.
+	tvdbClient.failShowsCalls.Store(7)
+	interactor := &mockPopularEnrichedInteractor{
+		enrichedShows:  map[string][]tvdb.EnrichedMedia{"": {{Media: tvdb.Media{Id: "3"}}}},
+		enrichedMovies: map[string][]tvdb.EnrichedMedia{"": {{Media: tvdb.Media{Id: "4"}}}},
+	}
+	refresher := NewPopularRefresher(cache, tvdbClient, &mockTorrenterClient{}, interactor, logger)
+	refresher.refreshInterval = time.Hour
+	refresher.retryInterval = 30 * time.Millisecond
+
+	refresher.Start()
+	defer refresher.Stop()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		stats := cache.GetCacheStats()
+		if stats.BasicShowsCategories == 7 && stats.BasicMoviesCategories == 7 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected the retry to fill every category, got %+v", stats)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if calls := tvdbClient.getPopularShowsCalls.Load(); calls < 14 {
+		t.Errorf("expected a second refresh (at least 14 show calls), got %d", calls)
 	}
 }

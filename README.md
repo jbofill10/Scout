@@ -113,6 +113,7 @@ Required secrets:
 - **Database** password (optional, has default: scoutpass)
 
 ### Optional integrations
+- **Trakt**: `TRAKT_CLIENT_ID` (a free app at https://trakt.tv/oauth/applications) ranks the Home, Shows and Movies rows by what people watched this week (`TRAKT_PERIOD`) or are watching now (`TRAKT_LIST=trending`). Without it the rows rank recent TVDB titles by what people are reading about on English Wikipedia this week, and the Anime rows lead with AniList's trending anime (no keys needed; `POPULAR_WIKIPEDIA=false` and `POPULAR_ANILIST=false` turn those off).
 - **Subtitles**: `OPENSUBTITLES_API_KEY` (+ account) turns on subtitle fetching.
 - **Relay rotation**: install `tools/relay-agent` on the host and set `RELAY_AGENT_URL` / `RELAY_AGENT_TOKEN`; see `tools/relay-agent/README.md`.
 - **Notifications**: add webhook, ntfy or Discord targets on the Settings page; a Home Assistant webhook URL works as a webhook target.
@@ -139,6 +140,7 @@ Required secrets:
 
 **Integrations:**
 - TVDB API v4 (media metadata)
+- Trakt (optional, what is being watched now, for the popular rows)
 - qBittorrent (torrent downloads)
 - Plex Media Server (library management)
 - Prowlarr (indexer management)

@@ -41,8 +41,11 @@ type PopularRefresher struct {
 	logger                    *slog.Logger
 	stopChan                  chan struct{}
 	refreshInterval           time.Duration
-	limit                     int
-	tracer                    trace.Tracer
+	// retryInterval is how soon a refresh that left categories empty (for
+	// example because tvdb-proxy was still building its rows) is run again.
+	retryInterval time.Duration
+	limit         int
+	tracer        trace.Tracer
 }
 
 // NewPopularRefresher creates a new refresher instance
@@ -61,21 +64,27 @@ func NewPopularRefresher(
 		logger:                    logger,
 		stopChan:                  make(chan struct{}),
 		refreshInterval:           6 * time.Hour,
+		retryInterval:             2 * time.Minute,
 		limit:                     20, // Default UI limit
 		tracer:                    otel.Tracer("webserver"),
 	}
 }
 
-// Start begins the background refresh goroutine
-// Performs immediate refresh on startup, then refreshes every 6 hours
+// Start begins the background refresh goroutine: an immediate refresh, then
+// one every 6 hours. The first refresh runs in the background too, so the
+// HTTP server comes up while tvdb-proxy is still ranking rows; until it
+// lands, the handlers answer cache misses with live calls. A refresh that
+// left categories empty is run again after retryInterval rather than at the
+// next tick.
 func (r *PopularRefresher) Start() {
 	r.logger.Info("Popular content cache refresher starting")
 
-	// Immediate refresh on startup (blocking)
-	r.refreshAll()
-
-	// Start background goroutine for periodic refresh
 	go func() {
+		var retry <-chan time.Time
+		if !r.refreshAll() {
+			retry = time.After(r.retryInterval)
+		}
+
 		ticker := time.NewTicker(r.refreshInterval)
 		defer ticker.Stop()
 
@@ -85,7 +94,16 @@ func (r *PopularRefresher) Start() {
 		for {
 			select {
 			case <-ticker.C:
-				r.refreshAll()
+				retry = nil
+				if !r.refreshAll() {
+					retry = time.After(r.retryInterval)
+				}
+			case <-retry:
+				retry = nil
+				r.logger.Info("Retrying partial popular cache refresh")
+				if !r.refreshAll() {
+					retry = time.After(r.retryInterval)
+				}
 			case <-r.stopChan:
 				r.logger.Info("Popular content cache refresher stopped")
 				return
@@ -100,12 +118,13 @@ func (r *PopularRefresher) Stop() {
 	close(r.stopChan)
 }
 
-// refreshAll fetches all popular content and updates the cache atomically
-func (r *PopularRefresher) refreshAll() {
+// refreshAll fetches all popular content and updates the cache atomically.
+// It reports whether every category of every kind was loaded.
+func (r *PopularRefresher) refreshAll() bool {
 	// Check if refresh is already in progress
 	if !r.cache.markRefreshStart() {
 		r.logger.Warn("Refresh already in progress, skipping")
-		return
+		return false
 	}
 
 	ctx, span := r.tracer.Start(context.Background(), "popular_cache.refresh")
@@ -131,7 +150,7 @@ func (r *PopularRefresher) refreshAll() {
 			telemetry.WithTraceContext(ctx, "error", err)...)
 		span.RecordError(err)
 		success = false
-		return
+		return false
 	}
 
 	r.logger.InfoContext(ctx, "Fetched genres", telemetry.WithTraceContext(ctx, "count", len(genres))...)
@@ -231,12 +250,18 @@ func (r *PopularRefresher) refreshAll() {
 
 	// Check if we got partial results (warn if less than expected)
 	expectedCategories := len(categories)
-	if len(basicShows) < expectedCategories || len(basicMovies) < expectedCategories {
-		r.logger.WarnContext(ctx, "Partial refresh: some categories failed to load",
+	complete := len(basicShows) == expectedCategories && len(basicMovies) == expectedCategories &&
+		len(enrichedShows) == expectedCategories && len(enrichedMovies) == expectedCategories
+	if !complete {
+		r.logger.WarnContext(ctx, "Partial refresh: some categories failed to load, will retry",
 			telemetry.WithTraceContext(ctx,
 				"expected_categories", expectedCategories,
 				"basic_shows_loaded", len(basicShows),
 				"basic_movies_loaded", len(basicMovies),
+				"enriched_shows_loaded", len(enrichedShows),
+				"enriched_movies_loaded", len(enrichedMovies),
+				"retry_in", r.retryInterval.String(),
 			)...)
 	}
+	return complete
 }

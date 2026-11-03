@@ -1,0 +1,49 @@
+# Design: popular rows
+
+## Where the signal comes from
+TVDB has no "popular now" endpoint: `/filter` sorts by a lifetime `score`, and `/series/filter` supports `year`, `status`, `country`, `lang`, `genre` and `sort` (`score`, `firstAired`, `lastAired`, `name`), returning 500 rows per call. Measured on 2026-11-02 with the project's key, the all-time list is Titanic, Avengers: Endgame, Frozen; `year=2025` sorted by score is The Pitt, Daredevil: Born Again, IT: Welcome to Derry, Dexter: Resurrection; a 2024 movie carries about ten times the score of a 2025 one.
+
+Trakt was chosen over TMDB for the external source:
+- Its lists are watch behaviour (unique watchers over a period, or watching right now), which is exactly "popular now"; TMDB's `popularity` mixes page views and votes.
+- Shows carry a TVDB id, so one `/series/{id}` call gives the poster and status. Movies carry an IMDb id, which TVDB resolves in one `/search/remoteid/{imdb}` call. TMDB would need `external_ids` first, two hops for a movie.
+- Trakt has an `anime` genre; TMDB does not.
+- A free application client id in a header is enough for public GETs: no OAuth, 1000 calls per five minutes.
+
+## Trakt source
+`GET {host}/{shows|movies}/watched/{period}` (or `/trending`) with `limit=n+10`, `extended=full` and `genres=<slug>` when the row has a genre, headers `trakt-api-version: 2`, `trakt-api-key`, `User-Agent`. Scout's genre names are TVDB's; `TraktGenreSlug` maps `Sci-Fi` to `science-fiction` and slugifies the rest. Hits are resolved in parallel (six TVDB calls at a time), Trakt's order is kept, hits without a TVDB/IMDb id or unknown to TVDB are dropped, and the row is cut at the limit. The display name is Trakt's title (TVDB's base record names anime in Japanese); TVDB's name is `OriginalName`. `Anime` follows the search rule: the `anime` genre, or `animation` for movies.
+
+## TVDB source
+Candidates per region: series `year=Y`, `year=Y-1` and `status=1` (continuing); movies `year=Y` and `Y-1`. Regions are `usa` and `gbr` with `lang=eng`; for Anime, `jpn`/`jpn` then `usa`/`eng`. Queries run in parallel, records merge by id, and a failed query is skipped unless all fail.
+
+Ranking weights, chosen against the probe numbers above:
+- Series: `score × 0.5^age` with age in years since first airing. A series whose last (or next scheduled) air date is within 45 days gets at least `0.02`, so Grey's Anatomy mid-season (5.5M × 0.02 = 110k) sits among this year's hits (The Pitt 425k × 0.5 = 212k; A Knight of the Seven Kingdoms 374k) rather than above them, and a resting long-runner (Black Mirror, last aired 2025) drops out. Series with no first-aired date, a future one, or status Upcoming are dropped.
+- Movies: `score / (best score of the same release year) × 0.5^age`, current and previous release year only. Movie scores grow with age too steeply for a plain decay (Inside Out 2 at 818k would bury every 2025 release), so each year's best is 1.0 and the recency factor orders between years. TVDB's `year` filter also returns re-releases of older films (Anyone But You, 2023, came back under `year=2024`), and a lone older title normalised against itself would score 1.0, so anything older than the window is dropped, as are movies whose status is not Released or whose year is in the future.
+
+Non-English titles (anime) get their name from `/{series|movies}/{id}/translations/eng`, cached for a day.
+
+## Attention: Wikipedia pageviews
+The TVDB weighting above says what is recent and well regarded, not what people are watching this week. Without a Trakt key the only keyless, documented measure of current attention is English Wikipedia's pageviews API (people look up what they are watching: on 2026-11-02 Spider-Man: Brand New Day had 158k views in seven days, Scream 7 58k, The Pitt 51k, The Rose of Versailles 550). So, when `POPULAR_WIKIPEDIA` is on (the default), the TVDB source:
+- takes the best 50 titles of its ranking, resolves each to its article and orders them by views over the last seven days; titles with no article keep the TVDB order after the measured ones;
+- harvests the film or TV articles from yesterday's most-read list (`Title (2025 film)`, `Title (film)`, `Title (American TV series)`, `Title season 5`), resolves them to TVDB through `/search` (name must match; the most recent namesake wins, so "Ghosts (American TV series)" is the 2021 show) and `/{kind}/{id}/extended` (genre check, IMDb id), and adds the released, in-window ones. This is how titles TVDB users have not scored yet (Clayface, Wildwood, Obsession this week) reach the rows.
+
+Resolution checks the disambiguated article titles a work commonly has (`Moana (2026 film)`, `Moana (film)`, `Fallout (TV series)`, `Fallout (American TV series)`) fifty at a time with one MediaWiki `action=query&titles=` call that follows redirects (so "Fallout (2024 TV series)" is measured on its target, not on the redirect page's near-zero count) and flags disambiguation pages; only titles with a plain article title ("Thunderbolts*", "The Pitt") fall back to the search API, one at a time, with a title guard. The bare title is never guessed: "Superman" is the character, not the film. The action API is called in series and the pageviews API at most two at a time, 100ms apart, each retried once on 429 (a cold run of six rows measured every title with no rate-limit error; the first unpaced version drew 721). Articles and misses are cached a day, views six hours, the most-read list six hours. Trakt, when configured, is not re-ordered by attention: it already is a watch signal.
+
+Measured on 2026-11-02, the unfiltered movie row became Clayface (733k views in seven days), Wildwood (551k), Wicker (447k), Obsession (332k), Verity (288k), Street Fighter (258k); the series row Crystal Lake, The Diplomat, Nocturne, Carrie, MobLand. Anime movies have small counts (Chainsaw Man: Reze Arc 4.6k), so that row is ordered by attention where it exists and by the TVDB weighting below it.
+
+## Warm-up and single flight
+The service builds one row at a time per key (concurrent misses wait for the first build) and warms the UI's fourteen rows in the background at startup, three at a time. A build runs under its own context, detached from the request that started it, with a three-minute cap: the first deploy showed the webserver's 30-second client timeout cancelling a shared build half-way (every remaining Wikipedia lookup failed at once) and the half-ranked row being cached for an hour. A caller that gives up now just stops waiting; the build finishes and is cached, and a build that hits the cap is served but not cached. A cold row costs 10 to 30 seconds (paced pageviews plus serial searches), so the webserver's popular refresher now runs its first refresh in the background too: its HTTP server comes up at once and handlers answer cache misses with live calls until the refresh lands.
+
+## Caching and call budget
+Rows are cached per kind, genre and limit for an hour; resolved records and English names for a day; TVDB misses for an hour. The webserver's six-hourly refresh asks for every row twice (basic and enriched); the second is a cache hit. A cold Trakt refresh of the fourteen rows costs 14 Trakt calls and up to 14 × 30 TVDB lookups, almost all of them cache hits from the second refresh on. A cold TVDB-only refresh costs 14 × 4 to 6 filter calls plus English names for the two Anime rows.
+
+## Failure handling
+With Trakt configured, a Trakt error (including 429) or an empty answer falls back to the TVDB source for that row and logs a warning; the row is cached for the hour and Trakt is tried again on the next miss. An unknown genre is a 400 from the handler, as before.
+
+## Anime rows: AniList
+English Wikipedia barely measures anime (Chainsaw Man: Reze Arc at 4.6k views, most anime films under 1k), so the two Anime rows lead with AniList's trending list, a keyless GraphQL API whose `trending` score is activity among anime watchers over the last days (TV, TV short and ONA formats for series; films for movies; released or airing only, no adult titles). Each trending title is found on TVDB by its English title, then its romaji title, through `/search` and the extended record; up to half the row is filled this way in AniList's order, and the attention-ranked titles follow. `POPULAR_ANILIST=false` turns it off. AniList's movie trending leans to evergreen films (A Silent Voice, Your Name, Spirited Away) next to Chainsaw Man: Reze Arc; that is what anime watchers are watching, so it stays.
+
+## Why each item ranks where it does
+Every popular-row item now carries `popularity`: `{source, value, detail}` with source `trakt` (watchers), `wikipedia` (views over 7 days and the article), `anilist` (trending score and rank) or `tvdb` (lifetime score, for titles nothing measured). Search results do not carry it. It makes the ranking inspectable from the API and is the hook for a "trending" badge in the UI later.
+
+## Independent check
+JustWatch's public API lists what people stream in the US right now (no key; used as a yardstick only, not as a source). Measured on 2026-11-02 against the live rows: its top 40 movies shared 11 of the 20 titles in Scout's home movie row (Obsession, Verity, Backrooms, Primetime, Spider-Man: Brand New Day, The Odyssey, Buddy, Resident Evil, Digger, The Cycle, Animals) and 0 of 20 in the old TVDB-score row (Titanic, Avengers: Endgame, Frozen, ...); its top 40 shows shared 12 of 20 with Scout's home shows row (Crystal Lake, The Diplomat, Nocturne, Carrie, MobLand, Nobody Wants This, Phony, Yaga, The Gentlemen, Widow's Bay, American Horror Story, The Rainmaker) and 1 of 20 with the old row.
