@@ -165,3 +165,50 @@ func TestClearFinished_AbortsWhenScheduleLookupFails(t *testing.T) {
 	_, err := a.ClearFinished(context.Background())
 	require.Error(t, err)
 }
+
+func TestGetActivity_ReportsRetryTimeOnlyForPendingRows(t *testing.T) {
+	now := time.Now()
+	stale := now.Add(-6 * time.Hour)
+	next := now.Add(time.Hour)
+
+	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("GetNotifications", mock.Anything, 50, "", "").Return([]notifications.Notification{
+		notif("done", notifications.StatusCompleted, now),
+		notif("gone", notifications.StatusFailed, now),
+		notif("sent", notifications.StatusSearching, now),
+		notif("wait", notifications.StatusSearching, now),
+	}, nil)
+
+	// Every row kept the time of the attempt that moved it on; only the
+	// pending one is still waiting for it.
+	repo := &fakeSchedulerRepo{pendingMeta: map[string]repository.ScheduleMeta{
+		"done": {Attempts: 3, NextAttemptAt: &stale, ScheduleStatus: repository.StatusCompleted},
+		"gone": {Attempts: 5, NextAttemptAt: &stale, ScheduleStatus: repository.StatusFailed},
+		"sent": {Attempts: 2, NextAttemptAt: &stale, ScheduleStatus: repository.StatusQueued},
+		"wait": {Attempts: 2, NextAttemptAt: &next, ScheduleStatus: repository.StatusPending},
+	}}
+
+	a := NewActivityInteractor(notifRepo, repo, testLogger())
+
+	snapshot, err := a.GetActivity(context.Background(), 50)
+	require.NoError(t, err)
+
+	byID := map[string]ActivityItem{}
+	for _, item := range append(snapshot.Active, snapshot.Recent...) {
+		byID[item.TvdbID] = item
+	}
+
+	for _, id := range []string{"done", "gone", "sent"} {
+		assert.Nil(t, byID[id].NextAttemptAt, "%s is not waiting for a retry", id)
+		assert.NotZero(t, byID[id].Attempts, "%s keeps its attempt history", id)
+	}
+	// Retry stays on offer for a failed item (fresh budget), not for one that
+	// completed or is being dispatched.
+	assert.False(t, byID["done"].CanRetry)
+	assert.False(t, byID["sent"].CanRetry)
+	assert.True(t, byID["gone"].CanRetry)
+
+	require.NotNil(t, byID["wait"].NextAttemptAt)
+	assert.WithinDuration(t, next, *byID["wait"].NextAttemptAt, time.Second)
+	assert.True(t, byID["wait"].CanRetry)
+}

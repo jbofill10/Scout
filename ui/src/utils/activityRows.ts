@@ -103,7 +103,9 @@ function retryLine(nextAttemptAt: string, attempts?: number): string {
 /** Flattens a notification plus its schedule metadata into a row. */
 export function fromActivityItem(item: ActivityItem): ActivityRowModel {
   const failed = item.status === "failed";
-  const retrying = !failed && !!item.next_attempt_at;
+  // A retry is only waiting while the schedule row is pending; a completed or
+  // queued row keeps the time of the attempt that moved it on.
+  const retrying = !failed && !!item.next_attempt_at && item.schedule_status === "pending";
 
   // The most useful "what now?" line: why it failed; when it retries and why it
   // has to; when it releases; otherwise the stage in words.

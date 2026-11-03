@@ -100,7 +100,12 @@ func (a *ActivityInteractor) GetActivity(ctx context.Context, limit int) (Activi
 			item.LastFailureReason = m.LastFailureReason
 			releaseTime := m.ReleaseTime
 			item.ReleaseTime = &releaseTime
-			item.NextAttemptAt = m.NextAttemptAt
+			// Only a pending row is waiting for a retry. A queued, completed or
+			// failed row may still carry the time of the attempt that moved it
+			// on, and reporting that would read as a retry that never comes.
+			if m.ScheduleStatus == repository.StatusPending {
+				item.NextAttemptAt = m.NextAttemptAt
+			}
 		}
 		item.CanCancel = activeStatuses[n.Status]
 		item.CanRetry = hasRow && (n.Status == notifications.StatusFailed ||

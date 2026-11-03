@@ -260,13 +260,15 @@ func (r *SchedulerRepo) MarkQueued(ctx context.Context, id int) error {
 	return nil
 }
 
-// MarkCompleted marks a row as terminally completed.
+// MarkCompleted marks a row as terminally completed and clears the retry
+// timer that brought it to this attempt; attempts stays as the row's history.
 func (r *SchedulerRepo) MarkCompleted(ctx context.Context, id int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE ScheduledDownloads SET schedule_status = $1 WHERE id = $2 AND schedule_status IN ($3, $4)`,
+		`UPDATE ScheduledDownloads SET schedule_status = $1, next_attempt_at = NULL
+		 WHERE id = $2 AND schedule_status IN ($3, $4)`,
 		StatusCompleted, id, StatusQueued, StatusPending)
 	if err != nil {
 		return fmt.Errorf("failed to mark row completed: %w", err)
@@ -299,7 +301,7 @@ func (r *SchedulerRepo) MarkPermanentlyFailed(ctx context.Context, id int, code,
 
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE ScheduledDownloads
-		 SET schedule_status = $1, attempts = attempts + 1,
+		 SET schedule_status = $1, attempts = attempts + 1, next_attempt_at = NULL,
 		     last_failure_code = $2, last_failure_reason = $3
 		 WHERE id = $4 AND schedule_status = $5`,
 		StatusFailed, code, reason, id, StatusQueued)

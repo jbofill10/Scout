@@ -202,7 +202,7 @@ func (s *SchedulerRepoTestSuite) TestMarkQueued() {
 }
 
 func (s *SchedulerRepoTestSuite) TestMarkCompleted() {
-	s.mock.ExpectExec(`UPDATE ScheduledDownloads SET schedule_status = \$1 WHERE id = \$2 AND schedule_status IN \(\$3, \$4\)`).
+	s.mock.ExpectExec(`UPDATE ScheduledDownloads SET schedule_status = \$1, next_attempt_at = NULL\s+WHERE id = \$2 AND schedule_status IN \(\$3, \$4\)`).
 		WithArgs(StatusCompleted, 7, StatusQueued, StatusPending).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -223,7 +223,7 @@ func (s *SchedulerRepoTestSuite) TestRecordFailure() {
 }
 
 func (s *SchedulerRepoTestSuite) TestMarkPermanentlyFailed() {
-	s.mock.ExpectExec(`UPDATE ScheduledDownloads`).
+	s.mock.ExpectExec(`UPDATE ScheduledDownloads\s+SET schedule_status = \$1, attempts = attempts \+ 1, next_attempt_at = NULL`).
 		WithArgs(StatusFailed, "invalid_media", "bad", 7, StatusQueued).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 

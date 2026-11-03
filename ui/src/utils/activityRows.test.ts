@@ -58,7 +58,13 @@ describe("fromActivityItem", () => {
 
   it("leads with the retry time and keeps the reason for a retry wait", () => {
     const row = fromActivityItem(
-      activityItem({ status: "searching", next_attempt_at: "2026-10-29T12:12:00Z", attempts: 2, reason: "No torrent found yet" }),
+      activityItem({
+        status: "searching",
+        next_attempt_at: "2026-10-29T12:12:00Z",
+        schedule_status: "pending",
+        attempts: 2,
+        reason: "No torrent found yet",
+      }),
     );
     expect(row.status).toBe("Retrying in 12m (attempt 3) · No torrent found yet");
     expect(row.tone).toBe("warning");
@@ -68,6 +74,20 @@ describe("fromActivityItem", () => {
     const row = fromActivityItem(activityItem({ status: "failed", reason: "Not enough disk space" }));
     expect(row.status).toBe("Not enough disk space");
     expect(row.tone).toBe("error");
+  });
+
+  it("does not call a finished item retrying because its row kept an old retry time", () => {
+    const row = fromActivityItem(
+      activityItem({
+        status: "completed",
+        next_attempt_at: "2026-10-29T09:00:00Z",
+        schedule_status: "completed",
+        attempts: 3,
+        last_failure_reason: "Indexer unreachable",
+      }),
+    );
+    expect(row.status).toBe("In your library");
+    expect(row.tone).toBe("default");
   });
 
   it("mentions the pending retry on a failed item the webserver re-armed", () => {
@@ -100,7 +120,11 @@ describe("buildViews", () => {
 
   it("shows a retry wait once, as the in-flight notification", () => {
     const views = buildViews(
-      { active: [activityItem({ status: "searching", next_attempt_at: "2026-10-29T13:00:00Z" })], recent: [], counts: {} },
+      {
+        active: [activityItem({ status: "searching", next_attempt_at: "2026-10-29T13:00:00Z", schedule_status: "pending" })],
+        recent: [],
+        counts: {},
+      },
       [upcomingItem({ tvdb_id: "1001", next_attempt_at: "2026-10-29T13:00:00Z" })],
     );
     expect(views.inFlight.map((row) => row.itemId)).toEqual(["1001"]);
