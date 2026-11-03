@@ -25,7 +25,7 @@ for each relay, default 15; two attempts must fit the torrenter's 45 s call),
 `RELAY_DEAD_S` (default 3600).
 
 Install with the steps at the top of `scout-relay-agent.service`. Run the unit
-tests with `python3 -m unittest tools/relay-agent/test_relay_agent.py`.
+tests with `cd tools/relay-agent && python3 -m unittest test_relay_agent`.
 
 The torrenter uses it when `RELAY_AGENT_URL` and `RELAY_AGENT_TOKEN` are set:
 the indexer health monitor polls Prowlarr, and when an indexer is disabled by

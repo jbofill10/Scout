@@ -32,3 +32,5 @@ api.toml
 nginx.conf
 docker-compose.yml
 nginx/nginx.conf
+# Python bytecode
+__pycache__/
