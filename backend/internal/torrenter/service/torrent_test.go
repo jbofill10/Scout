@@ -821,3 +821,30 @@ func (s *QbittHandlerTestSuite) TestExecuteSearchStrategies_NoStrategies() {
 	s.Empty(ctxs)
 	s.False(allFailed, "no attempted strategies should not be reported as all-failed")
 }
+
+// Attack on Titan's fourth season is released as "The Final Season": the word
+// is part of the show's name there, not a season number, so an absolute-number
+// strategy must not exclude it, and the show-name check must see past it.
+func (s *QbittHandlerTestSuite) TestIsCorrectTorrent_SeasonNamedInWordsIsNotExcluded() {
+	torrent := &prowlarr.Search{
+		Title:     "[SubsPlease] Shingeki no Kyojin (The Final Season) - 63 (1080p) [ABCD1234].mkv",
+		SortTitle: "subsplease shingeki no kyojin the final season 63 1080p",
+	}
+	strategy := &models.SearchStrategy{
+		MediaName:   "Shingeki no Kyojin",
+		Season:      4,
+		Episode:     63,
+		EpisodeMeta: &tvdb.Episode{SeasonNumber: 4, Number: 4, AbsoluteNumber: 63},
+		Exclude:     []string{"season", "episode"},
+	}
+
+	s.True(s.handler.isCorrectTorrent(context.Background(), torrent, strategy),
+		"a season named in words is part of the show's name")
+
+	numbered := &prowlarr.Search{
+		Title:     "[Group] Shingeki no Kyojin Season 4 - 04 [1080p]",
+		SortTitle: "group shingeki no kyojin season 4 04 1080p",
+	}
+	s.False(s.handler.isCorrectTorrent(context.Background(), numbered, strategy),
+		"a numbered season still excludes the release from an absolute-number search")
+}

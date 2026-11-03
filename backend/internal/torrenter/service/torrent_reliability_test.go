@@ -47,6 +47,13 @@ func TestScoreNameMatch_WordsNotSubstrings(t *testing.T) {
 		{"Shameless US", "Shameless", 0.8},
 		{"Shingeki no Kyojin", "Attack on Titan", 0},
 		{"Movie & Title", "Movie and Title", 1.0},
+		{"Shingeki no Kyojin (The Final Season)", "Shingeki no Kyojin", 0.8},
+		{"Shingeki no Kyojin - The Final Season Part 2", "Shingeki no Kyojin", 0.8},
+		{"Attack on Titan Season 4", "Attack on Titan", 0.8},
+		{"Attack on Titan Season 4 Part 2", "Attack on Titan", 0.8},
+		{"Oshi no Ko 2nd Season", "Oshi no Ko", 0.8},
+		{"Harry Potter Part 2", "Harry Potter", 0},
+		{"The Final Season", "Shingeki no Kyojin", 0},
 	}
 	for _, c := range cases {
 		assert.InDelta(t, c.want, q.scoreNameMatch(c.parsed, c.expected), 0.001, "%q vs %q", c.parsed, c.expected)
@@ -753,4 +760,32 @@ func TestProcessPack_TitleMatchedFilesLinkAsRange(t *testing.T) {
 
 	require.NoError(t, mp.ProcessDownloadedTorrent(context.Background(), event))
 	assert.Equal(t, map[string]string{"1001": "linked", "1002": "linked", "1003": "not in the season pack"}, event.PackResults)
+}
+
+// Dexter's pilot is titled "Dexter", and every file of the series pack
+// carries the show's name: matching by title alone claimed all 96 files for
+// S01E01 and left the rest unlinked. A title that is the show's name, from the
+// pack or read off the file, is ignored and the file's numbering decides.
+func TestPackFileEpisodes_TitleEqualToShowNameIsIgnored(t *testing.T) {
+	parser := NewTorrentParser()
+	eps := []tvdb.Episode{
+		{Id: 1, SeasonNumber: 1, Number: 1, Name: "Dexter"},
+		{Id: 2, SeasonNumber: 1, Number: 2, Name: "Crocodile"},
+		{Id: 3, SeasonNumber: 6, Number: 2, Name: "Once Upon a Time..."},
+	}
+	ids := func(pack *models.PackInfo, path string) []int {
+		out := []int{}
+		for _, e := range packFileEpisodes(parser, path, pack, packEpisodeIndex(pack)) {
+			out = append(out, e.Id)
+		}
+		return out
+	}
+	withShow := &models.PackInfo{Show: "Dexter", Season: 1, Seasons: []int{1, 6}, Episodes: eps}
+	assert.Equal(t, []int{1}, ids(withShow, "Season 1/Dexter (2006) - S01E01 - Dexter (1080p BluRay x265 ImE).mkv"))
+	assert.Equal(t, []int{2}, ids(withShow, "Season 1/Dexter (2006) - S01E02 - Crocodile (1080p BluRay x265 ImE).mkv"))
+	assert.Equal(t, []int{3}, ids(withShow, "Season 6/Dexter (2006) - S06E02 - Once Upon a Time... (1080p BluRay x265 ImE).mkv"))
+
+	// A pack recorded before the show name was kept falls back to the name in the file.
+	legacy := &models.PackInfo{Season: 1, Seasons: []int{1, 6}, Episodes: eps}
+	assert.Equal(t, []int{2}, ids(legacy, "Season 1/Dexter (2006) - S01E02 - Crocodile (1080p BluRay x265 ImE).mkv"))
 }
