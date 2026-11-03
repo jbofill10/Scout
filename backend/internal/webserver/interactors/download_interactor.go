@@ -48,6 +48,9 @@ type DownloadSummary struct {
 	// Skipped is how many were ignored: specials, unparseable air dates,
 	// already-scheduled duplicates, or scheduling errors.
 	Skipped int `json:"skipped"`
+	// InProgress is how many Scout was already searching for or downloading,
+	// so nothing new was started for them.
+	InProgress int `json:"in_progress"`
 	// NextRelease is the earliest release time among the scheduled items.
 	NextRelease *time.Time `json:"next_release,omitempty"`
 	// TraceID correlates this request with its logs and spans.
@@ -296,6 +299,12 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) (
 		"episode_count", len(req.Metadata.Episodes))
 	mediaToDownload := []tvdb.Episode{}
 
+	ids := make([]string, 0, len(req.Metadata.Episodes))
+	for _, episode := range req.Metadata.Episodes {
+		ids = append(ids, strconv.Itoa(episode.Id))
+	}
+	inProgress := i.inProgressItems(ctx, ids)
+
 	for _, episode := range req.Metadata.Episodes {
 		// Create a child span for each episode
 		episodeCtx, episodeSpan := tracer.Start(ctx, fmt.Sprintf("%s S%dE%d", req.Name, episode.SeasonNumber, episode.Number),
@@ -313,6 +322,17 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) (
 			// Temporary, skip specials
 			i.logger.InfoContext(episodeCtx, "Skipping special episode", "episode", episode.Number)
 			summary.Skipped++
+			episodeSpan.End()
+			continue
+		}
+
+		if inProgress[strconv.Itoa(episode.Id)] {
+			// Scout is already on it: a second request would only add a
+			// duplicate notification and a duplicate search.
+			i.logger.InfoContext(episodeCtx, "Episode already in progress, skipping",
+				"season", episode.SeasonNumber, "episode", episode.Number)
+			episodeSpan.SetAttributes(attribute.String("episode.status", "in_progress"))
+			summary.InProgress++
 			episodeSpan.End()
 			continue
 		}
@@ -518,6 +538,15 @@ func (i *DownloadInteractor) DownloadMovie(ctx context.Context, req tvdb.Media) 
 	traceID, _ := telemetry.GetTraceSpanIDs(ctx)
 	summary := DownloadSummary{MediaTitle: req.Name, Category: "movie", TraceID: traceID}
 
+	// Scout is already on it: a second request would only add a duplicate
+	// notification and a duplicate search, and the torrenter updates the newest
+	// row for an item, which would leave the older one stranded on "searching".
+	if i.inProgressItems(ctx, []string{req.Id})[req.Id] {
+		i.logger.InfoContext(ctx, "Movie already in progress, skipping", "movie", req.Name)
+		summary.InProgress = 1
+		return summary, nil
+	}
+
 	// Get extended info to determine anime classification
 	extendedInfo, err := i.getExtendedInformation(ctx, req.Id, "movie")
 	if err != nil {
@@ -584,6 +613,20 @@ func (i *DownloadInteractor) DownloadMovie(ctx context.Context, req tvdb.Media) 
 	i.queueMovieNow(ctx, req)
 	summary.QueuedNow = 1
 	return summary, nil
+}
+
+// inProgressItems reports which of the item keys already have a live
+// notification: Scout is searching for them, downloading them, or holding them
+// for a release date. A lookup failure yields an empty set, so the request is
+// handled as before; the torrenter dedupes in-flight work too, so the worst
+// case is the duplicate row this check exists to avoid, not a lost download.
+func (i *DownloadInteractor) inProgressItems(ctx context.Context, ids []string) map[string]bool {
+	active, err := i.notificationRepo.ActiveTvdbIDs(ctx, ids)
+	if err != nil {
+		i.logger.WarnContext(ctx, "Could not check for in-progress items, treating all as new", "error", err)
+		return map[string]bool{}
+	}
+	return active
 }
 
 // queueMovieNow creates the "searching" notification for a released movie and

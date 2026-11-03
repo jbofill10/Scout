@@ -21,6 +21,12 @@ const asyncReconcileInterval = 2 * time.Minute
 // asyncReconcileBatch bounds one pass. Failed notifications are few.
 const asyncReconcileBatch = 200
 
+// staleSearchAge is how long a notification may sit on "searching" with no
+// row due to fire for it before the search is taken as lost. A search is
+// bounded in minutes, but a large request works through its episodes one at
+// a time, so the last of ninety can wait hours for its turn.
+const staleSearchAge = 24 * time.Hour
+
 // downloading reports whether a torrenter response accepted at least one item
 // into a download, which is the moment a row must exist to retry from.
 func downloading(resp dlstatus.DownloadResponse) bool {
@@ -77,6 +83,7 @@ func (i *DownloadInteractor) runAsyncFailureReconciler(ctx context.Context) {
 // notification; an episode with no row cannot be rebuilt and is left as is.
 // It returns how many items were acted on.
 func (i *DownloadInteractor) ReconcileAsyncFailures(ctx context.Context) (int, error) {
+	i.failStaleSearches(ctx)
 	failed, err := i.notificationRepo.GetNotifications(ctx, asyncReconcileBatch, "", string(notifications.StatusFailed))
 	if err != nil {
 		return 0, fmt.Errorf("failed notifications: %w", err)
@@ -151,6 +158,56 @@ func (i *DownloadInteractor) reconcileOne(ctx context.Context, n notifications.N
 	}
 	i.announceRetry(ctx, n.TvdbID, code, last.Attempts+1, next)
 	return true
+}
+
+// failStaleSearches marks as lost every notification that has sat on
+// "searching" for staleSearchAge with no pending or queued row to fire for
+// it. Nothing still works on such an item: the torrenter's searches are
+// bounded in minutes and die with its process, and a restart mid-search left
+// the notification where it was. Failing it with a transient code hands it
+// to the pass that follows, which re-arms the row that dispatched it or, for
+// an item with no row, leaves the failure visible so it can be requested
+// again instead of reading "searching" for good.
+func (i *DownloadInteractor) failStaleSearches(ctx context.Context) {
+	searching, err := i.notificationRepo.GetNotifications(ctx, asyncReconcileBatch, "", string(notifications.StatusSearching))
+	if err != nil {
+		i.logger.ErrorContext(ctx, "Failed to list searching notifications", "error", err)
+		return
+	}
+	cutoff := time.Now().Add(-staleSearchAge)
+	swept := 0
+	for _, n := range searching {
+		if n.UpdatedAt.IsZero() || n.UpdatedAt.After(cutoff) {
+			continue
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		rows, err := i.repo.FindRowsByItem(ctx, n.TvdbID)
+		if err != nil {
+			i.logger.ErrorContext(ctx, "Failed to look up rows for a stale search", "error", err, "tvdb_id", n.TvdbID)
+			continue
+		}
+		if hasLiveRow(rows) {
+			continue
+		}
+		i.setNotification(ctx, n.TvdbID, notifications.StatusFailed, "Search was lost in a restart; request it again",
+			string(dlstatus.CodeMonitorLost))
+		swept++
+	}
+	if swept > 0 {
+		i.logger.WarnContext(ctx, "Marked searches lost in a restart as failed", "items", swept)
+	}
+}
+
+// hasLiveRow reports whether a row is pending or queued for the item.
+func hasLiveRow(rows []repository.ScheduledRow) bool {
+	for _, r := range rows {
+		if r.ScheduleStatus == repository.StatusPending || r.ScheduleStatus == repository.StatusQueued {
+			return true
+		}
+	}
+	return false
 }
 
 // announceRetry moves the notification back to searching with the same

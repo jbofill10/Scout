@@ -30,6 +30,7 @@ func threeAiredEpisodes() tvdb.Media {
 func TestDownloadShow_PacksFirstThenPerEpisode(t *testing.T) {
 	repo := &fakeSchedulerRepo{}
 	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(map[string]bool{}, nil)
 	notifRepo.On("CreateNotification", mock.Anything, mock.Anything).Return(nil)
 	dispatcher := &fakeDispatcher{
 		settingsView: &settings.View{Values: settings.Values{SeasonPacks: true, SeasonPackMinEpisodes: 2}},
@@ -75,6 +76,7 @@ func TestDownloadShow_PacksOffSendsOneAtATime(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			repo := &fakeSchedulerRepo{}
 			notifRepo := repoMocks.NewNotificationRepository(t)
+			notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(map[string]bool{}, nil)
 			notifRepo.On("CreateNotification", mock.Anything, mock.Anything).Return(nil)
 			dispatcher := &fakeDispatcher{settingsView: view, respFor: func(req tvdb.Media) dlstatus.DownloadResponse {
 				return dlstatus.DownloadResponse{Results: []dlstatus.EpisodeResult{
@@ -101,6 +103,7 @@ func TestDownloadShow_PacksOffSendsOneAtATime(t *testing.T) {
 func TestDownloadShow_PackOnlyOtherFailuresScheduleRetries(t *testing.T) {
 	repo := &fakeSchedulerRepo{}
 	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(map[string]bool{}, nil)
 	notifRepo.On("CreateNotification", mock.Anything, mock.Anything).Return(nil)
 	notifRepo.On("GetNotification", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	notifRepo.On("UpdateNotification", mock.Anything, mock.Anything).Return(nil).Maybe()

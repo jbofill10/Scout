@@ -51,6 +51,7 @@ func TestReconcileAsyncFailures_RearmsCompletedRow(t *testing.T) {
 	n := lostNotification("154561", "movie", dlstatus.CodeMonitorLost)
 	repo := &fakeSchedulerRepo{rows: []repository.ScheduledRow{completedRow(40, 0)}}
 	notifs := repoMocks.NewNotificationRepository(t)
+	notifs.On("GetNotifications", mock.Anything, asyncReconcileBatch, "", "searching").Return(nil, nil)
 	notifs.On("GetNotifications", mock.Anything, asyncReconcileBatch, "", "failed").Return([]notifications.Notification{n}, nil)
 	current := expectSearching(t, notifs, n)
 
@@ -73,6 +74,7 @@ func TestReconcileAsyncFailures_UsesNewestCompletedRowAndItsBackoff(t *testing.T
 	n := lostNotification("154561", "movie", dlstatus.CodeMonitorLost)
 	repo := &fakeSchedulerRepo{rows: []repository.ScheduledRow{completedRow(40, 0), completedRow(41, 2)}}
 	notifs := repoMocks.NewNotificationRepository(t)
+	notifs.On("GetNotifications", mock.Anything, asyncReconcileBatch, "", "searching").Return(nil, nil)
 	notifs.On("GetNotifications", mock.Anything, asyncReconcileBatch, "", "failed").Return([]notifications.Notification{n}, nil)
 	expectSearching(t, notifs, n)
 
@@ -87,6 +89,7 @@ func TestReconcileAsyncFailures_ExhaustedLadderFailsForGood(t *testing.T) {
 	n := lostNotification("154561", "movie", dlstatus.CodeMonitorLost)
 	repo := &fakeSchedulerRepo{rows: []repository.ScheduledRow{completedRow(40, 4)}}
 	notifs := repoMocks.NewNotificationRepository(t)
+	notifs.On("GetNotifications", mock.Anything, asyncReconcileBatch, "", "searching").Return(nil, nil)
 	notifs.On("GetNotifications", mock.Anything, asyncReconcileBatch, "", "failed").Return([]notifications.Notification{n}, nil)
 	current := expectSearching(t, notifs, n)
 
@@ -109,6 +112,7 @@ func TestReconcileAsyncFailures_RebuildsRowForMovieWithoutOne(t *testing.T) {
 	n := lostNotification("154561", "movie", dlstatus.CodeMonitorLost)
 	repo := &fakeSchedulerRepo{}
 	notifs := repoMocks.NewNotificationRepository(t)
+	notifs.On("GetNotifications", mock.Anything, asyncReconcileBatch, "", "searching").Return(nil, nil)
 	notifs.On("GetNotifications", mock.Anything, asyncReconcileBatch, "", "failed").Return([]notifications.Notification{n}, nil)
 	expectSearching(t, notifs, n)
 
@@ -136,6 +140,7 @@ func TestReconcileAsyncFailures_LeavesOthersAlone(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			repo := &fakeSchedulerRepo{rows: tc.rows}
 			notifs := repoMocks.NewNotificationRepository(t)
+			notifs.On("GetNotifications", mock.Anything, asyncReconcileBatch, "", "searching").Return(nil, nil)
 			notifs.On("GetNotifications", mock.Anything, asyncReconcileBatch, "", "failed").Return([]notifications.Notification{tc.n}, nil)
 
 			acted, err := newReconcileInteractor(repo, notifs).ReconcileAsyncFailures(context.Background())
@@ -162,4 +167,48 @@ func TestDispatchMovieDownload_RecordsDispatchedRow(t *testing.T) {
 	require.Len(t, repo.dispatched, 1)
 	assert.Equal(t, "154561", repo.dispatched[0].Id)
 	assert.Equal(t, 0, repo.retryCount, "a download that started is not a failure")
+}
+
+// A notification that has read "searching" for days with no row due to fire
+// for it was lost in a restart: it is failed with a transient code and a
+// reason that says to request it again.
+func TestReconcileAsyncFailures_FailsSearchLostInRestart(t *testing.T) {
+	n := notifications.Notification{ID: 2122, TvdbID: "9075730", MediaTitle: "JoJo's Bizarre Adventure", Category: "series",
+		Status: notifications.StatusSearching, UpdatedAt: time.Now().Add(-4 * 24 * time.Hour)}
+	repo := &fakeSchedulerRepo{}
+	notifs := repoMocks.NewNotificationRepository(t)
+	notifs.On("GetNotifications", mock.Anything, asyncReconcileBatch, "", "searching").Return([]notifications.Notification{n}, nil)
+	notifs.On("GetNotifications", mock.Anything, asyncReconcileBatch, "", "failed").Return(nil, nil)
+	current := expectSearching(t, notifs, n)
+
+	acted, err := newReconcileInteractor(repo, notifs).ReconcileAsyncFailures(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, acted)
+	assert.Equal(t, notifications.StatusFailed, current.Status)
+	assert.Equal(t, "monitor_lost", current.FailureCode)
+	assert.Contains(t, current.Reason, "request it again")
+}
+
+// A stale search whose item still has a pending row is on its way back
+// already, and a fresh one is simply in progress: neither is touched.
+func TestReconcileAsyncFailures_LeavesLiveSearchesAlone(t *testing.T) {
+	old := notifications.Notification{ID: 1, TvdbID: "154561", Category: "series",
+		Status: notifications.StatusSearching, UpdatedAt: time.Now().Add(-4 * 24 * time.Hour)}
+	fresh := notifications.Notification{ID: 2, TvdbID: "154562", Category: "series",
+		Status: notifications.StatusSearching, UpdatedAt: time.Now().Add(-time.Hour)}
+	for _, live := range []string{repository.StatusPending, repository.StatusQueued} {
+		row := completedRow(40, 1)
+		row.ScheduleStatus = live
+		repo := &fakeSchedulerRepo{rows: []repository.ScheduledRow{row}}
+		notifs := repoMocks.NewNotificationRepository(t)
+		notifs.On("GetNotifications", mock.Anything, asyncReconcileBatch, "", "searching").Return([]notifications.Notification{old, fresh}, nil)
+		notifs.On("GetNotifications", mock.Anything, asyncReconcileBatch, "", "failed").Return(nil, nil)
+
+		acted, err := newReconcileInteractor(repo, notifs).ReconcileAsyncFailures(context.Background())
+
+		require.NoError(t, err)
+		assert.Equal(t, 0, acted)
+		notifs.AssertNotCalled(t, "UpdateNotification", mock.Anything, mock.Anything)
+	}
 }

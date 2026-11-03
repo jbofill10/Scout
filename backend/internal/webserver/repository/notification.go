@@ -340,6 +340,41 @@ func (r *NotificationRepo) ExistingTvdbIDs(ctx context.Context, tvdbIDs []string
 	return found, rows.Err()
 }
 
+// ActiveTvdbIDs returns the subset of tvdbIDs with a notification still in
+// flight: scheduled, searching or downloading, and not dismissed. A second
+// request for one of those would only add a duplicate row and a duplicate
+// search, so callers skip them.
+func (r *NotificationRepo) ActiveTvdbIDs(ctx context.Context, tvdbIDs []string) (map[string]bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	found := map[string]bool{}
+	if len(tvdbIDs) == 0 {
+		return found, nil
+	}
+	live := []string{
+		string(notifications.StatusScheduled),
+		string(notifications.StatusSearching),
+		string(notifications.StatusDownloading),
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT DISTINCT tvdb_id FROM Notifications
+		WHERE tvdb_id = ANY($1) AND auto_dismissed = false AND status = ANY($2)`,
+		pq.Array(tvdbIDs), pq.Array(live))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query in-progress notifications: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		found[id] = true
+	}
+	return found, rows.Err()
+}
+
 // PendingDeliveries returns notifications in a terminal status that has not
 // been delivered to outbound targets yet, oldest change first.
 func (r *NotificationRepo) PendingDeliveries(ctx context.Context, limit int) ([]notifications.Notification, error) {

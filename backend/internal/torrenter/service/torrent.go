@@ -193,6 +193,19 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 			return results, nil
 		}
 
+		// A search another request started owns the notification; this one
+		// just reports the movie as being worked on.
+		if q.inflight.searching(req.Id) {
+			q.logger.InfoContext(ctx, "Movie is already being searched for, skipping",
+				telemetry.WithTraceContext(ctx, "movie", req.Name, "tvdb_id", req.Id)...)
+			results = append(results, dlstatus.EpisodeResult{
+				TvdbID:  req.Id,
+				Outcome: dlstatus.OutcomeDownloading,
+			})
+			close(done)
+			return results, nil
+		}
+
 		if q.inFlightTvdbIDs(ctx)[req.Id] {
 			q.logger.InfoContext(ctx, "Movie already has a torrent in flight, skipping",
 				telemetry.WithTraceContext(ctx, "movie", req.Name, "tvdb_id", req.Id)...)

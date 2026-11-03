@@ -7,8 +7,9 @@ import { logError } from "../lib/logger";
  *
  * The torrent search itself runs in the background, so these counts describe
  * what was accepted, not what finished: queued_now items are being searched
- * for right away, scheduled items are waiting on a release date, and skipped
- * items were specials, duplicates, or had no usable air date.
+ * for right away, scheduled items are waiting on a release date, in_progress
+ * items were already being searched for or downloaded, and skipped items were
+ * specials, duplicates, or had no usable air date.
  */
 export interface DownloadSummary {
   media_title: string;
@@ -16,6 +17,7 @@ export interface DownloadSummary {
   queued_now: number;
   scheduled: number;
   skipped: number;
+  in_progress?: number;
   next_release?: string;
   trace_id?: string;
 }
@@ -58,6 +60,11 @@ export function describeSummary(summary: DownloadSummary, fallbackTitle?: string
       ? ` — first on ${new Date(summary.next_release).toLocaleDateString()}`
       : "";
     parts.push(`${plural(summary.scheduled, unit)} scheduled for release${when}`);
+  }
+
+  const inProgress = summary.in_progress ?? 0;
+  if (inProgress > 0) {
+    parts.push(isMovie ? "already in progress" : `${plural(inProgress, unit)} already in progress`);
   }
 
   if (parts.length === 0) {
@@ -104,9 +111,11 @@ export function useDownloadRequest() {
     retry: 0,
     onSuccess: (summary, vars) => {
       const hasWork = summary.queued_now > 0 || summary.scheduled > 0;
+      const inProgress = (summary.in_progress ?? 0) > 0;
       showToast(describeSummary(summary, vars.title), {
         severity: hasWork ? "success" : "info",
-        linkToActivity: hasWork,
+        // In-progress items are already on the Activity page too.
+        linkToActivity: hasWork || inProgress,
       });
 
       // The new work is already visible on the server; pull it in.

@@ -75,6 +75,23 @@ func (r *inflightRegistry) take(itemID string) []*inflightWork {
 	return out
 }
 
+// searching reports whether a search for itemID is running right now. A
+// monitored download is not a search: those are found through ActiveTorrents,
+// which also survives a restart.
+func (r *inflightRegistry) searching(itemID string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for w := range r.work[itemID] {
+		if w.infoHash == "" {
+			return true
+		}
+	}
+	return false
+}
+
 // sleepCtx waits for d or until ctx is done, reporting whether the full wait
 // elapsed. The monitor loop uses it so a cancel does not have to wait out a
 // poll interval.

@@ -87,31 +87,36 @@ func (q *QbittHandler) inFlightTvdbIDs(ctx context.Context) map[string]bool {
 	return ids
 }
 
-// filterInFlightEpisodes drops episodes that already have a torrent in flight,
-// which happens when a season is requested again or a retry row fires for an
-// episode whose first pass did add a torrent but never got to report it. Those
-// episodes are reported as downloading, and their notifications are put back
-// on downloading in case the retry engine had moved them to "searching".
+// filterInFlightEpisodes drops episodes Scout is already working on: ones
+// another request is searching for right now, and ones with a torrent in
+// flight, which happens when a season is requested again or a retry row fires
+// for an episode whose first pass did add a torrent but never got to report
+// it. Both are reported as downloading. An in-flight torrent's notification is
+// put back on downloading in case the retry engine had moved it to
+// "searching"; a running search's notification belongs to that search and is
+// left alone.
 func (q *QbittHandler) filterInFlightEpisodes(ctx context.Context, req *tvdb.Media, episodes []tvdb.Episode) ([]tvdb.Episode, []dlstatus.EpisodeResult) {
 	if len(episodes) == 0 {
 		return episodes, nil
 	}
 	inFlight := q.inFlightTvdbIDs(ctx)
-	if len(inFlight) == 0 {
-		return episodes, nil
-	}
 
 	toDownload := make([]tvdb.Episode, 0, len(episodes))
 	skipped := []dlstatus.EpisodeResult{}
 	for _, episode := range episodes {
 		id := strconv.Itoa(episode.Id)
-		if !inFlight[id] {
+		switch {
+		case q.inflight.searching(id):
+			q.logger.InfoContext(ctx, "Episode is already being searched for, skipping",
+				telemetry.WithTraceContext(ctx, "name", req.Name, "season", episode.SeasonNumber, "episode", episode.Number)...)
+		case inFlight[id]:
+			q.logger.InfoContext(ctx, "Episode already has a torrent in flight, skipping",
+				telemetry.WithTraceContext(ctx, "name", req.Name, "season", episode.SeasonNumber, "episode", episode.Number)...)
+			q.updateNotificationStatus(ctx, id, "", notifications.StatusDownloading)
+		default:
 			toDownload = append(toDownload, episode)
 			continue
 		}
-		q.logger.InfoContext(ctx, "Episode already has a torrent in flight, skipping",
-			telemetry.WithTraceContext(ctx, "name", req.Name, "season", episode.SeasonNumber, "episode", episode.Number)...)
-		q.updateNotificationStatus(ctx, id, "", notifications.StatusDownloading)
 		skipped = append(skipped, dlstatus.EpisodeResult{
 			TvdbID:  id,
 			Season:  episode.SeasonNumber,

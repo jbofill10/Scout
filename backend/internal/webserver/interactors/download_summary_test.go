@@ -3,6 +3,7 @@ package interactors
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	repoMocks "github.com/jbofill10/scout/backend/internal/webserver/repository/mocks"
 	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
+	"github.com/jbofill10/scout/backend/pkg/notifications"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -50,6 +52,7 @@ func aired(daysFromNow int) string {
 func TestDownloadShow_SummaryCountsEachEpisode(t *testing.T) {
 	repo := &fakeSchedulerRepo{}
 	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(map[string]bool{}, nil)
 	notifRepo.On("CreateNotification", mock.Anything, mock.Anything).Return(nil)
 	dispatcher := &fakeDispatcher{resp: dlstatus.DownloadResponse{
 		Results: []dlstatus.EpisodeResult{epResult("1", dlstatus.OutcomeDownloading, "")},
@@ -88,6 +91,7 @@ func TestDownloadShow_SummaryCountsEachEpisode(t *testing.T) {
 func TestDownloadShow_DispatchesOneEpisodePerTorrenterCall(t *testing.T) {
 	repo := &fakeSchedulerRepo{}
 	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(map[string]bool{}, nil)
 	notifRepo.On("CreateNotification", mock.Anything, mock.Anything).Return(nil)
 	dispatcher := &fakeDispatcher{respFor: func(req tvdb.Media) dlstatus.DownloadResponse {
 		ep := req.Metadata.Episodes[0]
@@ -125,6 +129,7 @@ func TestDownloadShow_DispatchesOneEpisodePerTorrenterCall(t *testing.T) {
 func TestDownloadShow_RetriesOnlyTheEpisodeThatFailed(t *testing.T) {
 	repo := &fakeSchedulerRepo{}
 	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(map[string]bool{}, nil)
 	notifRepo.On("CreateNotification", mock.Anything, mock.Anything).Return(nil)
 	notifRepo.On("GetNotification", mock.Anything, "2").Return(nil, nil)
 	dispatcher := &fakeDispatcher{respFor: func(req tvdb.Media) dlstatus.DownloadResponse {
@@ -160,6 +165,7 @@ func TestDownloadShow_RetriesOnlyTheEpisodeThatFailed(t *testing.T) {
 func TestDownloadShow_AlreadyScheduledCountsAsSkipped(t *testing.T) {
 	repo := &fakeSchedulerRepo{scheduleErr: repository.ErrDuplicateScheduled}
 	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(map[string]bool{}, nil)
 	dispatcher := &fakeDispatcher{}
 
 	i := newSummaryInteractor(t, repo, notifRepo, dispatcher)
@@ -178,6 +184,7 @@ func TestDownloadShow_AlreadyScheduledCountsAsSkipped(t *testing.T) {
 func TestDownloadShow_ReturnsBeforeTorrenterFinishes(t *testing.T) {
 	repo := &fakeSchedulerRepo{}
 	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(map[string]bool{}, nil)
 	notifRepo.On("CreateNotification", mock.Anything, mock.Anything).Return(nil)
 
 	release := make(chan struct{})
@@ -217,6 +224,7 @@ func TestDownloadShow_ReturnsBeforeTorrenterFinishes(t *testing.T) {
 func TestDownloadMovie_ReleasedQueuesImmediately(t *testing.T) {
 	repo := &fakeSchedulerRepo{}
 	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(map[string]bool{}, nil)
 	notifRepo.On("CreateNotification", mock.Anything, mock.Anything).Return(nil)
 	dispatcher := &fakeDispatcher{resp: dlstatus.DownloadResponse{
 		Results: []dlstatus.EpisodeResult{epResult("777", dlstatus.OutcomeDownloading, "")},
@@ -239,6 +247,7 @@ func TestDownloadMovie_ReleasedQueuesImmediately(t *testing.T) {
 func TestDownloadMovie_UnreleasedSchedules(t *testing.T) {
 	repo := &fakeSchedulerRepo{}
 	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(map[string]bool{}, nil)
 	notifRepo.On("CreateNotification", mock.Anything, mock.Anything).Return(nil)
 	dispatcher := &fakeDispatcher{}
 
@@ -259,6 +268,7 @@ func TestDownloadMovie_UnreleasedSchedules(t *testing.T) {
 func TestDownloadMovie_AlreadyScheduledIsNotAnError(t *testing.T) {
 	repo := &fakeSchedulerRepo{scheduleErr: repository.ErrDuplicateScheduled}
 	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(map[string]bool{}, nil)
 	dispatcher := &fakeDispatcher{}
 
 	i := newSummaryInteractor(t, repo, notifRepo, dispatcher)
@@ -272,4 +282,139 @@ func TestDownloadMovie_AlreadyScheduledIsNotAnError(t *testing.T) {
 	assert.Equal(t, 1, summary.Skipped)
 	assert.Equal(t, 0, summary.Scheduled)
 	assert.Equal(t, 0, dispatcher.callCount())
+}
+
+// An episode Scout is already searching for or downloading is not requested
+// again: no second notification, no second search. The other episodes go
+// through as usual.
+func TestDownloadShow_EpisodesInProgressAreSkipped(t *testing.T) {
+	repo := &fakeSchedulerRepo{}
+	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, []string{"1", "2", "3"}).Return(map[string]bool{"2": true}, nil)
+	notifRepo.On("CreateNotification", mock.Anything, mock.MatchedBy(func(n *notifications.Notification) bool {
+		return n.TvdbID != "2"
+	})).Return(nil)
+	dispatcher := &fakeDispatcher{respFor: func(req tvdb.Media) dlstatus.DownloadResponse {
+		ep := req.Metadata.Episodes[0]
+		return dlstatus.DownloadResponse{Results: []dlstatus.EpisodeResult{
+			epResult(strconv.Itoa(ep.Id), dlstatus.OutcomeDownloading, ""),
+		}}
+	}}
+
+	i := newSummaryInteractor(t, repo, notifRepo, dispatcher)
+
+	req := tvdb.Media{Id: "555", Name: "Test Show", Category: "series"}
+	req.Metadata.Episodes = []tvdb.Episode{
+		{Id: 1, SeasonNumber: 1, Number: 1, Aired: aired(-30)},
+		{Id: 2, SeasonNumber: 1, Number: 2, Aired: aired(-23)},
+		{Id: 3, SeasonNumber: 1, Number: 3, Aired: aired(-16)},
+	}
+
+	summary, err := i.DownloadShow(context.Background(), req)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, summary.QueuedNow)
+	assert.Equal(t, 1, summary.InProgress)
+	assert.Equal(t, 0, summary.Skipped)
+
+	payloads := dispatcher.payloads()
+	require.Len(t, payloads, 2)
+	assert.Equal(t, 1, payloads[0].Metadata.Episodes[0].Id)
+	assert.Equal(t, 3, payloads[1].Metadata.Episodes[0].Id)
+}
+
+// The in-progress check is best effort: when it cannot be made, the request
+// proceeds as before and the torrenter's own in-flight check is the backstop.
+func TestDownloadShow_InProgressLookupFailureStillDownloads(t *testing.T) {
+	repo := &fakeSchedulerRepo{}
+	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(nil, errors.New("db down"))
+	notifRepo.On("CreateNotification", mock.Anything, mock.Anything).Return(nil)
+	dispatcher := &fakeDispatcher{resp: dlstatus.DownloadResponse{
+		Results: []dlstatus.EpisodeResult{epResult("1", dlstatus.OutcomeDownloading, "")},
+	}}
+
+	i := newSummaryInteractor(t, repo, notifRepo, dispatcher)
+
+	req := tvdb.Media{Id: "555", Name: "Test Show", Category: "series"}
+	req.Metadata.Episodes = []tvdb.Episode{{Id: 1, SeasonNumber: 1, Number: 1, Aired: aired(-30)}}
+
+	summary, err := i.DownloadShow(context.Background(), req)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, summary.QueuedNow)
+	assert.Equal(t, 0, summary.InProgress)
+	assert.Equal(t, 1, dispatcher.callCount())
+}
+
+// A movie Scout is already working on is answered without a TVDB lookup, a
+// second notification or a torrenter call. Two requests seconds apart used to
+// run two searches and strand one notification on "searching".
+func TestDownloadMovie_InProgressIsNotRequeued(t *testing.T) {
+	repo := &fakeSchedulerRepo{}
+	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, []string{"777"}).Return(map[string]bool{"777": true}, nil)
+	dispatcher := &fakeDispatcher{}
+
+	i := newSummaryInteractor(t, repo, notifRepo, dispatcher)
+
+	req := tvdb.Media{Id: "777", Name: "Test Movie", Category: "movie"}
+	req.Metadata.FirstAired = aired(-400)
+
+	summary, err := i.DownloadMovie(context.Background(), req)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, summary.InProgress)
+	assert.Equal(t, 0, summary.QueuedNow)
+	assert.Equal(t, 0, summary.Skipped)
+	assert.Equal(t, 0, dispatcher.callCount())
+}
+
+// The movie path is best effort too: a failed lookup does not block the request.
+func TestDownloadMovie_InProgressLookupFailureStillDownloads(t *testing.T) {
+	repo := &fakeSchedulerRepo{}
+	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, []string{"777"}).Return(nil, errors.New("db down"))
+	notifRepo.On("CreateNotification", mock.Anything, mock.Anything).Return(nil)
+	dispatcher := &fakeDispatcher{resp: dlstatus.DownloadResponse{
+		Results: []dlstatus.EpisodeResult{epResult("777", dlstatus.OutcomeDownloading, "")},
+	}}
+
+	i := newSummaryInteractor(t, repo, notifRepo, dispatcher)
+
+	req := tvdb.Media{Id: "777", Name: "Test Movie", Category: "movie"}
+	req.Metadata.FirstAired = aired(-400)
+
+	summary, err := i.DownloadMovie(context.Background(), req)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, summary.QueuedNow)
+	assert.Equal(t, 0, summary.InProgress)
+	assert.Equal(t, 1, dispatcher.callCount())
+}
+
+// A season whose every episode is already in progress starts nothing and says
+// so, rather than reporting "nothing to download".
+func TestDownloadShow_AllEpisodesInProgressStartsNothing(t *testing.T) {
+	repo := &fakeSchedulerRepo{}
+	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, []string{"1", "2"}).Return(map[string]bool{"1": true, "2": true}, nil)
+	dispatcher := &fakeDispatcher{}
+
+	i := newSummaryInteractor(t, repo, notifRepo, dispatcher)
+
+	req := tvdb.Media{Id: "555", Name: "Test Show", Category: "series"}
+	req.Metadata.Episodes = []tvdb.Episode{
+		{Id: 1, SeasonNumber: 1, Number: 1, Aired: aired(-30)},
+		{Id: 2, SeasonNumber: 1, Number: 2, Aired: aired(7)}, // future, but already scheduled
+	}
+
+	summary, err := i.DownloadShow(context.Background(), req)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, summary.InProgress)
+	assert.Equal(t, 0, summary.QueuedNow)
+	assert.Equal(t, 0, summary.Scheduled)
+	assert.Equal(t, 0, dispatcher.callCount())
+	assert.Equal(t, 0, repo.scheduleCount, "an already-scheduled episode is not scheduled again")
 }
