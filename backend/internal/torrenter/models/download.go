@@ -155,6 +155,10 @@ type UpgradeInfo struct {
 
 // PackInfo describes the episodes a season-pack torrent is expected to hold.
 type PackInfo struct {
+	// Show is the name the pack was requested under. Every file of a pack
+	// carries it, so an episode whose title is the show's own name is not
+	// matched by title. Empty on packs recorded before it was kept.
+	Show string `json:"show,omitempty"`
 	// Season is the first season the pack covers; the only one for a
 	// single-season pack.
 	Season int `json:"season"`

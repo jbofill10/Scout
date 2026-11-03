@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -143,7 +144,7 @@ func (q *QbittHandler) validateShowTorrent(torrent *prowlarr.Search, strategy *m
 
 	// Layer 4: Apply strategy-specific exclusions (anime: exclude "season", "episode")
 	for _, exclude := range strategy.Exclude {
-		if strings.Contains(titleLower, strings.ToLower(exclude)) {
+		if excludedKeywordHit(titleLower, strings.ToLower(exclude)) {
 			return TorrentValidationResult{
 				IsValid:    false,
 				Confidence: 0.0,
@@ -211,6 +212,22 @@ func (q *QbittHandler) validateShowTorrent(torrent *prowlarr.Search, strategy *m
 		Reason:     "validation passed",
 		Parsed:     parsed,
 	}
+}
+
+// numberedSeasonRe matches a season designation that carries a number:
+// "Season 2", "season2", "2nd Season".
+var numberedSeasonRe = regexp.MustCompile(`season\s*\d|\d\s*(st|nd|rd|th)\s+season`)
+
+// excludedKeywordHit reports whether a keyword an absolute-number strategy
+// excludes appears in the title. "season" only counts when a season number
+// comes with it: a season named in words is part of the show's name for that
+// run ("Shingeki no Kyojin (The Final Season) - 63"), and such releases
+// number their episodes absolutely like any other.
+func excludedKeywordHit(titleLower, keyword string) bool {
+	if keyword == "season" {
+		return numberedSeasonRe.MatchString(titleLower)
+	}
+	return strings.Contains(titleLower, keyword)
 }
 
 // validateMovieTorrent performs movie-specific validation using the movie parser
@@ -366,7 +383,58 @@ func (q *QbittHandler) scoreNameMatch(parsedName, expectedName string) float64 {
 	if len(p) == len(e)+1 && strings.HasSuffix(p[0], "s") && sameTokens(p[1:], e) {
 		return 0.8 // "Marvels The Punisher" for "The Punisher"
 	}
+	if trimmed := trimSeasonDescriptor(p); len(trimmed) > 0 && len(trimmed) < len(p) && sameTokens(trimmed, e) {
+		return 0.8 // "Shingeki no Kyojin (The Final Season)" for "Shingeki no Kyojin"
+	}
 	return 0.0
+}
+
+// ordinalRe matches "2nd", "3rd", "4th" and the like.
+var ordinalRe = regexp.MustCompile(`^\d+(st|nd|rd|th)$`)
+
+// seasonOrdinalWords are the words that name a season when they precede
+// "season".
+var seasonOrdinalWords = map[string]bool{
+	"first": true, "second": true, "third": true, "fourth": true, "fifth": true, "sixth": true,
+	"seventh": true, "eighth": true, "ninth": true, "tenth": true, "final": true, "last": true,
+}
+
+// trimSeasonDescriptor drops a trailing season designation from a release's
+// show name tokens: "Season 4", "Season 4 Part 2", "4th Season", "The Final
+// Season", "The Final Season Part 2". Anime release groups append these to
+// the show's name, and they do not make it another show; which season and
+// episode a release holds is checked separately. "Part N" on its own is left
+// alone, since for a film it names a sequel.
+func trimSeasonDescriptor(tokens []string) []string {
+	n := len(tokens)
+	for {
+		switch {
+		case n >= 4 && tokens[n-2] == "part" && isDigits(tokens[n-1]) &&
+			(tokens[n-3] == "season" || (isDigits(tokens[n-3]) && n >= 5 && tokens[n-4] == "season")):
+			n -= 2
+		case n >= 2 && tokens[n-2] == "season" && isDigits(tokens[n-1]):
+			n -= 2
+		case n >= 2 && tokens[n-1] == "season" && (ordinalRe.MatchString(tokens[n-2]) || seasonOrdinalWords[tokens[n-2]]):
+			n -= 2
+			if n >= 1 && tokens[n-1] == "the" {
+				n--
+			}
+		default:
+			return tokens[:n]
+		}
+	}
+}
+
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // nameTokens splits a title into normalised words; dots and underscores are

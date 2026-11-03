@@ -144,7 +144,7 @@ func (q *QbittHandler) packStrategy(req *tvdb.Media, seasons []int, episodes []t
 		ss.RuntimeMinutes = base[0].RuntimeMinutes
 	}
 	eps := append([]tvdb.Episode{}, episodes...)
-	ss.Pack = &models.PackInfo{Season: seasons[0], Seasons: append([]int{}, seasons...), Episodes: eps}
+	ss.Pack = &models.PackInfo{Show: req.Name, Season: seasons[0], Seasons: append([]int{}, seasons...), Episodes: eps}
 	return ss
 }
 
@@ -454,7 +454,8 @@ func packFileSeason(path string, pack *models.PackInfo) int {
 // episode order; empty means the file holds nothing that was wanted.
 func packFileEpisodes(parser *TorrentParser, path string, pack *models.PackInfo, byKey map[string]tvdb.Episode) []tvdb.Episode {
 	name := filepath.Base(path)
-	if byTitle := packFileEpisodesByTitle(name, pack); len(byTitle) > 0 {
+	parsed := parser.Parse(name)
+	if byTitle := packFileEpisodesByTitle(name, pack, parsed); len(byTitle) > 0 {
 		return byTitle
 	}
 	if packSegmentRe.MatchString(name) {
@@ -462,7 +463,6 @@ func packFileEpisodes(parser *TorrentParser, path string, pack *models.PackInfo,
 		// that TVDB counts whole, so a number alone cannot be trusted.
 		return nil
 	}
-	parsed := parser.Parse(name)
 	if parsed == nil {
 		// Bare "E05" / "05" names inside a season folder.
 		parsed = parsePackFileFallback(name, packFileSeason(path, pack))
@@ -506,16 +506,23 @@ func packFileEpisodes(parser *TorrentParser, path string, pack *models.PackInfo,
 // packFileEpisodesByTitle matches a file to the wanted episodes whose titles
 // appear in its name, as whole words after normalisation. Titles shorter
 // than five letters are not trusted on their own.
-func packFileEpisodesByTitle(name string, pack *models.PackInfo) []tvdb.Episode {
+func packFileEpisodesByTitle(name string, pack *models.PackInfo, parsed *ParsedTorrent) []tvdb.Episode {
 	base := strings.TrimSuffix(name, filepath.Ext(name))
 	haystack := " " + normalizeMovieName(strings.NewReplacer(".", " ", "_", " ").Replace(base)) + " "
 	if strings.TrimSpace(haystack) == "" {
 		return nil
 	}
+	// The show's name is in every file of the pack, so an episode titled
+	// after the show (Dexter's pilot is "Dexter") would claim them all. The
+	// name is taken from the pack when it was kept, else from the file itself.
+	showNames := []string{normalizeMovieName(pack.Show)}
+	if parsed != nil {
+		showNames = append(showNames, normalizeMovieName(strings.NewReplacer(".", " ", "_", " ").Replace(parsed.ShowName)))
+	}
 	out := []tvdb.Episode{}
 	for _, ep := range pack.Episodes {
 		title := normalizeMovieName(ep.Name)
-		if len(strings.ReplaceAll(title, " ", "")) < 5 {
+		if len(strings.ReplaceAll(title, " ", "")) < 5 || titleNamesShow(title, showNames) {
 			continue
 		}
 		if strings.Contains(haystack, " "+title+" ") {
@@ -529,6 +536,17 @@ func packFileEpisodesByTitle(name string, pack *models.PackInfo) []tvdb.Episode 
 		return out[i].Number < out[j].Number
 	})
 	return out
+}
+
+// titleNamesShow reports whether a normalised episode title is the show's
+// name, or a whole-word part of it.
+func titleNamesShow(title string, showNames []string) bool {
+	for _, show := range showNames {
+		if show != "" && strings.Contains(" "+show+" ", " "+title+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 // packFileEpisode is packFileEpisodes for callers that only need to know the

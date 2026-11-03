@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
@@ -23,6 +25,39 @@ func (q *QbittHandler) clearActiveTorrent(ctx context.Context, infoHash string) 
 	}
 }
 
+// maxTorrentDirBytes keeps a download directory's name under the file
+// system's 255-byte limit with room to spare for multi-byte titles.
+const maxTorrentDirBytes = 200
+
+// torrentDirName is the directory a release is downloaded into, made from its
+// title. A path separator in the title would name a nested directory that
+// does not exist (a fansub title reads "[Group] 进击的巨人 / Shingeki no
+// Kyojin - 74"), so separators become dashes; control characters go,
+// surrounding dots, dashes and spaces are trimmed, an over-long name is cut on a rune
+// boundary, and an empty result falls back to the tracking id.
+func torrentDirName(title, fallback string) string {
+	var b strings.Builder
+	for _, r := range title {
+		switch {
+		case r == '/' || r == '\\':
+			b.WriteString(" - ")
+		case r < 0x20 || r == 0x7f:
+		default:
+			b.WriteRune(r)
+		}
+	}
+	name := strings.Trim(strings.Join(strings.Fields(b.String()), " "), ".- ")
+	for len(name) > maxTorrentDirBytes {
+		_, size := utf8.DecodeLastRuneInString(name)
+		name = name[:len(name)-size]
+	}
+	name = strings.TrimRight(name, ".- ")
+	if name == "" {
+		return fallback
+	}
+	return name
+}
+
 // downloadTorrent adds a torrent to qBittorrent and returns its info hash and
 // tracking tag. A pack is added paused: its unwanted files are deselected and
 // the free space checked against what is left before it is started.
@@ -38,7 +73,7 @@ func (q *QbittHandler) downloadTorrent(ctx context.Context, torrent *prowlarr.Se
 		"tracking_uuid", trackingUUID,
 		"torrent_meta", torrent)
 
-	torrentSavePath := baseSavePath + "/" + torrent.Title
+	torrentSavePath := baseSavePath + "/" + torrentDirName(torrent.Title, trackingUUID)
 	q.logger.InfoContext(ctx, "Torrent save path", "path", torrentSavePath)
 
 	if err := os.Mkdir(torrentSavePath, 0777); err != nil && !os.IsExist(err) {
