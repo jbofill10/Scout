@@ -47,7 +47,7 @@ const snapshot = {
   active: [
     item({ id: 1, tvdb_id: "1001", season: 3, episode: 1, status: "downloading" }),
     item({ id: 2, tvdb_id: "1002", season: 3, episode: 2, status: "downloading" }),
-    item({ id: 3, tvdb_id: "1003", season: 3, episode: 3, status: "searching", reason: "No torrent found yet", next_attempt_at: "2099-01-01T12:00:00Z", attempts: 1, can_retry: true, can_pick_release: true }),
+    item({ id: 3, tvdb_id: "1003", season: 3, episode: 3, status: "searching", reason: "No torrent found yet", next_attempt_at: "2099-01-01T12:00:00Z", schedule_status: "pending", attempts: 1, can_retry: true, can_pick_release: true }),
     item({ id: 4, tvdb_id: "2001", media_title: "Dune: Part Two", category: "movie", season: undefined, episode: undefined, status: "downloading", trace_id: "abcdef1234567890" }),
     // Has a schedule row below, so it must show up once, under Upcoming
     item({ id: 5, tvdb_id: "3001", season: 3, episode: 5, status: "scheduled", can_cancel: true }),
