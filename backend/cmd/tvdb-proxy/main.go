@@ -13,6 +13,7 @@ import (
 	"github.com/jbofill10/scout/backend/internal/tvdbproxy/config"
 	"github.com/jbofill10/scout/backend/internal/tvdbproxy/genres"
 	"github.com/jbofill10/scout/backend/internal/tvdbproxy/handlers"
+	"github.com/jbofill10/scout/backend/internal/tvdbproxy/popular"
 	"github.com/jbofill10/scout/backend/internal/tvdbproxy/search"
 	"github.com/jbofill10/scout/backend/internal/tvdbproxy/tvdb"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
@@ -91,13 +92,44 @@ func main() {
 
 	searchService := search.NewService(tvdbClient, logger)
 
+	// Popular rows: Trakt's most-watched list when a client id is configured,
+	// a recency-weighted TVDB ranking otherwise (and whenever Trakt fails).
+	tvdbPopular := popular.NewTVDBSource(tvdbClient, genreCache, logger)
+	if cfg.Wikipedia.Enabled {
+		tvdbPopular.SetAttention(popular.NewWikipedia(popular.WikipediaOptions{
+			APIHost:  cfg.Wikipedia.APIHost,
+			RESTHost: cfg.Wikipedia.RESTHost,
+		}, popular.NewWikipediaHTTPClient(), logger))
+		logger.Info("TVDB popular ranking ordered by Wikipedia attention")
+	}
+	if cfg.AniList.Enabled {
+		tvdbPopular.SetAnimeTrends(popular.NewAniList(cfg.AniList.Host, popular.NewAniListHTTPClient(), logger))
+		logger.Info("Anime rows led by AniList trending")
+	}
+	var primaryPopular popular.Source
+	if cfg.Trakt.ClientID != "" {
+		trakt := popular.NewTraktSource(popular.TraktOptions{
+			Host:     cfg.Trakt.Host,
+			ClientID: cfg.Trakt.ClientID,
+			List:     cfg.Trakt.List,
+			Period:   cfg.Trakt.Period,
+		}, popular.NewTraktHTTPClient(), tvdbClient, logger)
+		primaryPopular = trakt
+		logger.Info("Popular rows ranked by Trakt", "source", trakt.Name())
+	} else {
+		logger.Info("TRAKT_CLIENT_ID not set; popular rows ranked by recency-weighted TVDB score")
+	}
+	popularService := popular.NewService(primaryPopular, tvdbPopular, logger)
+	// Build the UI's rows now so the webserver's first refresh finds them ready.
+	popularService.Warm(refreshCtx, popular.DefaultRows())
+
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(tvdbClient)
 	searchHandler := handlers.NewSearchHandler(searchService, logger)
 	extendedHandler := handlers.NewExtendedHandler(tvdbClient, logger)
 	episodesHandler := handlers.NewEpisodesHandler(tvdbClient, logger)
 	genreHandler := handlers.NewGenreHandler(genreCache, logger)
-	popularHandler := handlers.NewPopularHandler(tvdbClient, genreCache, logger)
+	popularHandler := handlers.NewPopularHandler(popularService, genreCache, logger)
 
 	router := gin.Default()
 	// Only the compose network sits in front of this service, so only it may

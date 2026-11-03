@@ -37,6 +37,18 @@ func (s *Status) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Popularity is the measure a popular row ranked an item by: Trakt watchers,
+// English Wikipedia views over the last week, AniList's trending score or,
+// when nothing measured the title, TVDB's lifetime score.
+type Popularity struct {
+	// Source is "trakt", "wikipedia", "anilist" or "tvdb"
+	Source string `json:"source"`
+	// Value is the figure in the source's unit: watchers, views, trending score or TVDB score
+	Value int `json:"value"`
+	// Detail names what was measured, e.g. the Wikipedia article or the Trakt list
+	Detail string `json:"detail,omitempty"`
+}
+
 type Media struct {
 	// TVDB Id for show
 	Id string `json:"id"`
@@ -48,6 +60,8 @@ type Media struct {
 	Anime bool `json:"anime"`
 	// Fuzzy popularity of show. Used to sort return result
 	Score float64 `json:"score"`
+	// Popularity says why a popular-row item ranks where it does; empty for search results
+	Popularity *Popularity `json:"popularity,omitempty"`
 	// slug for show
 	Slug string `json:"slug"`
 	// ImageUrl to serve thumbnail on frontend
