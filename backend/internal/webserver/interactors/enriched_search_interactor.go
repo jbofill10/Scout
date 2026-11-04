@@ -283,9 +283,10 @@ func (i *EnrichedSearchInteractor) mergeStatusWithMedia(
 			// Merge show status
 			if showStatus, found := showStatusMap[media.Id]; found {
 				statusInfo.Seasons = showStatus.Seasons
-				// Calculate downloaded/total using TVDB metadata for accurate counts
-				downloaded, total := calculateEpisodeCountsFromMetadata(media, showStatus)
+				// Calculate downloaded/aired/total using TVDB metadata for accurate counts
+				downloaded, aired, total := calculateEpisodeCountsFromMetadata(media, showStatus, time.Now())
 				statusInfo.Downloaded = downloaded
+				statusInfo.Aired = aired
 				statusInfo.Total = total
 			}
 		case "movie":

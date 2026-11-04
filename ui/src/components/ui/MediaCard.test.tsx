@@ -34,11 +34,31 @@ describe("MediaCard", () => {
         media={media}
         onClick={() => {}}
         rating={rating}
-        statusBadge={{ type: "show", episodeCount: { downloaded: 3, total: 10 } }}
+        statusBadge={{ type: "show", episodeCount: { downloaded: 3, aired: 10, upcoming: 0 } }}
       />,
     );
 
     expect(screen.getByText("3/10")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "IMDb 8.7" })).toBeInTheDocument();
+  });
+
+  it("counts a show against its aired episodes and tells the rest in the tooltip", () => {
+    render(
+      <MediaCard
+        media={media}
+        onClick={() => {}}
+        statusBadge={{ type: "show", episodeCount: { downloaded: 11, aired: 11, upcoming: 9 } }}
+      />,
+    );
+
+    const pill = screen.getByText("11/11");
+    expect(pill).toHaveAttribute("title", "11 of 11 aired episodes in your library · 9 upcoming");
+    expect(screen.queryByText("11/20")).toBeNull();
+  });
+
+  it("labels a movie in the library", () => {
+    render(<MediaCard media={media} onClick={() => {}} statusBadge={{ type: "movie", inLibrary: true }} />);
+
+    expect(screen.getByText("In Library")).not.toHaveAttribute("title");
   });
 });

@@ -18,6 +18,7 @@ import AlertTitle from "@mui/material/AlertTitle";
 import CloseIcon from "@mui/icons-material/Close";
 import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
 import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
+import ScheduleRoundedIcon from "@mui/icons-material/ScheduleRounded";
 import type { ShowStatus, EnrichedMedia } from "../../types/MediaStatus";
 import { alpha, useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
@@ -26,6 +27,14 @@ import { useMediaDetails } from "../../hooks/useMediaDetails";
 import FollowButton from "./FollowButton";
 import RatingPill from "./RatingPill";
 import { orderedRatings } from "../../utils/ratings";
+import { formatAirDate } from "../../utils/airDates";
+import {
+  coverageSentence,
+  episodeState,
+  episodeStateLabel,
+  seasonTabLabel,
+  summarizeCoverage,
+} from "../../utils/episodeCoverage";
 
 export interface MediaStatusDialogProps {
   open: boolean;
@@ -58,18 +67,6 @@ interface EnrichedSeasonInfo {
   episodes: EnrichedEpisodeInfo[];
 }
 
-/** TVDB dates are plain calendar days — parse them as local to avoid a timezone slip. */
-const formatAirDate = (value?: string): string | null => {
-  if (!value) return null;
-  const [year, month, day] = value.split("-").map(Number);
-  if (!year || !month || !day) return null;
-  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-};
-
 const formatRuntime = (minutes?: number): string | null => {
   if (!minutes || minutes <= 0) return null;
   const hours = Math.floor(minutes / 60);
@@ -87,7 +84,9 @@ const OVERVIEW_CLAMP_CHARS = 320;
  *
  * The detail view for a media item. Shows what the item is (overview, genres,
  * runtime, rating, air dates) alongside what Scout has of it — episode-level
- * coverage for shows, library state for movies.
+ * coverage for shows, library state for movies. Coverage is measured against
+ * the episodes that have aired; the rest are listed as upcoming, so a show
+ * mid-run reads "11 of 11 aired episodes · 9 upcoming", not 11 of 20.
  *
  * List endpoints carry only poster-grid data, so the dialog fetches the full
  * detail record on open and merges it over whatever the caller already had.
@@ -256,14 +255,19 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
       .sort((a, b) => a.seasonNum - b.seasonNum);
   }, [status, enrichedMedia, info]);
 
-  // Library coverage across every season, shown as a progress bar in the header
+  // Library coverage across the regular seasons, shown as a progress bar in the
+  // header. Measured against aired episodes; upcoming ones are counted
+  // separately. Specials stay out, as they do on the poster pill, and keep
+  // their own tab; a show that only has specials is measured on those.
   const totals = useMemo(() => {
-    const episodes = enrichedSeasons.flatMap((season) => season.episodes);
-    const downloaded = episodes.filter((episode) => episode.downloaded).length;
-    return { downloaded, total: episodes.length };
+    const regular = enrichedSeasons.filter((season) => season.seasonNum > 0);
+    const pool = regular.length > 0 ? regular : enrichedSeasons;
+    return summarizeCoverage(pool.flatMap((season) => season.episodes));
   }, [enrichedSeasons]);
 
-  const downloadLabel = isMovie ? "Download" : "Download missing";
+  // Once every aired episode is in, the button can only schedule what is still to air
+  const onlyUpcomingLeft = totals.downloaded >= totals.aired && totals.upcoming > 0;
+  const downloadLabel = isMovie ? "Download" : onlyUpcomingLeft ? "Schedule upcoming" : "Download missing";
   const movieInLibrary = inLibrary ?? enrichedMedia?.status?.inLibrary ?? false;
 
   // Facts strip under the title: year · runtime · rating · status
@@ -560,7 +564,7 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
     Math.max(enrichedSeasons.length - 1, 0),
   );
   const currentSeason = enrichedSeasons[activeSeasonIndex];
-  const percentComplete = totals.total > 0 ? (totals.downloaded / totals.total) * 100 : 0;
+  const percentComplete = totals.aired > 0 ? (totals.downloaded / totals.aired) * 100 : 0;
 
   return (
     <Dialog
@@ -594,8 +598,7 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
           {enrichedSeasons.length > 0 && (
             <>
               <Typography variant="body2" sx={{ mt: 1, color: theme.palette.text.secondary }}>
-                {totals.downloaded} of {totals.total} {totals.total === 1 ? "episode" : "episodes"}{" "}
-                in your library
+                {coverageSentence(totals)}
               </Typography>
               <LinearProgress
                 variant="determinate"
@@ -649,6 +652,8 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
               <Alert severity="success">
                 <AlertTitle>All Episodes Downloaded 🎉</AlertTitle>
                 You have all {metadataStatus.tvdbEpisodeCount} aired episodes in your library!
+                {totals.upcoming > 0 &&
+                  ` ${totals.upcoming} more ${totals.upcoming === 1 ? "is" : "are"} yet to air.`}
               </Alert>
             ) : null}
           </Box>
@@ -691,17 +696,14 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
                   },
                 }}
               >
-                {enrichedSeasons.map((season) => {
-                  const have = season.episodes.filter((episode) => episode.downloaded).length;
-                  return (
-                    <Tab
-                      key={season.seasonNum}
-                      label={`${season.seasonNum === 0 ? "Specials" : `Season ${season.seasonNum}`} · ${have}/${season.episodes.length}`}
-                      id={`season-tab-${season.seasonNum}`}
-                      aria-controls={`season-panel-${season.seasonNum}`}
-                    />
-                  );
-                })}
+                {enrichedSeasons.map((season) => (
+                  <Tab
+                    key={season.seasonNum}
+                    label={seasonTabLabel(season.seasonNum, summarizeCoverage(season.episodes))}
+                    id={`season-tab-${season.seasonNum}`}
+                    aria-controls={`season-panel-${season.seasonNum}`}
+                  />
+                ))}
               </Tabs>
             </Box>
 
@@ -726,82 +728,101 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
                   No episodes found for this season
                 </Typography>
               ) : (
-                currentSeason.episodes.map((episode) => (
-                  <Box
-                    key={episode.episodeNum}
-                    sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 2,
-                      py: 1.25,
-                      borderBottom: `1px solid ${theme.palette.divider}`,
-                      "&:last-of-type": { borderBottom: 0 },
-                    }}
-                  >
-                    {/* Episode number, fixed width so titles align down the column */}
-                    <Typography
-                      variant="body2"
+                currentSeason.episodes.map((episode) => {
+                  const state = episodeState(episode);
+                  return (
+                    <Box
+                      key={episode.episodeNum}
                       sx={{
-                        width: 34,
-                        flexShrink: 0,
-                        textAlign: "right",
-                        fontVariantNumeric: "tabular-nums",
-                        color: theme.palette.text.disabled,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 2,
+                        py: 1.25,
+                        borderBottom: `1px solid ${theme.palette.divider}`,
+                        "&:last-of-type": { borderBottom: 0 },
                       }}
                     >
-                      {episode.episodeNum}
-                    </Typography>
-
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      {/* Episode number, fixed width so titles align down the column */}
                       <Typography
                         variant="body2"
                         sx={{
-                          fontWeight: 600,
-                          color: theme.palette.text.primary,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
+                          width: 34,
+                          flexShrink: 0,
+                          textAlign: "right",
+                          fontVariantNumeric: "tabular-nums",
+                          color: theme.palette.text.disabled,
                         }}
                       >
-                        {episode.name || `Episode ${episode.episodeNum}`}
+                        {episode.episodeNum}
                       </Typography>
-                      {episode.aired && (
-                        <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
-                          {formatAirDate(episode.aired) ?? episode.aired}
+
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            fontWeight: 600,
+                            color: theme.palette.text.primary,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {episode.name || `Episode ${episode.episodeNum}`}
+                        </Typography>
+                        {episode.aired && (
+                          <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
+                            {formatAirDate(episode.aired) ?? episode.aired}
+                          </Typography>
+                        )}
+                      </Box>
+
+                      {state === "library" ? (
+                        <Box
+                          sx={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 0.5,
+                            flexShrink: 0,
+                            px: 1,
+                            py: "3px",
+                            borderRadius: 999,
+                            fontSize: "0.6875rem",
+                            fontWeight: 700,
+                            color: theme.palette.success.main,
+                            backgroundColor: alpha(theme.palette.success.main, 0.14),
+                            border: `1px solid ${alpha(theme.palette.success.main, 0.35)}`,
+                          }}
+                        >
+                          <CheckRoundedIcon sx={{ fontSize: 14 }} />
+                          {episodeStateLabel.library}
+                        </Box>
+                      ) : state === "missing" ? (
+                        <Typography
+                          variant="caption"
+                          sx={{ flexShrink: 0, color: theme.palette.text.disabled, fontWeight: 600 }}
+                        >
+                          {episodeStateLabel.missing}
+                        </Typography>
+                      ) : (
+                        // Not aired yet (or no date): nothing to download, so not "missing"
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 0.5,
+                            flexShrink: 0,
+                            color: theme.palette.text.secondary,
+                            fontWeight: 600,
+                          }}
+                        >
+                          <ScheduleRoundedIcon sx={{ fontSize: 14 }} />
+                          {episodeStateLabel[state]}
                         </Typography>
                       )}
                     </Box>
-
-                    {episode.downloaded ? (
-                      <Box
-                        sx={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 0.5,
-                          flexShrink: 0,
-                          px: 1,
-                          py: "3px",
-                          borderRadius: 999,
-                          fontSize: "0.6875rem",
-                          fontWeight: 700,
-                          color: theme.palette.success.main,
-                          backgroundColor: alpha(theme.palette.success.main, 0.14),
-                          border: `1px solid ${alpha(theme.palette.success.main, 0.35)}`,
-                        }}
-                      >
-                        <CheckRoundedIcon sx={{ fontSize: 14 }} />
-                        In library
-                      </Box>
-                    ) : (
-                      <Typography
-                        variant="caption"
-                        sx={{ flexShrink: 0, color: theme.palette.text.disabled, fontWeight: 600 }}
-                      >
-                        Missing
-                      </Typography>
-                    )}
-                  </Box>
-                ))
+                  );
+                })
               )}
             </Box>
           </>

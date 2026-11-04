@@ -2,15 +2,36 @@ package interactors
 
 import (
 	"fmt"
+	"time"
 
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
 )
 
-// calculateEpisodeCountsFromMetadata computes downloaded/total episode counts using TVDB metadata
-// as the source of truth for total count, and matches downloaded episodes by TVDB ID (primary)
-// or season-episode key (fallback). Season 0 (specials) is excluded from counts.
-// Falls back to DB-only counting if no TVDB metadata is available.
-func calculateEpisodeCountsFromMetadata(media tvdb.Media, showStatus tvdb.ShowStatus) (downloaded, total int) {
+// episodeHasAired reports whether a TVDB air date (YYYY-MM-DD) is today or
+// earlier. An empty or unparseable date is not aired: TVDB leaves the date
+// blank on announced episodes, and the download flow skips those too.
+func episodeHasAired(aired string, now time.Time) bool {
+	airDate, err := time.Parse("2006-01-02", aired)
+	if err != nil {
+		return false
+	}
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	return !airDate.After(today)
+}
+
+// calculateEpisodeCountsFromMetadata computes the library coverage of a show
+// using TVDB metadata as the source of truth: downloaded is how many of
+// TVDB's episodes Plex has, aired how many have aired by now, total how many
+// TVDB lists. Specials (season 0) are left out of all three. Episodes are
+// matched by TVDB id first, then season-episode key, then absolute number. An
+// episode the library holds counts as aired whatever its date says.
+// Without TVDB metadata it falls back to counting what the library holds,
+// which is all aired by definition.
+func calculateEpisodeCountsFromMetadata(
+	media tvdb.Media,
+	showStatus tvdb.ShowStatus,
+	now time.Time,
+) (downloaded, aired, total int) {
 	episodes := media.Metadata.Episodes
 	if len(episodes) == 0 {
 		// No TVDB metadata available, fall back to DB-only counting
@@ -22,7 +43,7 @@ func calculateEpisodeCountsFromMetadata(media tvdb.Media, showStatus tvdb.ShowSt
 				}
 			}
 		}
-		return downloaded, total
+		return downloaded, total, total
 	}
 
 	// Build lookup sets from status data (DB episodes)
@@ -67,16 +88,20 @@ func calculateEpisodeCountsFromMetadata(media tvdb.Media, showStatus tvdb.ShowSt
 
 		// Match by TVDB ID first, then season-episode key, then absolute number
 		tvdbIdStr := fmt.Sprintf("%d", ep.Id)
-		if downloadedByTvdbId[tvdbIdStr] {
+		inLibrary := downloadedByTvdbId[tvdbIdStr] ||
+			downloadedByKey[fmt.Sprintf("%d-%d", ep.SeasonNumber, ep.Number)] ||
+			(ep.AbsoluteNumber > 0 && downloadedByAbsolute[ep.AbsoluteNumber])
+		if inLibrary {
 			downloaded++
-		} else if downloadedByKey[fmt.Sprintf("%d-%d", ep.SeasonNumber, ep.Number)] {
-			downloaded++
-		} else if ep.AbsoluteNumber > 0 && downloadedByAbsolute[ep.AbsoluteNumber] {
-			downloaded++
+		}
+		// An episode the library holds has aired whatever TVDB's date says, so
+		// the count never reads 12 of 11.
+		if inLibrary || episodeHasAired(ep.Aired, now) {
+			aired++
 		}
 	}
 
-	return downloaded, total
+	return downloaded, aired, total
 }
 
 // usesAbsoluteNumbering detects whether Plex is using absolute episode numbering.

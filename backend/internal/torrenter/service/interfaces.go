@@ -82,7 +82,7 @@ type Repository interface {
 	RecordUpgradeAttempt(ctx context.Context, a models.UpgradeAttempt) error
 	SetUpgradeAttemptStatus(ctx context.Context, itemKey, status, reason string) error
 	UpsertTvdbEpisodes(ctx context.Context, seriesTvdbId string, episodes []library.TvdbEpisode) error
-	GetTvdbMetadataStatus(ctx context.Context, tvdbId string) (tvdbCount int, plexCount int, err error)
+	GetTvdbMetadataStatus(ctx context.Context, tvdbId string) (tvdbCount, plexCount, upcomingCount int, err error)
 }
 
 // FileSystem defines file system operations

@@ -358,7 +358,7 @@ func (_m *Repository) GetShowSeasonEpisodes(ctx context.Context, tvdbId string) 
 }
 
 // GetTvdbMetadataStatus provides a mock function with given fields: ctx, tvdbId
-func (_m *Repository) GetTvdbMetadataStatus(ctx context.Context, tvdbId string) (int, int, error) {
+func (_m *Repository) GetTvdbMetadataStatus(ctx context.Context, tvdbId string) (int, int, int, error) {
 	ret := _m.Called(ctx, tvdbId)
 
 	if len(ret) == 0 {
@@ -367,8 +367,9 @@ func (_m *Repository) GetTvdbMetadataStatus(ctx context.Context, tvdbId string) 
 
 	var r0 int
 	var r1 int
-	var r2 error
-	if rf, ok := ret.Get(0).(func(context.Context, string) (int, int, error)); ok {
+	var r2 int
+	var r3 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (int, int, int, error)); ok {
 		return rf(ctx, tvdbId)
 	}
 	if rf, ok := ret.Get(0).(func(context.Context, string) int); ok {
@@ -383,13 +384,19 @@ func (_m *Repository) GetTvdbMetadataStatus(ctx context.Context, tvdbId string) 
 		r1 = ret.Get(1).(int)
 	}
 
-	if rf, ok := ret.Get(2).(func(context.Context, string) error); ok {
+	if rf, ok := ret.Get(2).(func(context.Context, string) int); ok {
 		r2 = rf(ctx, tvdbId)
 	} else {
-		r2 = ret.Error(2)
+		r2 = ret.Get(2).(int)
 	}
 
-	return r0, r1, r2
+	if rf, ok := ret.Get(3).(func(context.Context, string) error); ok {
+		r3 = rf(ctx, tvdbId)
+	} else {
+		r3 = ret.Error(3)
+	}
+
+	return r0, r1, r2, r3
 }
 
 // InsertDownloadHistory provides a mock function with given fields: ctx, mediaTitle, season, episode, absoluteEpisode, torrentHash, status, reason
