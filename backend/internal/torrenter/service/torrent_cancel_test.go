@@ -148,6 +148,7 @@ func (f *fakeQbittorrent) deletedHashes() []string {
 
 func newCancelTestHandler(t *testing.T, repo *repomocks.Repository, qb *fakeQbittorrent) *QbittHandler {
 	t.Helper()
+	shortAddRecovery(t)
 	server := httptest.NewServer(qb.handler())
 	t.Cleanup(server.Close)
 	client := qbittorrent.NewClient(qbittorrent.Config{Host: server.URL, Timeout: 5})

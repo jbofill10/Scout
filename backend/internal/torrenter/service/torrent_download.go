@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -97,9 +98,27 @@ func (q *QbittHandler) downloadTorrent(ctx context.Context, torrent *prowlarr.Se
 		url = torrent.DownloadURL
 	}
 
+	// The add is the point of no return: once qBittorrent has the torrent it
+	// must end up monitored, whatever happens to the search's clock. qBittorrent
+	// under load has taken over a minute to answer an add it then carried out,
+	// after the client's timeout and after the search deadline had expired, so
+	// everything from here on runs on a context the deadline cannot cut short.
+	afterAdd := context.WithoutCancel(ctx)
 	if err := q.c.AddTorrentFromUrlCtx(ctx, url, options); err != nil {
-		q.logger.ErrorContext(ctx, "Error downloading torrent", "error", err)
-		return "", "", err
+		if errors.Is(ctx.Err(), context.Canceled) {
+			// A user cancel (or the caller giving up) does not want the torrent
+			// even if qBittorrent took it; CancelItem removes what it finds.
+			q.logger.InfoContext(afterAdd, "Torrent add cancelled", "error", err, "tracking_uuid", trackingUUID)
+			return "", "", err
+		}
+		hash, found := q.awaitTaggedTorrent(afterAdd, trackingUUID)
+		if !found {
+			q.logger.ErrorContext(afterAdd, "Error downloading torrent", "error", err)
+			return "", "", err
+		}
+		q.logger.WarnContext(afterAdd, "Torrent add reported an error but qBittorrent took it, continuing",
+			"error", err, "torrent_title", torrent.Title, "resolved_hash", hash, "tracking_uuid", trackingUUID)
+		return hash, trackingUUID, nil
 	}
 
 	// If this was a .torrent file (not a magnet), resolve the InfoHash from qBittorrent
@@ -110,7 +129,7 @@ func (q *QbittHandler) downloadTorrent(ctx context.Context, torrent *prowlarr.Se
 			"prowlarr_hash", torrent.InfoHash,
 			"tracking_uuid", trackingUUID)
 
-		resolvedHash, err := q.resolveInfoHashFromQbittorrent(ctx, trackingUUID)
+		resolvedHash, err := q.resolveInfoHashFromQbittorrent(afterAdd, trackingUUID)
 		if err != nil {
 			q.logger.ErrorContext(ctx, "Failed to resolve InfoHash from qBittorrent via UUID tag",
 				"error", err,
@@ -131,6 +150,34 @@ func (q *QbittHandler) downloadTorrent(ctx context.Context, torrent *prowlarr.Se
 		"torrent_title", torrent.Title,
 		"infohash", torrent.InfoHash)
 	return torrent.InfoHash, trackingUUID, nil
+}
+
+// addRecoveryWindow is how long a failed add is given to show up in qBittorrent
+// anyway, and addRecoveryPoll how often to look. Tests shorten both.
+var (
+	addRecoveryWindow = 2 * time.Minute
+	addRecoveryPoll   = 5 * time.Second
+)
+
+// awaitTaggedTorrent looks for the torrent carrying the tracking tag for up to
+// addRecoveryWindow after an add call failed: a slow qBittorrent may have taken
+// the add after the client stopped waiting for its answer. It reports the hash
+// when the torrent is there.
+func (q *QbittHandler) awaitTaggedTorrent(ctx context.Context, trackingUUID string) (string, bool) {
+	ctx, cancel := context.WithTimeout(ctx, addRecoveryWindow)
+	defer cancel()
+	filter := qbittorrent.TorrentFilterOptions{Category: scoutTag, Tag: trackingUUID}
+	for {
+		torrents, err := q.c.GetTorrentsCtx(ctx, filter)
+		if err == nil && len(torrents) > 0 {
+			return torrents[0].Hash, true
+		}
+		select {
+		case <-ctx.Done():
+			return "", false
+		case <-time.After(addRecoveryPoll):
+		}
+	}
 }
 
 func (q *QbittHandler) queryQbittorrentWithRetries(
