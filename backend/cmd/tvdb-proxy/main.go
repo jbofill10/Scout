@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/jbofill10/scout/backend/internal/tvdbproxy/ratings"
 	"github.com/jbofill10/scout/backend/internal/tvdbproxy/search"
 	"github.com/jbofill10/scout/backend/internal/tvdbproxy/tvdb"
+	"github.com/jbofill10/scout/backend/pkg/dbmigrate"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
 
 	"github.com/gin-gonic/gin"
@@ -31,6 +33,12 @@ const (
 	// datasetLoadTimeout bounds the startup download of IMDb's ratings table;
 	// past it the proxy serves without it and keeps trying in the background.
 	datasetLoadTimeout = 90 * time.Second
+	// storeOpenTimeout bounds the startup migration and first query of the
+	// ratings store.
+	storeOpenTimeout = 30 * time.Second
+	// storeKeepExpired is how long an expired rating answer is kept as a
+	// stand-in before the startup prune drops it.
+	storeKeepExpired = 90 * 24 * time.Hour
 )
 
 func main() {
@@ -100,8 +108,20 @@ func main() {
 	// record: the IMDb rating from IMDb's public table (loaded before serving
 	// so the webserver's first rows carry it), the Tomatometer and Metascore
 	// Wikidata records (no key), and a current Tomatometer and Metascore
-	// from OMDb when a key is configured.
-	ratingOpts := ratings.Options{Resolver: ratings.NewResolver(tvdbClient, logger)}
+	// from OMDb when a key is configured. Every answer is kept in the shared
+	// PostgreSQL when DB_HOST is set, so the library's scores build up
+	// across restarts instead of being looked up again.
+	resolver := ratings.NewResolver(tvdbClient, logger)
+	ratingOpts := ratings.Options{Resolver: resolver}
+	if connStr := cfg.Database.ConnStr(); connStr != "" {
+		if store := openRatingsStore(refreshCtx, connStr, logger); store != nil {
+			defer store.Close()
+			ratingOpts.Store = store
+			resolver.SetStore(store)
+		}
+	} else {
+		logger.Info("DB_HOST not set; ratings cached in memory only")
+	}
 	if cfg.IMDb.Enabled {
 		dataset := ratings.NewDataset(cfg.IMDb.URL, ratings.NewDatasetHTTPClient(), logger)
 		loadCtx, loadCancel := context.WithTimeout(refreshCtx, datasetLoadTimeout)
@@ -227,4 +247,40 @@ func main() {
 	} else {
 		logger.Info("Server shut down cleanly")
 	}
+}
+
+// openRatingsStore brings the schema up to date and opens the ratings
+// store, pruning answers that expired long ago. It returns nil, with a
+// warning, when the database is unreachable: the proxy serves without it.
+func openRatingsStore(ctx context.Context, connStr string, logger *slog.Logger) *ratings.PostgresStore {
+	ctx, cancel := context.WithTimeout(ctx, storeOpenTimeout)
+	defer cancel()
+	if err := dbmigrate.RunWithConnStr(ctx, connStr, logger); err != nil {
+		logger.Warn("Database migrations failed; ratings cached in memory only", "error", err)
+		return nil
+	}
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		logger.Warn("Ratings store not opened; ratings cached in memory only", "error", err)
+		return nil
+	}
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(2)
+	db.SetConnMaxLifetime(30 * time.Minute)
+	if err := db.PingContext(ctx); err != nil {
+		logger.Warn("Ratings store unreachable; ratings cached in memory only", "error", err)
+		_ = db.Close()
+		return nil
+	}
+	store := ratings.NewPostgresStore(db)
+	pruned, err := store.Prune(ctx, time.Now().Add(-storeKeepExpired))
+	if err != nil {
+		logger.Warn("Ratings store prune failed", "error", err)
+	}
+	count, err := store.Count(ctx)
+	if err != nil {
+		logger.Warn("Ratings store count failed", "error", err)
+	}
+	logger.Info("Ratings store open", "entries", count, "pruned", pruned)
+	return store
 }

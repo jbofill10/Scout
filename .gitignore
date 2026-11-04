@@ -34,3 +34,8 @@ docker-compose.yml
 nginx/nginx.conf
 # Python bytecode
 __pycache__/
+
+# Service binaries left by `go build` in backend/
+backend/tvdb-proxy
+backend/webserver
+backend/torrenter

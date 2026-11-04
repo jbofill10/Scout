@@ -2,21 +2,95 @@ package ratings
 
 import (
 	"context"
+	"encoding/json"
+	"log/slog"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/jbofill10/scout/backend/pkg/telemetry"
 )
 
-// pruneAbove is the entry count past which a set sweeps expired entries.
-const pruneAbove = 5000
+const (
+	// pruneAbove is the entry count past which a set sweeps expired entries.
+	pruneAbove = 5000
+	// storeTimeout bounds one read or write of the store.
+	storeTimeout = 5 * time.Second
+)
+
+// persistence keeps one cache's answers in a Store under a key prefix, so
+// they outlive the process. Store failures are logged and the cache carries
+// on in memory. A nil persistence does nothing.
+type persistence struct {
+	store  Store
+	prefix string
+	logger *slog.Logger
+}
+
+// answer is one value to save with its expiry.
+type answer struct {
+	value   any
+	expires time.Time
+}
+
+// load returns the stored entries for the keys, given and returned without
+// the prefix; nothing on failure.
+func (p *persistence) load(ctx context.Context, keys []string) map[string]Entry {
+	if p == nil || len(keys) == 0 {
+		return nil
+	}
+	prefixed := make([]string, len(keys))
+	for i, key := range keys {
+		prefixed[i] = p.prefix + key
+	}
+	ctx, cancel := context.WithTimeout(ctx, storeTimeout)
+	defer cancel()
+	entries, err := p.store.Get(ctx, prefixed)
+	if err != nil {
+		p.logger.WarnContext(ctx, "Ratings store read failed",
+			telemetry.WithTraceContext(ctx, "prefix", p.prefix, "count", len(keys), "error", err)...)
+		return nil
+	}
+	out := make(map[string]Entry, len(entries))
+	for key, entry := range entries {
+		out[strings.TrimPrefix(key, p.prefix)] = entry
+	}
+	return out
+}
+
+// save writes the answers as JSON with their expiry, under its own timeout
+// and detached from the caller's cancellation.
+func (p *persistence) save(ctx context.Context, answers map[string]answer) {
+	if p == nil || len(answers) == 0 {
+		return
+	}
+	entries := make(map[string]Entry, len(answers))
+	for key, a := range answers {
+		value, err := json.Marshal(a.value)
+		if err != nil {
+			continue
+		}
+		entries[p.prefix+key] = Entry{Value: value, Expires: a.expires}
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
+	defer cancel()
+	if err := p.store.Put(ctx, entries); err != nil {
+		p.logger.WarnContext(ctx, "Ratings store write failed",
+			telemetry.WithTraceContext(ctx, "prefix", p.prefix, "count", len(entries), "error", err)...)
+	}
+}
 
 // asyncCache memoises detached lookups by key. A caller waits for an answer
 // only as long as its context allows; the lookup itself runs on under its
 // own timeout and lands in the cache, so a caller giving up does not waste
-// the call and concurrent callers for one key share it.
+// the call and concurrent callers for one key share it. With a persistence
+// the answers also land in the store and are read back from it after a
+// restart.
 type asyncCache[V any] struct {
 	sem     chan struct{}
 	timeout time.Duration
 	now     func() time.Time
+	persist *persistence
 
 	mu       sync.Mutex
 	entries  map[string]cacheEntry[V]
@@ -45,19 +119,22 @@ func newAsyncCache[V any](concurrency int, timeout time.Duration) *asyncCache[V]
 	}
 }
 
-// get returns the live cached value for key, or runs fetch (once, however
-// many callers ask) and waits for it until ctx ends. fetch reports the value
-// and how long to keep it; a ttl of zero or less means the answer is not
-// kept and the next caller asks again. ok is false when nothing is known
-// by the time ctx ends.
+// get returns the current cached value for key, or runs fetch (once,
+// however many callers ask) and waits for it until ctx ends. fetch reports
+// the value and how long to keep it; a ttl of zero or less means the answer
+// is not kept and the next caller asks again. An answer that has expired,
+// in memory or in the store, stands in when no fresh one arrives in time:
+// a week-old score beats none. ok is false when nothing is known by the
+// time ctx ends.
 func (c *asyncCache[V]) get(
 	ctx context.Context, key string, fetch func(ctx context.Context) (V, time.Duration),
 ) (V, bool) {
-	c.mu.Lock()
-	if e, ok := c.entries[key]; ok && c.now().Before(e.expires) {
-		c.mu.Unlock()
-		return e.value, true
+	known, current, haveKnown := c.restore(ctx, key)
+	if current {
+		return known, true
 	}
+
+	c.mu.Lock()
 	l, ok := c.inflight[key]
 	if !ok {
 		l = &inflight[V]{done: make(chan struct{})}
@@ -68,14 +145,40 @@ func (c *asyncCache[V]) get(
 
 	select {
 	case <-l.done:
-		return l.value, l.ok
+		if l.ok {
+			return l.value, true
+		}
 	case <-ctx.Done():
-		var zero V
-		return zero, false
 	}
+	return known, haveKnown
 }
 
-// peek reports whether key holds a live entry, without fetching.
+// restore returns what the cache knows for key: the entry in memory, or
+// the stored one brought into memory (expired or not, so the next asker
+// finds it without a read). current says whether it is still live; known
+// whether there is one at all.
+func (c *asyncCache[V]) restore(ctx context.Context, key string) (value V, current, known bool) {
+	c.mu.Lock()
+	e, held := c.entries[key]
+	c.mu.Unlock()
+	if held {
+		return e.value, c.now().Before(e.expires), true
+	}
+	entry, found := c.persist.load(ctx, []string{key})[key]
+	if !found {
+		return value, false, false
+	}
+	if err := json.Unmarshal(entry.Value, &value); err != nil {
+		var zero V
+		return zero, false, false
+	}
+	c.mu.Lock()
+	c.set(key, value, entry.Expires.Sub(c.now()))
+	c.mu.Unlock()
+	return value, c.now().Before(entry.Expires), true
+}
+
+// peek reports whether key holds a live entry in memory, without fetching.
 func (c *asyncCache[V]) peek(key string) (V, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -112,9 +215,11 @@ func (c *asyncCache[V]) run(ctx context.Context, key string, l *inflight[V], fet
 	c.mu.Lock()
 	c.set(key, value, ttl)
 	c.mu.Unlock()
+	c.persist.save(ctx, map[string]answer{key: {value: value, expires: c.now().Add(ttl)}})
 }
 
-// set stores one answer; the caller holds c.mu.
+// set stores one answer; the caller holds c.mu. A ttl of zero or less
+// stores it already expired, as a stand-in.
 func (c *asyncCache[V]) set(key string, value V, ttl time.Duration) {
 	now := c.now()
 	if len(c.entries) >= pruneAbove {

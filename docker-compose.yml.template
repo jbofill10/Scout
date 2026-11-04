@@ -39,6 +39,10 @@ services:
       RATINGS_IMDB: ${RATINGS_IMDB:-true}
       RATINGS_WIKIDATA: ${RATINGS_WIKIDATA:-true}
       OMDB_API_KEY: ${OMDB_API_KEY:-}
+      DB_HOST: postgres
+      DB_USER: ${DB_USER:-scoutuser}
+      DB_PASSWORD: ${DB_PASSWORD:-scoutpass}
+      DB_NAME: ${DB_NAME:-scoutdb}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-localhost:4317}
       OTEL_SERVICE_NAME: tvdb-proxy
     ports:
@@ -49,6 +53,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - scout-network
