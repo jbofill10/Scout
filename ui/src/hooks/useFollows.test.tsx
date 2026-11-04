@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ToastContext } from "../contexts/ToastContext";
-import { describeCheck, useCheckFollows, useFollowShow, useUnfollowShow, type FollowCheckResult } from "./useFollows";
+import { describeCheck, useCheckFollows, useFollowedIds, useFollowShow, useUnfollowShow, type FollowCheckResult } from "./useFollows";
 
 vi.mock("../lib/logger", () => ({ logError: vi.fn() }));
 
@@ -96,5 +96,35 @@ describe("useUnfollowShow and useCheckFollows", () => {
     await waitFor(() => expect(toast).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[1][0]).toBe("/api/follows/900/check");
     expect(toast).toHaveBeenLastCalledWith("Some Show: searching for 1 now", { severity: "success", linkToActivity: true });
+  });
+});
+
+describe("useFollowedIds", () => {
+  it("returns the followed ids as a set once the list loads", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([
+      { tvdb_id: "900", title: "Some Show", followed_at: "", include_missing: false, episodes_added: 0 },
+      { tvdb_id: "901", title: "Other Show", followed_at: "", include_missing: true, episodes_added: 2 },
+    ]));
+    vi.stubGlobal("fetch", fetchMock);
+    const { wrapper } = setup();
+
+    const { result } = renderHook(() => useFollowedIds(), { wrapper });
+
+    expect(result.current.size).toBe(0);
+    await waitFor(() => expect(result.current.has("901")).toBe(true));
+    expect(result.current.has("900")).toBe(true);
+    expect(result.current.has("123")).toBe(false);
+    expect(fetchMock).toHaveBeenCalledWith("/api/follows", undefined);
+  });
+
+  it("asks for nothing when disabled", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { wrapper } = setup();
+
+    const { result } = renderHook(() => useFollowedIds(false), { wrapper });
+
+    expect(result.current.size).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "../contexts/ToastContext";
 import { logError } from "../lib/logger";
@@ -74,6 +75,12 @@ export function useFollows(enabled: boolean = true) {
     enabled,
     staleTime: 60_000,
   });
+}
+
+/** The TVDB ids of followed shows, for marking cards; empty until the list has loaded. */
+export function useFollowedIds(enabled: boolean = true): Set<string> {
+  const { data } = useFollows(enabled);
+  return useMemo(() => new Set((data ?? []).map((show) => show.tvdb_id)), [data]);
 }
 
 /** Wording for what a check found. */

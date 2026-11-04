@@ -56,9 +56,17 @@ export const summarizeCoverage = (episodes: CoverableEpisode[], today?: Date): E
   return { downloaded, aired, upcoming };
 };
 
-/** The poster pill: what you have over what has aired. */
-export const coverageLabel = (coverage: EpisodeCoverage): string =>
-  `${coverage.downloaded}/${coverage.aired}`;
+/**
+ * The poster pill. "Caught up" when everything aired is in and more is still
+ * to air; otherwise what you have over what has aired ("9/11", or "11/11" for
+ * a show with nothing more announced).
+ */
+export const coverageLabel = (coverage: EpisodeCoverage): string => {
+  if (coverage.aired > 0 && coverage.downloaded >= coverage.aired && coverage.upcoming > 0) {
+    return "Caught up";
+  }
+  return `${coverage.downloaded}/${coverage.aired}`;
+};
 
 const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
@@ -84,6 +92,6 @@ export const seasonTabLabel = (seasonNum: number, coverage: EpisodeCoverage): st
   if (coverage.aired === 0) {
     return coverage.upcoming > 0 ? `${name} · ${coverage.upcoming} upcoming` : name;
   }
-  const label = `${name} · ${coverageLabel(coverage)}`;
+  const label = `${name} · ${coverage.downloaded}/${coverage.aired}`;
   return coverage.upcoming > 0 ? `${label} · ${coverage.upcoming} upcoming` : label;
 };

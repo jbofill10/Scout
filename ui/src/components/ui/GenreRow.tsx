@@ -18,6 +18,7 @@ import { getStatusBadgeForMediaWithEnriched } from "../../utils/statusHelpers";
 import { pickCardRating } from "../../utils/ratings";
 import type { RatingBadgeModel } from "../../utils/ratings";
 import { useDownloadRequest } from "../../hooks/useDownloadRequest";
+import { useFollowedIds } from "../../hooks/useFollows";
 
 interface GenreRowProps {
   genre: string;
@@ -29,6 +30,7 @@ interface CardModel {
   media: MediaCardProps["media"];
   statusBadge?: MediaStatusBadge;
   rating: RatingBadgeModel | null;
+  following: boolean;
 }
 
 /**
@@ -130,6 +132,9 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
     [enrichedData],
   );
 
+  // Followed shows carry a bookmark mark; movies cannot be followed, so skip the fetch
+  const followedIds = useFollowedIds(mediaType === "series");
+
   const cards = useMemo<CardModel[]>(
     () =>
       (data ?? []).map((item) => ({
@@ -145,8 +150,9 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
           enrichedById.get(item.id),
         ),
         rating: pickCardRating(item.ratings, mediaType),
+        following: mediaType === "series" && followedIds.has(item.id),
       })),
-    [data, statusData, statusMediaType, enrichedById, mediaType],
+    [data, statusData, statusMediaType, enrichedById, mediaType, followedIds],
   );
 
   const handleMediaClick = useCallback(
@@ -184,6 +190,7 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
         onClick={handleMediaClick}
         statusBadge={card.statusBadge}
         rating={card.rating}
+        following={card.following}
       />
     ),
     [handleMediaClick],

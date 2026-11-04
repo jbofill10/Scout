@@ -3,7 +3,7 @@ import { Box, Tabs, Tab, Typography, CircularProgress, Container, Skeleton, Butt
 import { alpha, useTheme } from "@mui/material/styles";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import BookmarkRemoveOutlinedIcon from "@mui/icons-material/BookmarkRemoveOutlined";
-import { useCheckFollows, useFollows, useUnfollowShow, type FollowedShow } from "../hooks/useFollows";
+import { useCheckFollows, useFollowedIds, useFollows, useUnfollowShow, type FollowedShow } from "../hooks/useFollows";
 import { unrequestedCount, useFillMissing, useMissingEpisodes, type MissingShow } from "../hooks/useMissing";
 import { formatEpisodeLabel, formatRelativeTime } from "../utils/downloadStage";
 import Collapse from "@mui/material/Collapse";
@@ -32,6 +32,7 @@ interface ShowCardProps {
 const ShowCard: React.FC<ShowCardProps> = ({ item, imageUrl, rating, handleMediaClick, handleImageLoad }) => {
   // Fetch metadata status for this specific show
   const { data: metadataStatus, isLoading } = useShowMetadataStatus(item.tvdbId);
+  const followedIds = useFollowedIds();
 
   // Build status badge with episode counts: what Plex has over what has aired
   const getStatusBadge = (): MediaStatusBadge => {
@@ -61,6 +62,7 @@ const ShowCard: React.FC<ShowCardProps> = ({ item, imageUrl, rating, handleMedia
       onClick={() => handleMediaClick(item.tvdbId, item.title, item.thumb)}
       statusBadge={getStatusBadge()}
       rating={rating}
+      following={followedIds.has(item.tvdbId)}
       isLoadingStatus={isLoading}
       onImageLoad={() => handleImageLoad(item.tvdbId)}
     />

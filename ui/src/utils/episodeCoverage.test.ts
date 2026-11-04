@@ -50,8 +50,14 @@ describe("summarizeCoverage", () => {
 });
 
 describe("labels", () => {
-  it("pill shows what you have over what has aired", () => {
-    expect(coverageLabel({ downloaded: 11, aired: 11, upcoming: 9 })).toBe("11/11");
+  it.each([
+    [{ downloaded: 11, aired: 11, upcoming: 9 }, "Caught up"],
+    [{ downloaded: 11, aired: 11, upcoming: 0 }, "11/11"],
+    [{ downloaded: 9, aired: 11, upcoming: 9 }, "9/11"],
+    [{ downloaded: 0, aired: 11, upcoming: 2 }, "0/11"],
+    [{ downloaded: 0, aired: 0, upcoming: 9 }, "0/0"],
+  ])("pill for %j", (coverage, expected) => {
+    expect(coverageLabel(coverage)).toBe(expected);
   });
 
   it.each([
