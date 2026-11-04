@@ -131,6 +131,19 @@ type fakeSchedulerRepo struct {
 	deferredIDs []int
 	deferCode   string
 	deferNext   time.Time
+	// rowStatus answers RowStatus per row id; ids not listed read as queued.
+	rowStatus    map[int]string
+	rowStatusErr error
+}
+
+func (f *fakeSchedulerRepo) RowStatus(_ context.Context, id int) (string, error) {
+	if f.rowStatusErr != nil {
+		return "", f.rowStatusErr
+	}
+	if st, ok := f.rowStatus[id]; ok {
+		return st, nil
+	}
+	return repository.StatusQueued, nil
 }
 
 // EnqueueNow hands out row ids 101, 102, ... in call order and remembers the

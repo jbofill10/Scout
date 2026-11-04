@@ -182,3 +182,44 @@ func TestDispatchSource(t *testing.T) {
 		processDueItem(context.Background(), movie("follow"))
 	assert.Equal(t, "follow", disp.payload().Source, "a direct dispatch is not promoted")
 }
+
+// Twenty-five rows of one show come due at the same instant: every timer
+// fires and queues its row, the first item dispatched claims the rest as
+// siblings and settles them, and the other twenty-four items reach the front
+// of the queue later. Those are not dispatched again: their rows are no longer
+// queued. A row still queued (its own timer's claim, nobody else's) is.
+func TestProcessDueBatch_SkipsRowsAnotherDispatchSettled(t *testing.T) {
+	for status, dispatched := range map[string]bool{
+		repository.StatusCompleted: false,
+		repository.StatusPending:   false,
+		repository.StatusFailed:    false,
+		repository.StatusCancelled: false,
+		repository.StatusQueued:    true,
+	} {
+		t.Run(status, func(t *testing.T) {
+			repo := &fakeSchedulerRepo{rowStatus: map[int]string{5: status}}
+			disp := &fakeDispatcher{respFor: func(tvdb.Media) dlstatus.DownloadResponse {
+				return dlstatus.DownloadResponse{Results: []dlstatus.EpisodeResult{epResult("9", dlstatus.OutcomeDownloading, "")}}
+			}}
+			i := groupInteractor(repo, disp, repoMocks.NewNotificationRepository(t))
+
+			i.processDueBatch(repository.DueItem{ID: 5, Media: tvdb.Media{Id: "9", Name: "M", Category: "movie"}})
+
+			assert.Equal(t, dispatched, disp.callCount() == 1, "dispatched=%v for status %s", dispatched, status)
+			assert.Equal(t, 0, repo.claimCalls, "a movie claims no siblings")
+		})
+	}
+}
+
+// When the status cannot be read the item is dispatched as before.
+func TestProcessDueBatch_StatusLookupFailureStillDispatches(t *testing.T) {
+	repo := &fakeSchedulerRepo{rowStatusErr: errors.New("db down")}
+	disp := &fakeDispatcher{respFor: func(tvdb.Media) dlstatus.DownloadResponse {
+		return dlstatus.DownloadResponse{Results: []dlstatus.EpisodeResult{epResult("9", dlstatus.OutcomeDownloading, "")}}
+	}}
+	i := groupInteractor(repo, disp, repoMocks.NewNotificationRepository(t))
+
+	i.processDueBatch(repository.DueItem{ID: 5, Media: tvdb.Media{Id: "9", Name: "M", Category: "movie"}})
+
+	assert.Equal(t, 1, disp.callCount())
+}

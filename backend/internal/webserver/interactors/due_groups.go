@@ -36,6 +36,9 @@ const torrenterRetryDelay = 2 * time.Minute
 // processDueItem unchanged.
 func (i *DownloadInteractor) processDueBatch(item repository.DueItem) {
 	ctx := context.Background()
+	if i.rowHandledElsewhere(ctx, item) {
+		return
+	}
 	promoteDueSource(&item)
 	if item.Media.Category != "series" || len(item.Media.Metadata.Episodes) == 0 {
 		i.processDueItem(ctx, item)
@@ -59,6 +62,30 @@ func (i *DownloadInteractor) processDueBatch(item repository.DueItem) {
 		return
 	}
 	i.processDueGroup(ctx, append([]repository.DueItem{item}, siblings...))
+}
+
+// rowHandledElsewhere reports whether the row behind a queued item has moved on
+// since its timer fired. Rows of one show that come due at the same instant
+// each fire a timer and each land in the queue, but the first one dispatched
+// claims the others as siblings and settles them; by the time their own items
+// reach the front of the queue they are completed, pending a retry or deferred,
+// and dispatching them again would search for episodes already handled (and
+// pull any rows deferred for a torrenter outage back in at once). A row still
+// queued is the dispatcher's to send; when the status cannot be read the item
+// is dispatched as before.
+func (i *DownloadInteractor) rowHandledElsewhere(ctx context.Context, item repository.DueItem) bool {
+	status, err := i.repo.RowStatus(ctx, item.ID)
+	if err != nil {
+		i.logger.WarnContext(ctx, "Could not read row status before dispatch, dispatching anyway",
+			"error", err, "id", item.ID)
+		return false
+	}
+	if status == repository.StatusQueued {
+		return false
+	}
+	i.logger.InfoContext(ctx, "Row already handled by an earlier dispatch, skipping",
+		"id", item.ID, "status", status, "media", item.Media.Name)
+	return true
 }
 
 // promoteDueSource gives a row the scheduler dispatches on its first attempt
