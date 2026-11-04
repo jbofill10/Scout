@@ -3,6 +3,8 @@ package retry
 import (
 	"testing"
 	"time"
+
+	"github.com/jbofill10/scout/backend/pkg/dlstatus"
 )
 
 func TestFirstAttempt(t *testing.T) {
@@ -21,10 +23,10 @@ func TestNextAttempt(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	tests := []struct {
-		name        string
+		name         string
 		attemptsMade int
-		wantOK      bool
-		wantDelay   time.Duration
+		wantOK       bool
+		wantDelay    time.Duration
 	}{
 		{name: "first failure -> 1h", attemptsMade: 0, wantOK: true, wantDelay: 1 * time.Hour},
 		{name: "second failure -> 4h", attemptsMade: 1, wantOK: true, wantDelay: 4 * time.Hour},
@@ -50,5 +52,39 @@ func TestNextAttempt(t *testing.T) {
 				t.Fatalf("next attempt = %v, want %v", got, want)
 			}
 		})
+	}
+}
+
+func TestMaxAttemptsFor(t *testing.T) {
+	now := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+	old := now.Add(-OldContentAge - 24*time.Hour)
+	tests := []struct {
+		name  string
+		code  dlstatus.FailureCode
+		aired time.Time
+		want  int
+	}{
+		{"no result, old", dlstatus.CodeNoTorrentFound, old, OldContentAttempts},
+		{"no result, yesterday", dlstatus.CodeNoTorrentFound, now.Add(-24 * time.Hour), MaxAttempts},
+		{"no result, unknown air date", dlstatus.CodeNoTorrentFound, time.Time{}, MaxAttempts},
+		{"indexer down, old", dlstatus.CodeIndexerUnreachable, old, MaxAttempts},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MaxAttemptsFor(tt.code, tt.aired, now); got != tt.want {
+				t.Fatalf("MaxAttemptsFor = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNextAttemptWithin(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if _, ok := NextAttemptWithin(now, 1, 2); ok {
+		t.Fatal("ladder of 2 should be exhausted after the second attempt")
+	}
+	next, ok := NextAttemptWithin(now, 0, 2)
+	if !ok || !next.Equal(now.Add(time.Hour)) {
+		t.Fatalf("NextAttemptWithin(0, 2) = %v, %v; want +1h", next, ok)
 	}
 }

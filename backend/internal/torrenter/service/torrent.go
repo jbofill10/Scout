@@ -242,8 +242,21 @@ func (q *QbittHandler) HandleDownload(ctx context.Context, req *tvdb.Media, done
 				"total", len(req.Metadata.Episodes), "to_download", len(episodesToDownload),
 				"show_aliases", req.Aliases)...)
 
-		// Process all episodes concurrently
+		// Episodes a finished torrent already holds are linked from disk,
+		// not searched for.
 		var wg sync.WaitGroup
+		localResults, local := q.coverFromFinished(ctx, req, episodesToDownload, done, &wg)
+		if len(local) > 0 {
+			results = append(results, localResults...)
+			episodesToDownload = withoutEpisodes(episodesToDownload, local)
+			if len(episodesToDownload) == 0 {
+				go func() {
+					wg.Wait()
+					close(done)
+				}()
+				return results, nil
+			}
+		}
 
 		// Season packs (opt-in): one torrent for a season's worth of episodes,
 		// falling back to per-episode searches for whatever no pack covered.

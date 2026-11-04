@@ -537,3 +537,42 @@ func (s *SchedulerRepoTestSuite) TestRecordDispatched_InsertsCompletedRow() {
 	s.NoError(s.repo.RecordDispatched(context.Background(), media, "trace", "span"))
 	s.NoError(s.mock.ExpectationsWereMet())
 }
+
+func (s *SchedulerRepoTestSuite) TestClaimDueSiblings_QueuesAndReturnsSameShowRows() {
+	media := tvdb.Media{Id: "79349", Name: "Dexter", Category: "series"}
+	media.Metadata.Episodes = []tvdb.Episode{{Id: 308834, SeasonNumber: 1, Number: 2}}
+	mediaJSON, _ := json.Marshal(media)
+	due := time.Now().Add(-time.Minute)
+	until := time.Now().Add(15 * time.Minute)
+
+	rows := sqlmock.NewRows([]string{"id", "media", "release_time", "attempts", "due_at"}).
+		AddRow(7, mediaJSON, due, 3, due)
+	s.mock.ExpectQuery(`UPDATE ScheduledDownloads\s+SET schedule_status = \$1, queued_at = now\(\)\s+`+
+		`WHERE schedule_status = \$2 AND id <> \$3\s+AND media->>'id' = \$4 AND media->>'type' = 'series'\s+`+
+		`AND COALESCE\(next_attempt_at, release_time\) <= \$5\s+RETURNING`).
+		WithArgs(StatusQueued, StatusPending, 42, "79349", until.Format(time.RFC3339)).
+		WillReturnRows(rows)
+
+	got, err := s.repo.ClaimDueSiblings(context.Background(), "79349", 42, until)
+
+	s.NoError(err)
+	s.Len(got, 1)
+	s.Equal(7, got[0].ID)
+	s.Equal(3, got[0].Attempts)
+	s.Equal("Dexter", got[0].Media.Name)
+	s.Equal(308834, got[0].Media.Metadata.Episodes[0].Id)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestClaimDueSiblings_NoneDue() {
+	until := time.Now().Add(15 * time.Minute)
+	s.mock.ExpectQuery(`UPDATE ScheduledDownloads`).
+		WithArgs(StatusQueued, StatusPending, 42, "79349", until.Format(time.RFC3339)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "media", "release_time", "attempts", "due_at"}))
+
+	got, err := s.repo.ClaimDueSiblings(context.Background(), "79349", 42, until)
+
+	s.NoError(err)
+	s.Empty(got)
+	s.NoError(s.mock.ExpectationsWereMet())
+}

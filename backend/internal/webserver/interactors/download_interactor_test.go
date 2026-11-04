@@ -112,6 +112,22 @@ type fakeSchedulerRepo struct {
 	rearmedNext     time.Time
 	failedComplete  []int
 	failedCode      string
+	// sibling claiming
+	siblings      []repository.DueItem
+	siblingErr    error
+	claimCalls    int
+	claimShowID   string
+	claimExcept   int
+	claimUntil    time.Time
+	completedIDs  []int
+	recordedIDs   []int
+	permFailedIDs []int
+}
+
+func (f *fakeSchedulerRepo) ClaimDueSiblings(_ context.Context, showID string, exceptID int, until time.Time) ([]repository.DueItem, error) {
+	f.claimCalls++
+	f.claimShowID, f.claimExcept, f.claimUntil = showID, exceptID, until
+	return f.siblings, f.siblingErr
 }
 
 func (f *fakeSchedulerRepo) RecordDispatched(_ context.Context, media tvdb.Media, _, _ string) error {
@@ -131,11 +147,13 @@ func (f *fakeSchedulerRepo) FailCompletedRow(_ context.Context, id int, code, _ 
 
 func (f *fakeSchedulerRepo) MarkCompleted(_ context.Context, id int) error {
 	f.completedID = &id
+	f.completedIDs = append(f.completedIDs, id)
 	return nil
 }
 
 func (f *fakeSchedulerRepo) RecordFailure(_ context.Context, id int, code, reason string, next time.Time) error {
 	f.recordedID = &id
+	f.recordedIDs = append(f.recordedIDs, id)
 	f.recordedCode = code
 	f.recordedReason = reason
 	f.recordedNext = next
@@ -144,6 +162,7 @@ func (f *fakeSchedulerRepo) RecordFailure(_ context.Context, id int, code, reaso
 
 func (f *fakeSchedulerRepo) MarkPermanentlyFailed(_ context.Context, id int, code, reason string) error {
 	f.permFailedID = &id
+	f.permFailedIDs = append(f.permFailedIDs, id)
 	f.permFailedCode = code
 	f.permFailedReason = reason
 	return nil
