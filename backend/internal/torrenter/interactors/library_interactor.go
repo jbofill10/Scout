@@ -35,7 +35,8 @@ func (i *LibraryInteractor) GetLibraryShows(ctx context.Context) ([]library.Libr
 	return shows, nil
 }
 
-// GetShowEpisodes retrieves all episodes (downloaded + missing) for a show
+// GetShowEpisodes retrieves every episode TVDB lists for a show (downloaded,
+// missing and not yet aired) with its library status
 func (i *LibraryInteractor) GetShowEpisodes(ctx context.Context, tvdbId string) ([]library.EpisodeWithStatus, error) {
 	i.logger.InfoContext(ctx, "Fetching episodes for show", "tvdb_id", tvdbId)
 
@@ -53,23 +54,25 @@ func (i *LibraryInteractor) GetShowEpisodes(ctx context.Context, tvdbId string) 
 func (i *LibraryInteractor) GetShowMetadataStatus(ctx context.Context, tvdbId string) (library.MetadataStatus, error) {
 	i.logger.InfoContext(ctx, "Fetching metadata status for show", "tvdb_id", tvdbId)
 
-	tvdbCount, plexCount, err := i.repo.GetTvdbMetadataStatus(ctx, tvdbId)
+	tvdbCount, plexCount, upcomingCount, err := i.repo.GetTvdbMetadataStatus(ctx, tvdbId)
 	if err != nil {
 		i.logger.ErrorContext(ctx, "Failed to fetch metadata status", "tvdb_id", tvdbId, "error", err)
 		return library.MetadataStatus{}, fmt.Errorf("failed to fetch metadata status: %w", err)
 	}
 
 	status := library.MetadataStatus{
-		HasTvdbData:      tvdbCount > 0,
+		HasTvdbData:      tvdbCount+upcomingCount > 0,
 		TvdbEpisodeCount: tvdbCount,
 		PlexEpisodeCount: plexCount,
 		MissingCount:     tvdbCount - plexCount,
+		UpcomingCount:    upcomingCount,
 	}
 
 	i.logger.InfoContext(ctx, "Successfully fetched metadata status",
 		"tvdb_id", tvdbId,
 		"has_tvdb_data", status.HasTvdbData,
-		"missing_count", status.MissingCount)
+		"missing_count", status.MissingCount,
+		"upcoming_count", status.UpcomingCount)
 
 	return status, nil
 }

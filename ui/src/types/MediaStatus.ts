@@ -35,12 +35,23 @@ export interface StatusBatchResponse {
 }
 
 /**
+ * Library coverage of a show. Only episodes that have aired count against the
+ * library; upcoming is how many more TVDB lists that have not aired yet, so a
+ * show mid-run reads 11/11 with 9 upcoming rather than 11/20.
+ */
+export interface EpisodeCoverage {
+  downloaded: number;
+  aired: number;
+  upcoming: number;
+}
+
+/**
  * Helper type for status badge display on MediaCard
  */
 export interface MediaStatusBadge {
   type: 'movie' | 'show';
   inLibrary?: boolean;
-  episodeCount?: { downloaded: number; total: number };
+  episodeCount?: EpisodeCoverage;
 }
 
 /**
@@ -74,7 +85,8 @@ export interface ExtendedBatchResponse {
 export interface MediaStatusInfo {
   type: 'series' | 'movie';
   downloaded?: number;    // For shows: number of episodes downloaded
-  total?: number;         // For shows: total number of episodes
+  total?: number;         // For shows: total number of episodes TVDB lists
+  aired?: number;         // For shows: how many of total have aired (absent from older backends)
   inLibrary?: boolean;    // For movies: whether in library
   seasons?: SeasonStatus[];  // Detailed season/episode breakdown (if needed)
 }

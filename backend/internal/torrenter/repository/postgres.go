@@ -61,7 +61,7 @@ type Repository interface {
 	GetAllMovies(ctx context.Context) ([]library.LibraryMovie, error)
 	GetShowEpisodesWithStatus(ctx context.Context, tvdbId string) ([]library.EpisodeWithStatus, error)
 	UpsertTvdbEpisodes(ctx context.Context, seriesTvdbId string, episodes []library.TvdbEpisode) error
-	GetTvdbMetadataStatus(ctx context.Context, tvdbId string) (tvdbCount int, plexCount int, err error)
+	GetTvdbMetadataStatus(ctx context.Context, tvdbId string) (tvdbCount, plexCount, upcomingCount int, err error)
 }
 
 type Repo struct {
@@ -884,8 +884,10 @@ func (r *Repo) UpsertTvdbEpisodes(ctx context.Context, seriesTvdbId string, epis
 	return nil
 }
 
-// GetShowEpisodesWithStatus returns all episodes (aired) with download status
-// Uses LEFT JOIN to detect missing episodes (in TvdbEpisodes but not in Episodes)
+// GetShowEpisodesWithStatus returns every episode TVDB lists for a show, aired
+// or not, with download status. Uses LEFT JOIN to detect missing episodes (in
+// TvdbEpisodes but not in Episodes); the caller tells aired from upcoming by
+// the Aired date, which is blank when TVDB has none.
 func (r *Repo) GetShowEpisodesWithStatus(ctx context.Context, tvdbId string) ([]library.EpisodeWithStatus, error) {
 	ctx, span := repoTracer.Start(ctx, "repository.GetShowEpisodesWithStatus")
 	defer span.End()
@@ -907,7 +909,6 @@ func (r *Repo) GetShowEpisodesWithStatus(ctx context.Context, tvdbId string) ([]
 		FROM TvdbEpisodes te
 		LEFT JOIN Episodes e ON te.tvdb_id = e.tvdb_id
 		WHERE te.series_tvdb_id = $1
-		  AND te.aired <= CURRENT_DATE
 		ORDER BY te.season_number, te.episode_number
 	`
 
@@ -942,19 +943,26 @@ func (r *Repo) GetShowEpisodesWithStatus(ctx context.Context, tvdbId string) ([]
 }
 
 // GetTvdbMetadataStatus returns counts for TVDB episodes vs Plex episodes
-func (r *Repo) GetTvdbMetadataStatus(ctx context.Context, tvdbId string) (tvdbCount int, plexCount int, err error) {
+func (r *Repo) GetTvdbMetadataStatus(
+	ctx context.Context,
+	tvdbId string,
+) (tvdbCount, plexCount, upcomingCount int, err error) {
 	ctx, span := repoTracer.Start(ctx, "repository.GetTvdbMetadataStatus")
 	defer span.End()
 	span.SetAttributes(attribute.String("tvdb_id", tvdbId))
 
-	// Count TVDB episodes (aired only, exclude Season 0 specials)
+	// Count TVDB episodes, aired and not (an episode without an air date has not
+	// aired), excluding Season 0 specials
 	err = r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM TvdbEpisodes
-		WHERE series_tvdb_id = $1 AND aired <= CURRENT_DATE AND season_number != 0
-	`, tvdbId).Scan(&tvdbCount)
+		SELECT
+			COUNT(*) FILTER (WHERE aired <= CURRENT_DATE),
+			COUNT(*) FILTER (WHERE aired IS NULL OR aired > CURRENT_DATE)
+		FROM TvdbEpisodes
+		WHERE series_tvdb_id = $1 AND season_number != 0
+	`, tvdbId).Scan(&tvdbCount, &upcomingCount)
 	if err != nil {
 		span.RecordError(err)
-		return 0, 0, fmt.Errorf("failed to count TVDB episodes: %w", err)
+		return 0, 0, 0, fmt.Errorf("failed to count TVDB episodes: %w", err)
 	}
 
 	// Count Plex episodes (exclude Season 0 specials)
@@ -966,15 +974,16 @@ func (r *Repo) GetTvdbMetadataStatus(ctx context.Context, tvdbId string) (tvdbCo
 	`, tvdbId).Scan(&plexCount)
 	if err != nil {
 		span.RecordError(err)
-		return 0, 0, fmt.Errorf("failed to count Plex episodes: %w", err)
+		return 0, 0, 0, fmt.Errorf("failed to count Plex episodes: %w", err)
 	}
 
 	span.SetAttributes(
 		attribute.Int("tvdb_count", tvdbCount),
 		attribute.Int("plex_count", plexCount),
+		attribute.Int("upcoming_count", upcomingCount),
 	)
 	span.SetStatus(codes.Ok, "Metadata status retrieved")
-	return tvdbCount, plexCount, nil
+	return tvdbCount, plexCount, upcomingCount, nil
 }
 
 // GetAllShows returns all shows in the library

@@ -18,6 +18,7 @@ import { useRatingsBatch } from "../hooks/useRatings";
 import type { RatingsItem } from "../hooks/useRatings";
 import { pickCardRating } from "../utils/ratings";
 import type { RatingBadgeModel } from "../utils/ratings";
+import { summarizeCoverage } from "../utils/episodeCoverage";
 
 // ShowCard component that fetches and displays episode count metadata
 interface ShowCardProps {
@@ -32,10 +33,10 @@ const ShowCard: React.FC<ShowCardProps> = ({ item, imageUrl, rating, handleMedia
   // Fetch metadata status for this specific show
   const { data: metadataStatus, isLoading } = useShowMetadataStatus(item.tvdbId);
 
-  // Build status badge with episode counts
+  // Build status badge with episode counts: what Plex has over what has aired
   const getStatusBadge = (): MediaStatusBadge => {
-    if (!metadataStatus || !metadataStatus.hasTvdbData) {
-      // No TVDB data yet - show generic badge
+    if (!metadataStatus || !metadataStatus.hasTvdbData || metadataStatus.tvdbEpisodeCount === 0) {
+      // No TVDB data yet, or nothing has aired - show generic badge
       return { type: "show", inLibrary: true };
     }
 
@@ -44,7 +45,8 @@ const ShowCard: React.FC<ShowCardProps> = ({ item, imageUrl, rating, handleMedia
       inLibrary: true,
       episodeCount: {
         downloaded: metadataStatus.plexEpisodeCount,
-        total: metadataStatus.tvdbEpisodeCount,
+        aired: metadataStatus.tvdbEpisodeCount,
+        upcoming: metadataStatus.upcomingCount ?? 0,
       },
     };
   };
@@ -304,6 +306,7 @@ export const Library = () => {
   const enrichedMedia = useMemo(() => {
     if (!episodes || episodes.length === 0) return null;
 
+    const coverage = summarizeCoverage(episodes);
     return {
       media: {
         id: selectedTvdbId || "",
@@ -322,7 +325,8 @@ export const Library = () => {
       },
       status: {
         type: "series" as const,
-        downloaded: episodes.filter((ep) => ep.downloaded).length,
+        downloaded: coverage.downloaded,
+        aired: coverage.aired,
         total: episodes.length,
       },
     };

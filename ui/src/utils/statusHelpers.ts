@@ -4,26 +4,27 @@ import type {
   MediaStatusBadge,
   MediaStatusInfo,
   EnrichedMedia,
+  EpisodeCoverage,
 } from '../types/MediaStatus';
 
 /**
- * Calculates the total number of downloaded and total episodes across all seasons
+ * Sums library coverage across all seasons of a batch status response. Batch
+ * status comes straight from the library database and carries no air dates,
+ * so every episode it lists has aired and nothing is upcoming.
  *
  * @param seasons - Array of season status objects
- * @returns Object with downloaded and total episode counts
+ * @returns Downloaded and aired episode counts
  */
-export function calculateEpisodeCount(
-  seasons: SeasonStatus[]
-): { downloaded: number; total: number } {
+export function calculateEpisodeCount(seasons: SeasonStatus[]): EpisodeCoverage {
   let downloaded = 0;
-  let total = 0;
+  let aired = 0;
 
   for (const season of seasons) {
-    total += season.episodes.length;
+    aired += season.episodes.length;
     downloaded += season.episodes.filter((ep) => ep.downloaded).length;
   }
 
-  return { downloaded, total };
+  return { downloaded, aired, upcoming: 0 };
 }
 
 /**
@@ -69,7 +70,7 @@ export function getStatusBadgeForMedia(
     const episodeCount = calculateEpisodeCount(showStatus.seasons);
 
     // Only show badge if there are episodes
-    if (episodeCount.total > 0) {
+    if (episodeCount.aired > 0) {
       return {
         type: 'show',
         episodeCount,
@@ -106,12 +107,16 @@ export function buildStatusBadgeFromEnriched(
   if (statusInfo.type === 'series') {
     const downloaded = statusInfo.downloaded || 0;
     const total = statusInfo.total || 0;
+    // A backend without the aired count reports everything as aired; an
+    // episode in the library has aired whatever TVDB's date says.
+    const aired = Math.max(statusInfo.aired ?? total, downloaded);
+    const upcoming = Math.max(total - aired, 0);
 
-    // Only show badge if there are episodes
-    if (total > 0) {
+    // Only show badge once something has aired
+    if (aired > 0) {
       return {
         type: 'show',
-        episodeCount: { downloaded, total },
+        episodeCount: { downloaded, aired, upcoming },
       };
     }
     return undefined;

@@ -8,6 +8,7 @@ import { alpha, useTheme } from "@mui/material/styles";
 import type { Theme } from "@mui/material/styles";
 import type { MediaStatusBadge } from "../../types/MediaStatus";
 import type { RatingBadgeModel } from "../../utils/ratings";
+import { coverageLabel, coverageSentence } from "../../utils/episodeCoverage";
 import { toThumbnailUrl } from "../../utils/images";
 import RatingPill from "./RatingPill";
 
@@ -65,7 +66,7 @@ const HOVER_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
  * Features:
  * - 2:3 aspect ratio poster, served as a TVDB thumbnail with a fade-in once decoded
  * - Optional rating pill (Tomatometer for movies, IMDb for shows) in the top-left corner
- * - Optional status badge (episode progress for shows, library state for movies)
+ * - Optional status badge (aired-episode coverage for shows, library state for movies)
  * - Keyboard accessible (Enter / Space, hover treatment on focus)
  */
 const MediaCard: React.FC<MediaCardProps> = ({
@@ -108,14 +109,19 @@ const MediaCard: React.FC<MediaCardProps> = ({
     }
 
     if (statusBadge.type === "show" && statusBadge.episodeCount) {
-      const { downloaded, total } = statusBadge.episodeCount;
-      return `${downloaded}/${total}`;
+      return coverageLabel(statusBadge.episodeCount);
     }
 
     return null;
   };
 
   const badgeLabel = getBadgeLabel();
+  // The pill only has room for "11/11"; the tooltip says what that is out of
+  // and how many episodes are still to air.
+  const badgeTitle =
+    statusBadge?.type === "show" && statusBadge.episodeCount
+      ? coverageSentence(statusBadge.episodeCount)
+      : undefined;
 
   // Badge tone tracks how complete the media is in the library
   const getBadgeTone = (): BadgeTone => {
@@ -126,11 +132,12 @@ const MediaCard: React.FC<MediaCardProps> = ({
     }
 
     if (statusBadge.type === "show" && statusBadge.episodeCount) {
-      const { downloaded, total } = statusBadge.episodeCount;
+      const { downloaded, aired } = statusBadge.episodeCount;
       if (downloaded === 0) {
         return neutralTone(theme);
       }
-      if (downloaded === total) {
+      // Everything that has aired is here: complete, however much is still to come
+      if (downloaded >= aired) {
         return toneFrom(theme.palette.success.main);
       }
       return toneFrom(theme.palette.warning.main);
@@ -242,6 +249,7 @@ const MediaCard: React.FC<MediaCardProps> = ({
       ) : (
         badgeLabel && (
           <Box
+            title={badgeTitle}
             sx={{
               position: "absolute",
               top: { xs: 6, sm: 10 },

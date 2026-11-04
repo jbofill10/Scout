@@ -49,7 +49,11 @@ type MediaStatusInfo struct {
 	Seasons    []SeasonStatus `json:"seasons,omitempty"`
 	InLibrary  bool           `json:"inLibrary,omitempty"`
 	Downloaded int            `json:"downloaded,omitempty"` // For shows: count of downloaded episodes
-	Total      int            `json:"total,omitempty"`      // For shows: total episodes
+	Total      int            `json:"total,omitempty"`      // For shows: total episodes TVDB lists
+	// For shows: how many of Total have aired (today or earlier; a blank air
+	// date is unaired). Not omitted on zero so the UI can tell "nothing has
+	// aired yet" from an older response without the field.
+	Aired int `json:"aired"`
 }
 
 // EnrichedMedia represents a Media object with additional download status information

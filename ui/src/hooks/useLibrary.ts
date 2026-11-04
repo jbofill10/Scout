@@ -23,11 +23,16 @@ interface EpisodeWithStatus {
   downloaded: boolean;
 }
 
+/**
+ * TVDB coverage of a library show. The three counts cover aired episodes only;
+ * upcomingCount is how many more TVDB lists that have not aired yet.
+ */
 interface MetadataStatus {
   hasTvdbData: boolean;
   tvdbEpisodeCount: number;
   plexEpisodeCount: number;
   missingCount: number;
+  upcomingCount: number;
 }
 
 export const useLibraryShows = () => {
@@ -78,7 +83,9 @@ export const useShowMetadataStatus = (tvdbId: string | null) => {
   return useQuery<MetadataStatus>({
     queryKey: ["library", "show", tvdbId, "metadata-status"],
     queryFn: async () => {
-      if (!tvdbId) return { hasTvdbData: false, tvdbEpisodeCount: 0, plexEpisodeCount: 0, missingCount: 0 };
+      if (!tvdbId) {
+        return { hasTvdbData: false, tvdbEpisodeCount: 0, plexEpisodeCount: 0, missingCount: 0, upcomingCount: 0 };
+      }
       const response = await fetch(`/api/library/shows/${tvdbId}/metadata-status`);
       if (!response.ok) {
         throw new Error("Failed to fetch metadata status");

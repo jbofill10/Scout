@@ -37,12 +37,17 @@ type TvdbEpisode struct {
 	Aired          string // YYYY-MM-DD format
 }
 
-// MetadataStatus represents the TVDB metadata sync status for a show
+// MetadataStatus represents the TVDB metadata sync status for a show.
+// TvdbEpisodeCount, PlexEpisodeCount and MissingCount cover aired,
+// non-special episodes only; UpcomingCount is how many more TVDB lists that
+// have not aired yet (or have no air date), so a show that is still running
+// is not reported as missing episodes nobody could have.
 type MetadataStatus struct {
 	HasTvdbData      bool `json:"hasTvdbData"`
 	TvdbEpisodeCount int  `json:"tvdbEpisodeCount"`
 	PlexEpisodeCount int  `json:"plexEpisodeCount"`
 	MissingCount     int  `json:"missingCount"`
+	UpcomingCount    int  `json:"upcomingCount"`
 }
 
 // MissingEpisode is an aired, non-special episode TVDB lists for a library
