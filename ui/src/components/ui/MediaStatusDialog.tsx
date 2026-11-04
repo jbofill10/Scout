@@ -650,7 +650,7 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
               </Alert>
             ) : metadataStatus.hasTvdbData && metadataStatus.plexEpisodeCount > 0 ? (
               <Alert severity="success">
-                <AlertTitle>All Episodes Downloaded 🎉</AlertTitle>
+                <AlertTitle>{totals.upcoming > 0 ? "Caught up 🎉" : "All Episodes Downloaded 🎉"}</AlertTitle>
                 You have all {metadataStatus.tvdbEpisodeCount} aired episodes in your library!
                 {totals.upcoming > 0 &&
                   ` ${totals.upcoming} more ${totals.upcoming === 1 ? "is" : "are"} yet to air.`}

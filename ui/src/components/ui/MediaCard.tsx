@@ -4,6 +4,7 @@ import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import Skeleton from "@mui/material/Skeleton";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
+import BookmarkAddedRoundedIcon from "@mui/icons-material/BookmarkAddedRounded";
 import { alpha, useTheme } from "@mui/material/styles";
 import type { Theme } from "@mui/material/styles";
 import type { MediaStatusBadge } from "../../types/MediaStatus";
@@ -23,6 +24,8 @@ export interface MediaCardProps {
   statusBadge?: MediaStatusBadge;
   /** The title's headline score (see pickCardRating), shown in the top-left corner */
   rating?: RatingBadgeModel | null;
+  /** Scout follows this show for new episodes: a bookmark mark beside the status badge */
+  following?: boolean;
   isLoadingStatus?: boolean;
   onImageLoad?: () => void;
 }
@@ -67,6 +70,7 @@ const HOVER_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
  * - 2:3 aspect ratio poster, served as a TVDB thumbnail with a fade-in once decoded
  * - Optional rating pill (Tomatometer for movies, IMDb for shows) in the top-left corner
  * - Optional status badge (aired-episode coverage for shows, library state for movies)
+ * - Optional follow mark for shows Scout watches for new episodes
  * - Keyboard accessible (Enter / Space, hover treatment on focus)
  */
 const MediaCard: React.FC<MediaCardProps> = ({
@@ -74,6 +78,7 @@ const MediaCard: React.FC<MediaCardProps> = ({
   onClick,
   statusBadge,
   rating,
+  following = false,
   isLoadingStatus = false,
   onImageLoad,
 }) => {
@@ -237,42 +242,77 @@ const MediaCard: React.FC<MediaCardProps> = ({
         />
       )}
 
-      {/* Status Badge or Loading Shimmer */}
-      {isLoadingStatus ? (
-        <Skeleton
-          variant="rounded"
-          width={54}
-          height={22}
-          sx={{ position: "absolute", top: { xs: 6, sm: 10 }, right: { xs: 6, sm: 10 }, borderRadius: 999, zIndex: 1 }}
-          aria-label="Loading status"
-        />
-      ) : (
-        badgeLabel && (
-          <Box
-            title={badgeTitle}
-            sx={{
-              position: "absolute",
-              top: { xs: 6, sm: 10 },
-              right: { xs: 6, sm: 10 },
-              zIndex: 1,
-              px: { xs: 0.75, sm: 1 },
-              py: "3px",
-              borderRadius: 999,
-              fontSize: { xs: "0.625rem", sm: "0.6875rem" },
-              fontWeight: 700,
-              letterSpacing: "0.01em",
-              lineHeight: 1.3,
-              color: badgeTone.text,
-              backgroundColor: alpha("#020617", 0.78),
-              backgroundImage: badgeTone.tint
-                ? `linear-gradient(${badgeTone.tint}, ${badgeTone.tint})`
-                : "none",
-              border: `1px solid ${badgeTone.border}`,
-            }}
-          >
-            {badgeLabel}
-          </Box>
-        )
+      {/* Top-right cluster: follow mark, then the status badge or its loading shimmer */}
+      {(following || isLoadingStatus || badgeLabel) && (
+        <Box
+          sx={{
+            position: "absolute",
+            top: { xs: 6, sm: 10 },
+            right: { xs: 6, sm: 10 },
+            zIndex: 1,
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+          }}
+        >
+          {following && (
+            <Box
+              role="img"
+              aria-label="Following"
+              title="Following"
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 22,
+                height: 22,
+                borderRadius: "50%",
+                color: theme.palette.primary.light,
+                backgroundColor: alpha("#020617", 0.78),
+                backgroundImage: `linear-gradient(${alpha(theme.palette.primary.main, 0.3)}, ${alpha(
+                  theme.palette.primary.main,
+                  0.3,
+                )})`,
+                border: `1px solid ${alpha(theme.palette.primary.main, 0.45)}`,
+              }}
+            >
+              <BookmarkAddedRoundedIcon sx={{ fontSize: 14 }} />
+            </Box>
+          )}
+          {isLoadingStatus ? (
+            <Skeleton
+              variant="rounded"
+              width={54}
+              height={22}
+              sx={{ borderRadius: 999 }}
+              aria-label="Loading status"
+            />
+          ) : (
+            badgeLabel && (
+              <Box
+                title={badgeTitle}
+                sx={{
+                  px: { xs: 0.75, sm: 1 },
+                  py: "3px",
+                  borderRadius: 999,
+                  fontSize: { xs: "0.625rem", sm: "0.6875rem" },
+                  fontWeight: 700,
+                  letterSpacing: "0.01em",
+                  lineHeight: 1.3,
+                  whiteSpace: "nowrap",
+                  color: badgeTone.text,
+                  backgroundColor: alpha("#020617", 0.78),
+                  backgroundImage: badgeTone.tint
+                    ? `linear-gradient(${badgeTone.tint}, ${badgeTone.tint})`
+                    : "none",
+                  border: `1px solid ${badgeTone.border}`,
+                }}
+              >
+                {badgeLabel}
+              </Box>
+            )
+          )}
+        </Box>
       )}
 
       {/* Hover Overlay */}

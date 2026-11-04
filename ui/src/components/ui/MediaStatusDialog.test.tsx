@@ -99,6 +99,7 @@ describe("MediaStatusDialog episode coverage", () => {
     renderDialog();
 
     const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Caught up");
     expect(alert).toHaveTextContent("You have all 11 aired episodes in your library! 9 more are yet to air.");
   });
 

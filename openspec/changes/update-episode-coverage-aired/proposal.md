@@ -16,8 +16,9 @@ opened.
 - The torrenter's `GET /library/shows/:tvdbId/metadata-status` adds `upcomingCount`; `hasTvdbData` is true
   when TVDB lists anything, aired or not. `GET /library/shows/:tvdbId` lists every TVDB episode, aired or
   not, so the Library dialog shows the same upcoming episodes the search dialog does.
-- The poster pill reads `downloaded/aired` ("11/11", green once everything aired is in) with the full
-  sentence in its tooltip. The dialog header reads "11 of 11 aired episodes in your library · 9 upcoming",
+- The poster pill reads "Caught up" once everything aired is in and more is still to air, otherwise
+  `downloaded/aired` ("9/11" amber, "11/11" green), with the full sentence in its tooltip. Followed shows
+  carry a bookmark mark beside the pill (`useFollowedIds`). The dialog header reads "11 of 11 aired episodes in your library · 9 upcoming",
   the progress bar measures against aired episodes, season tabs read "Season 2 · 1/1 · 9 upcoming" (or
   "Season 3 · 10 upcoming" before any of it airs), and unaired rows are labelled "Upcoming" (dated) or
   "TBA" (no date) instead of "Missing". The all-downloaded banner adds "9 more are yet to air."

@@ -18,8 +18,10 @@ library coverage against the episodes that have aired.
 #### Scenario: Poster pill
 
 - **WHEN** a show card carries a status badge
-- **THEN** the pill SHALL read downloaded/aired and turn green once every aired episode is in the library
+- **THEN** the pill SHALL read "Caught up" once every aired episode is in the library and more are still to air
+- **AND** otherwise read downloaded/aired, green when complete and amber while aired episodes are missing
 - **AND** its tooltip SHALL carry the full sentence including the upcoming count
+- **AND** a show Scout follows SHALL carry a bookmark mark beside the pill, on every card that shows it
 
 #### Scenario: Display movie metadata
 

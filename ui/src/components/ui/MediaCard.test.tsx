@@ -42,7 +42,7 @@ describe("MediaCard", () => {
     expect(screen.getByRole("img", { name: "IMDb 8.7" })).toBeInTheDocument();
   });
 
-  it("counts a show against its aired episodes and tells the rest in the tooltip", () => {
+  it("says Caught up when everything aired is in and more is still to air", () => {
     render(
       <MediaCard
         media={media}
@@ -51,9 +51,40 @@ describe("MediaCard", () => {
       />,
     );
 
-    const pill = screen.getByText("11/11");
+    const pill = screen.getByText("Caught up");
     expect(pill).toHaveAttribute("title", "11 of 11 aired episodes in your library · 9 upcoming");
-    expect(screen.queryByText("11/20")).toBeNull();
+    expect(screen.queryByText(/11\/(11|20)/)).toBeNull();
+  });
+
+  it.each([
+    ["behind on aired episodes", { downloaded: 9, aired: 11, upcoming: 9 }, "9/11"],
+    ["complete with nothing more announced", { downloaded: 11, aired: 11, upcoming: 0 }, "11/11"],
+  ])("shows the count when %s", (_name, episodeCount, expected) => {
+    render(<MediaCard media={media} onClick={() => {}} statusBadge={{ type: "show", episodeCount }} />);
+
+    expect(screen.getByText(expected)).toBeInTheDocument();
+  });
+
+  it("marks a followed show beside its badge", () => {
+    render(
+      <MediaCard
+        media={media}
+        onClick={() => {}}
+        following
+        statusBadge={{ type: "show", episodeCount: { downloaded: 11, aired: 11, upcoming: 9 } }}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "Following" })).toBeInTheDocument();
+    expect(screen.getByText("Caught up")).toBeInTheDocument();
+  });
+
+  it("marks a followed show even without a badge, and nothing when not followed", () => {
+    const { rerender } = render(<MediaCard media={media} onClick={() => {}} following />);
+    expect(screen.getByRole("img", { name: "Following" })).toBeInTheDocument();
+
+    rerender(<MediaCard media={media} onClick={() => {}} />);
+    expect(screen.queryByRole("img", { name: "Following" })).toBeNull();
   });
 
   it("labels a movie in the library", () => {

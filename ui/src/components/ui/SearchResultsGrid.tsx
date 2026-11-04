@@ -6,6 +6,7 @@ import type { MediaCardProps } from "./MediaCard";
 import type { EnrichedMedia } from "../../types/MediaStatus";
 import { buildStatusBadgeFromEnriched } from "../../utils/statusHelpers";
 import { pickCardRating } from "../../utils/ratings";
+import { useFollowedIds } from "../../hooks/useFollows";
 
 interface SearchResultsGridProps {
   results: EnrichedMedia[];
@@ -46,6 +47,8 @@ const SearchResultsGrid: React.FC<SearchResultsGridProps> = ({
   cardCategory,
   sx,
 }) => {
+  const followedIds = useFollowedIds();
+
   const cards = useMemo(
     () =>
       results.map((result) => ({
@@ -58,8 +61,9 @@ const SearchResultsGrid: React.FC<SearchResultsGridProps> = ({
         },
         statusBadge: buildStatusBadgeFromEnriched(result.status),
         rating: pickCardRating(result.media.ratings, result.media.type ?? result.status.type),
+        following: result.status.type === "series" && followedIds.has(result.media.id),
       })),
-    [results, cardCategory],
+    [results, cardCategory, followedIds],
   );
 
   const resultsById = useMemo(
@@ -97,6 +101,7 @@ const SearchResultsGrid: React.FC<SearchResultsGridProps> = ({
           media={card.media}
           statusBadge={card.statusBadge}
           rating={card.rating}
+          following={card.following}
           onClick={handleCardClick}
           isLoadingStatus={false}
         />
