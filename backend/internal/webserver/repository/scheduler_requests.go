@@ -20,7 +20,9 @@ import (
 // status but queued is taken over: this request's payload and trace, a fresh
 // retry ladder, due now. A row already queued belongs to a dispatch under way,
 // and ok=false reports that nothing new was started.
-func (r *SchedulerRepo) EnqueueNow(ctx context.Context, media tvdb.Media, traceID, spanID string) (DueItem, bool, error) {
+func (r *SchedulerRepo) EnqueueNow(
+	ctx context.Context, media tvdb.Media, traceID, spanID string,
+) (DueItem, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
