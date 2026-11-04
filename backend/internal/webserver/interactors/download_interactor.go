@@ -106,7 +106,7 @@ func (i *DownloadInteractor) WatchForDueMedia() {
 	i.scheduler.Start(i.mediaQueue)
 	go func() {
 		for item := range i.mediaQueue {
-			i.processDueItem(item)
+			i.processDueBatch(item)
 		}
 	}()
 	go i.runAsyncFailureReconciler(context.Background())
@@ -142,7 +142,16 @@ func (i *DownloadInteractor) processDueItem(item repository.DueItem) {
 		i.logger.ErrorContext(ctx, "Download dispatch error", "error", err, "media", media.Name)
 	}
 
-	failed := failedResult(resp.Results)
+	i.settleDueRow(ctx, item, failedResult(resp.Results), traceID, spanID)
+}
+
+// settleDueRow transitions a dispatched row from the failure (if any) the
+// torrenter reported for it: completed, left as cancelled, permanently failed,
+// or rescheduled with backoff.
+func (i *DownloadInteractor) settleDueRow(
+	ctx context.Context, item repository.DueItem, failed *dlstatus.EpisodeResult, traceID, spanID string,
+) {
+	media := item.Media
 	if failed == nil {
 		// No failed results → every episode is downloading/exists, so the row is
 		// done. (A transport error still populates resp.Results via
@@ -174,10 +183,12 @@ func (i *DownloadInteractor) processDueItem(item repository.DueItem) {
 	}
 
 	// Transient failure → apply backoff policy.
-	next, ok := retry.NextAttempt(time.Now(), item.Attempts)
+	now := time.Now()
+	maxAttempts := retry.MaxAttemptsFor(code, airedAt(media), now)
+	next, ok := retry.NextAttemptWithin(now, item.Attempts, maxAttempts)
 	if !ok {
 		// Exhausted retries → terminal failure.
-		exhaustReason := fmt.Sprintf("Gave up after %d attempts: %s", retry.MaxAttempts, reason)
+		exhaustReason := fmt.Sprintf("Gave up after %d attempts: %s", maxAttempts, reason)
 		i.handlePermanentRowFailureWithCode(ctx, item, *failed, string(dlstatus.CodeMaxRetries), exhaustReason, traceID, spanID)
 		return
 	}
@@ -187,7 +198,7 @@ func (i *DownloadInteractor) processDueItem(item repository.DueItem) {
 		i.logger.ErrorContext(ctx, "Failed to record transient failure", "error", recErr, "id", item.ID)
 	}
 	attemptReason := fmt.Sprintf("%s (attempt %d of %d, next try %s)",
-		code.HumanReason(), item.Attempts+1, retry.MaxAttempts, next.Format("15:04"))
+		code.HumanReason(), item.Attempts+1, maxAttempts, next.Format("15:04"))
 	i.updateNotificationStatus(ctx, failed.TvdbID, notifications.StatusSearching, attemptReason)
 	i.logger.InfoContext(ctx, "Scheduled download will retry",
 		"media", media.Name, "code", code, "next_attempt", next.Format(time.RFC3339))
@@ -683,6 +694,51 @@ type packSettingsReader interface {
 	Settings(ctx context.Context) (settings.View, error)
 }
 
+// packFirstRequest sends the episode set to the torrenter as a pack-only
+// request when season packs are on and there are enough episodes for one. It
+// reports attempted=false, with every episode in rest, when packs are off, the
+// set is too small, the settings are unreadable or the request failed. Otherwise
+// it returns the torrenter's response and the episodes still to be sent one at
+// a time (answered no_pack, or not answered at all).
+func (i *DownloadInteractor) packFirstRequest(
+	ctx context.Context, payload tvdb.Media,
+) (resp dlstatus.DownloadResponse, rest []tvdb.Episode, attempted bool) {
+	episodes := payload.Metadata.Episodes
+	reader, ok := i.torrenterClient.(packSettingsReader)
+	if !ok || len(episodes) < 2 {
+		return resp, episodes, false
+	}
+	view, err := reader.Settings(ctx)
+	if err != nil {
+		i.logger.WarnContext(ctx, "Could not read torrenter settings, sending episodes one at a time", "error", err)
+		return resp, episodes, false
+	}
+	if !view.Values.SeasonPacks || len(episodes) < view.Values.SeasonPackMinEpisodes {
+		return resp, episodes, false
+	}
+
+	packReq := payload
+	packReq.PackOnly = true
+	resp, err = i.torrenterClient.Download(ctx, packReq)
+	if err != nil {
+		i.logger.WarnContext(ctx, "Pack request failed, sending episodes one at a time",
+			"error", err, "media", payload.Name, "episodes", len(episodes))
+		return dlstatus.DownloadResponse{}, episodes, false
+	}
+
+	answered := make(map[string]bool, len(resp.Results))
+	for _, r := range resp.Results {
+		answered[r.TvdbID] = r.Code != dlstatus.CodeNoPack
+	}
+	rest = []tvdb.Episode{}
+	for _, ep := range episodes {
+		if !answered[strconv.Itoa(ep.Id)] {
+			rest = append(rest, ep)
+		}
+	}
+	return resp, rest, true
+}
+
 // dispatchPacksFirst hands the whole episode set to the torrenter as a
 // pack-only request when season packs are on and the request has enough
 // episodes for one, records the episodes a pack covered, settles any other
@@ -695,38 +751,21 @@ func (i *DownloadInteractor) dispatchPacksFirst(
 	isAnime bool,
 	traceID, spanID string,
 ) []tvdb.Episode {
+	resp, rest, attempted := i.packFirstRequest(ctx, payload)
+	if !attempted {
+		return rest
+	}
 	episodes := payload.Metadata.Episodes
-	reader, ok := i.torrenterClient.(packSettingsReader)
-	if !ok || len(episodes) < 2 {
-		return episodes
-	}
-	view, err := reader.Settings(ctx)
-	if err != nil {
-		i.logger.WarnContext(ctx, "Could not read torrenter settings, sending episodes one at a time", "error", err)
-		return episodes
-	}
-	if !view.Values.SeasonPacks || len(episodes) < view.Values.SeasonPackMinEpisodes {
-		return episodes
-	}
-
 	packReq := payload
 	packReq.PackOnly = true
-	resp, err := i.torrenterClient.Download(ctx, packReq)
-	if err != nil {
-		i.logger.WarnContext(ctx, "Pack request failed, sending episodes one at a time",
-			"error", err, "media", payload.Name, "episodes", len(episodes))
-		return episodes
-	}
 
 	episodeByID := make(map[string]tvdb.Episode, len(episodes))
 	for _, ep := range episodes {
 		episodeByID[strconv.Itoa(ep.Id)] = ep
 	}
-	answered := map[string]bool{}
 	others := dlstatus.DownloadResponse{}
 	packed := 0
 	for _, r := range resp.Results {
-		answered[r.TvdbID] = true
 		switch {
 		case r.Outcome == dlstatus.OutcomeDownloading:
 			packed++
@@ -735,7 +774,6 @@ func (i *DownloadInteractor) dispatchPacksFirst(
 			}
 		case r.Outcome == dlstatus.OutcomeExists:
 		case r.Code == dlstatus.CodeNoPack:
-			answered[r.TvdbID] = false
 		default:
 			others.Results = append(others.Results, r)
 		}
@@ -748,12 +786,6 @@ func (i *DownloadInteractor) dispatchPacksFirst(
 		}
 	}
 
-	rest := []tvdb.Episode{}
-	for _, ep := range episodes {
-		if !answered[strconv.Itoa(ep.Id)] {
-			rest = append(rest, ep)
-		}
-	}
 	i.logger.InfoContext(ctx, "Pack-first dispatch", "media", payload.Name, "episodes", len(episodes),
 		"packed", packed, "per_episode", len(rest))
 	return rest

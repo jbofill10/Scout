@@ -3,7 +3,11 @@
 // delay until a maximum number of attempts is reached.
 package retry
 
-import "time"
+import (
+	"time"
+
+	"github.com/jbofill10/scout/backend/pkg/dlstatus"
+)
 
 // backoff holds the delay applied before each retry, indexed by the number of
 // attempts already made. attemptsMade >= len(backoff) clamps to the last entry.
@@ -31,9 +35,29 @@ func FirstAttempt(now time.Time) time.Time {
 // handled; 0 on the first failure). The bool is false when retries are
 // exhausted, in which case the returned time is the zero value.
 func NextAttempt(now time.Time, attemptsMade int) (time.Time, bool) {
+	return NextAttemptWithin(now, attemptsMade, MaxAttempts)
+}
+
+// OldContentAge is how long after airing a no-result search stops being retried on the full ladder.
+const OldContentAge = 30 * 24 * time.Hour
+
+// OldContentAttempts is the ladder for no_torrent_found on content older than OldContentAge: the first try and one retry.
+const OldContentAttempts = 2
+
+// MaxAttemptsFor is the attempt ladder for a failure: OldContentAttempts for no_torrent_found on content that aired
+// more than OldContentAge before now, MaxAttempts otherwise (unknown air date counts as recent).
+func MaxAttemptsFor(code dlstatus.FailureCode, aired, now time.Time) int {
+	if code == dlstatus.CodeNoTorrentFound && !aired.IsZero() && now.Sub(aired) > OldContentAge {
+		return OldContentAttempts
+	}
+	return MaxAttempts
+}
+
+// NextAttemptWithin is NextAttempt with the ladder capped at maxAttempts.
+func NextAttemptWithin(now time.Time, attemptsMade, maxAttempts int) (time.Time, bool) {
 	// attemptsMade counts attempts already performed. After this failure there
-	// have been attemptsMade+1 attempts; if that reaches MaxAttempts, stop.
-	if attemptsMade >= MaxAttempts-1 {
+	// have been attemptsMade+1 attempts; if that reaches maxAttempts, stop.
+	if attemptsMade >= maxAttempts-1 {
 		return time.Time{}, false
 	}
 

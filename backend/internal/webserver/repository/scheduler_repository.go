@@ -68,6 +68,10 @@ type SchedulerRepository interface {
 	ScheduleRetry(ctx context.Context, media tvdb.Media, firstAttemptAt time.Time, code, reason, scheduledTraceID, scheduledSpanID string) error
 	GetDueMedia(ctx context.Context, windowEnd time.Time) ([]DueItem, error)
 	MarkQueued(ctx context.Context, id int) error
+	// ClaimDueSiblings moves to queued, and returns, every pending row of the
+	// same series that is due by `until`, other than exceptID, so they can be
+	// dispatched together with the row that just came due.
+	ClaimDueSiblings(ctx context.Context, showID string, exceptID int, until time.Time) ([]DueItem, error)
 	MarkCompleted(ctx context.Context, id int) error
 	RecordFailure(ctx context.Context, id int, code, reason string, nextAttempt time.Time) error
 	MarkPermanentlyFailed(ctx context.Context, id int, code, reason string) error
@@ -242,6 +246,50 @@ func (r *SchedulerRepo) GetDueMedia(ctx context.Context, windowEnd time.Time) ([
 		})
 	}
 
+	return results, nil
+}
+
+// ClaimDueSiblings atomically queues and returns the other pending rows of a
+// series that are due by `until`. A row already queued by its own timer is not
+// pending any more, so it is never claimed twice.
+func (r *SchedulerRepo) ClaimDueSiblings(ctx context.Context, showID string, exceptID int, until time.Time) ([]DueItem, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	stmt := `UPDATE ScheduledDownloads
+			 SET schedule_status = $1, queued_at = now()
+			 WHERE schedule_status = $2 AND id <> $3
+			   AND media->>'id' = $4 AND media->>'type' = 'series'
+			   AND COALESCE(next_attempt_at, release_time) <= $5
+			 RETURNING id, media, release_time, attempts, COALESCE(next_attempt_at, release_time)`
+	rows, err := r.db.QueryContext(ctx, stmt, StatusQueued, StatusPending, exceptID, showID, until.Format(time.RFC3339))
+	if err != nil {
+		return nil, fmt.Errorf("failed to claim sibling rows: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			r.logger.ErrorContext(ctx, "Failed to close rows", "error", err)
+		}
+	}()
+
+	var results []DueItem
+	for rows.Next() {
+		var id, attempts int
+		var mediaJSON []byte
+		var releaseTime, dueAt time.Time
+		if err := rows.Scan(&id, &mediaJSON, &releaseTime, &attempts, &dueAt); err != nil {
+			return nil, err
+		}
+		var media tvdb.Media
+		if err := json.Unmarshal(mediaJSON, &media); err != nil {
+			r.logger.ErrorContext(ctx, "Failed to unmarshal media", "id", id, "error", err)
+			continue
+		}
+		results = append(results, DueItem{ID: id, Media: media, ReleaseTime: releaseTime, DueAt: dueAt, Attempts: attempts})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return results, nil
 }
 

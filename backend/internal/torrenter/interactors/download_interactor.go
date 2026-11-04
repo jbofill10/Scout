@@ -182,9 +182,12 @@ func (i *DownloadInteractor) handleDownloadCompletion(ctx context.Context, dlCom
 		// The torrent is fully accounted for; stop tracking it as in-flight.
 		i.clearActiveTorrent(eventCtx, event.Hash)
 
-		// Remove UUID tracking tag to prevent tag bloat
-		if err := i.qbitt.RemoveUUIDTag(eventCtx, event.Hash, event.UUID); err != nil {
-			i.logger.WarnContext(eventCtx, "Failed to remove UUID tag (non-fatal)", "error", err, "hash", event.Hash, "uuid", event.UUID)
+		// Remove UUID tracking tag to prevent tag bloat (a finished torrent
+		// linked from disk was never tagged)
+		if event.UUID != "" {
+			if err := i.qbitt.RemoveUUIDTag(eventCtx, event.Hash, event.UUID); err != nil {
+				i.logger.WarnContext(eventCtx, "Failed to remove UUID tag (non-fatal)", "error", err, "hash", event.Hash, "uuid", event.UUID)
+			}
 		}
 	}
 
