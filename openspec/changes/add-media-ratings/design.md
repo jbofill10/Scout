@@ -22,18 +22,23 @@ Four sources, all keyed by IMDb id, merged into one list (IMDb, Rotten Tomatoes,
   or the first critics' percentage after a "Rotten Tomatoes" mention (sentences giving only the audience
   score are skipped); the Metascore likewise from `{{Metacritic film prose}}` or "N out of 100". Editors add
   these from release week on: all 17 of the week's uncovered popular movies had one. Series articles are not
-  read, since their prose scores single seasons.
+  read, since their prose scores single seasons. A film Wikidata has no item for at all (its IMDb id is not
+  linked yet, common for new streaming documentaries) is found by an `intitle:` search on its name, taking
+  the first hit that is a film article (`{{Infobox film}}`) naming its release year, so a namesake from
+  another year is passed over; callers pass name and year as hints (`Attach` from the media, the ratings
+  batch from the Library page's items).
 - **OMDb** (omdbapi.com, free key). Rotten Tomatoes has no public API; OMDb licenses a current Tomatometer
   and returns it next to IMDb's rating and the Metascore in one record. When a key is set its Tomatometer and
   Metascore win over Wikidata's; its IMDb figure is dropped in favour of the table's, which always carries
   votes.
 
-Coverage ceiling, checked on 2026-11-03 against the live rows: every movie card whose title has a published
-Tomatometer anywhere shows it. The 21 uncovered movie cards (11 anime films and specials, 6 streaming
-documentaries, a 2026 release not yet out, a TV film, two titles with no Wikidata item) have no Rotten
-Tomatoes score in Wikidata or their article, and their rottentomatoes.com pages carry review counts of 0-9
-with no published score (or no page at all). Only OMDb's licensed feed could change that, and it would not
-for these. Those cards show the Metascore or the IMDb rating instead.
+Coverage ceiling, checked title by title on 2026-11-03 against the live rows: of the 21 movie cards without a
+Tomatometer (11 anime films and specials, 6 streaming documentaries, a 2026 release not yet out, a TV film,
+two titles with no Wikidata item), 18 have no published score on rottentomatoes.com either (0-9 reviews, no
+score, or no page), one search hit was a namesake, and two carry a score there that no keyless source has:
+an anime film whose article never mentions it, and a documentary with no Wikidata item, which the title
+search above now reaches. Only OMDb's licensed feed could add the anime film's. The rest show the Metascore
+or the IMDb rating instead.
 
 `Service.LookupMany(ctx, ids, wait)` runs the sources in parallel per batch of ids and merges per id;
 `Lookup` is the one-id case and the batch extended handler rates a whole batch in one call. Waits are

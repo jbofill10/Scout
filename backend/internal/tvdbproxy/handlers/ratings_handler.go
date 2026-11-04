@@ -13,10 +13,13 @@ import (
 // ratingsBatchMax caps one batch; the Library page asks in chunks.
 const ratingsBatchMax = 200
 
-// RatingsRequest names one title by TVDB id.
+// RatingsRequest names one title by TVDB id. Title and year are optional
+// and let a film Wikidata has no item for be found by its Wikipedia article.
 type RatingsRequest struct {
 	Id        string `json:"id" binding:"required"`
 	MediaType string `json:"mediaType" binding:"required"` // "series" or "movie"
+	Title     string `json:"title,omitempty"`
+	Year      string `json:"year,omitempty"`
 }
 
 // RatingsResponse is one title's scores, with the IMDb id they were found under.
@@ -57,7 +60,7 @@ func (h *RatingsHandler) GetBatch(c *gin.Context) {
 
 	media := make([]tvdb.Media, len(requests))
 	for i, req := range requests {
-		media[i] = tvdb.Media{Id: req.Id, Category: req.MediaType}
+		media[i] = tvdb.Media{Id: req.Id, Category: req.MediaType, Name: req.Title, Year: req.Year}
 	}
 	if h.rater != nil {
 		h.rater.Attach(ctx, media, backgroundWait)

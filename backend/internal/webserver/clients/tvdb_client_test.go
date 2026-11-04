@@ -397,10 +397,11 @@ func (s *TVDBProxyClientTestSuite) TestGetRatingsBatch() {
 	client := NewTVDBProxyClient(server.URL[7:])
 
 	results, err := client.GetRatingsBatch(context.Background(),
-		[]RatingsRequest{{Id: "1", MediaType: "movie"}, {Id: "2", MediaType: "series"}})
+		[]RatingsRequest{{Id: "1", MediaType: "movie", Title: "One", Year: "2025"}, {Id: "2", MediaType: "series"}})
 
 	s.NoError(err)
-	s.Equal([]RatingsRequest{{Id: "1", MediaType: "movie"}, {Id: "2", MediaType: "series"}}, got)
+	s.Equal([]RatingsRequest{{Id: "1", MediaType: "movie", Title: "One", Year: "2025"}, {Id: "2", MediaType: "series"}}, got,
+		"title and year are relayed")
 	s.Equal([]RatingsResponse{
 		{Id: "1", MediaType: "movie", ImdbId: "tt0000001",
 			Ratings: []tvdb.Rating{{Source: tvdb.RatingSourceIMDb, Value: 8.1, Votes: 10}}},

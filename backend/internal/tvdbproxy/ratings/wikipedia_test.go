@@ -2,9 +2,11 @@ package ratings
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
@@ -83,6 +85,72 @@ func TestProseScores(t *testing.T) {
 		{Source: tvdb.RatingSourceRottenTomatoes, Value: 97}, {Source: tvdb.RatingSourceMetacritic, Value: 84},
 	}, scores["Sinners (film)"], "answered under the redirect target")
 	_, ok := scores["Nothing (film)"]
+	assert.False(t, ok)
+}
+
+// searchingServer answers list=search with hits and prop=revisions with the
+// given articles' wikitext.
+func searchingServer(t *testing.T, hits []string, articles map[string]string) (*Prose, *[]string) {
+	t.Helper()
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.Query().Get("list")+"|"+r.URL.Query().Get("titles")+"|"+r.URL.Query().Get("srsearch"))
+		if r.URL.Query().Get("list") == "search" {
+			var items []string
+			for _, hit := range hits {
+				items = append(items, `{"title":`+strconvQuote(hit)+`}`)
+			}
+			_, _ = w.Write([]byte(`{"query":{"search":[` + strings.Join(items, ",") + `]}}`))
+			return
+		}
+		var pages []string
+		for _, title := range strings.Split(r.URL.Query().Get("titles"), "|") {
+			text, ok := articles[title]
+			if !ok {
+				pages = append(pages, `{"title":`+strconvQuote(title)+`,"missing":true}`)
+				continue
+			}
+			pages = append(pages, `{"title":`+strconvQuote(title)+`,"revisions":[{"slots":{"main":{"content":`+strconvQuote(text)+`}}}]}`)
+		}
+		_, _ = w.Write([]byte(`{"query":{"pages":[` + strings.Join(pages, ",") + `]}}`))
+	}))
+	t.Cleanup(server.Close)
+	return NewProse(server.URL, server.Client(), slog.Default()), &requests
+}
+
+func strconvQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+func TestProseSearchFindsTheFilmOfThatYear(t *testing.T) {
+	source, requests := searchingServer(t,
+		[]string{"The Best of Me (Mya song)", "The Best of Me (2014 film)", "The Best of Me (2025 film)"},
+		map[string]string{
+			"The Best of Me (Mya song)":  `{{Infobox song}} "The Best of Me" is a 2025 song.`,
+			"The Best of Me (2014 film)": `{{Infobox film | released = 2014 }} The Best of Me is a 2014 American romantic drama.`,
+			"The Best of Me (2025 film)": `{{Infobox film | released = 2025 }} The Best of Me is a 2025 documentary. {{Rotten Tomatoes prose|86||14}}`,
+		})
+
+	title, ok := source.Search(context.Background(), "The Best of Me", "2025")
+
+	require.True(t, ok)
+	assert.Equal(t, "The Best of Me (2025 film)", title, "a song and a namesake from another year are passed over")
+	assert.Contains(t, (*requests)[0], `intitle:"The Best of Me"`)
+
+	_, ok = source.Search(context.Background(), "The Best of Me", "1999")
+	assert.False(t, ok, "no film article of that year")
+}
+
+func TestProseSearchErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+	source := NewProse(server.URL, server.Client(), slog.Default())
+
+	_, ok := source.Search(context.Background(), "Anything", "2025")
+
 	assert.False(t, ok)
 }
 

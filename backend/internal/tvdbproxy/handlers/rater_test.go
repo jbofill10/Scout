@@ -152,9 +152,11 @@ func TestExtendedHandlerRatesRecords(t *testing.T) {
 type resolvingRater struct {
 	stubRater
 	byTVDB map[string]string
+	seen   []tvdb.Media
 }
 
 func (r *resolvingRater) Attach(ctx context.Context, media []tvdb.Media, wait time.Duration) {
+	r.seen = append([]tvdb.Media(nil), media...)
 	for i := range media {
 		if media[i].ImdbID == "" {
 			media[i].ImdbID = r.byTVDB[media[i].Category+":"+media[i].Id]
@@ -183,8 +185,10 @@ func TestRatingsHandlerBatch(t *testing.T) {
 	r.POST("/ratings/batch", h.GetBatch)
 
 	w := postJSON(r, "/ratings/batch", []RatingsRequest{
-		{Id: "1", MediaType: "movie"}, {Id: "2", MediaType: "series"}, {Id: "3", MediaType: "movie"},
+		{Id: "1", MediaType: "movie", Title: "One", Year: "2025"}, {Id: "2", MediaType: "series"}, {Id: "3", MediaType: "movie"},
 	})
+	assert.Equal(t, "One", rater.seen[0].Name, "title and year reach the rater as hints")
+	assert.Equal(t, "2025", rater.seen[0].Year)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	var body []RatingsResponse

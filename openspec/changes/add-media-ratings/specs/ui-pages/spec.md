@@ -8,7 +8,8 @@ no IMDb id.
 #### Scenario: Ratings load in chunks
 
 - **WHEN** the TV Shows or Movies tab is shown
-- **THEN** the page SHALL post the visible items' ids to `/api/ratings/batch` in chunks of 40
+- **THEN** the page SHALL post the visible items' ids, titles and (for movies) years to `/api/ratings/batch`
+  in chunks of 40
 - **AND** each card SHALL show its rating pill (IMDb for shows; Tomatometer, else IMDb, for movies) as its
   chunk answers
 - **AND** chunks SHALL be cached for an hour so switching tabs does not ask again

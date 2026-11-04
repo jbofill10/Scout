@@ -236,7 +236,13 @@ export const Library = () => {
   // backend resolves each to its IMDb id and rates it, in chunks.
   const cardMediaType = activeTab === "movies" ? "movie" : "series";
   const ratingItems = useMemo<RatingsItem[]>(
-    () => items.map((item) => ({ id: item.tvdbId, mediaType: cardMediaType })),
+    () =>
+      items.map((item) => ({
+        id: item.tvdbId,
+        mediaType: cardMediaType,
+        title: item.title,
+        year: "year" in item && item.year ? String(item.year) : undefined,
+      })),
     [items, cardMediaType],
   );
   const ratingsById = useRatingsBatch(ratingItems, activeTab === "shows" || activeTab === "movies");
