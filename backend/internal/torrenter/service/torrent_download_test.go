@@ -89,9 +89,9 @@ func TestDownloadTorrent_HashResolutionOutlivesTheSearchDeadline(t *testing.T) {
 	assert.Equal(t, "cafe", hash)
 }
 
-// A cancelled request does not go looking for its torrent: the user does not
-// want it, and the cancel must not wait out the recovery window.
-func TestDownloadTorrent_CancelledAddIsNotRecovered(t *testing.T) {
+// A cancelled request does not keep its torrent: the add fails at once, and a
+// torrent qBittorrent carries out anyway under the tag is removed, not monitored.
+func TestDownloadTorrent_CancelledAddDiscardsALateArrival(t *testing.T) {
 	tempSavePath(t)
 	qb := &fakeQbittorrent{addStatus: 500, info: func(int) []map[string]any {
 		return []map[string]any{{"hash": "late", "name": "x", "state": "downloading"}}
@@ -103,9 +103,14 @@ func TestDownloadTorrent_CancelledAddIsNotRecovered(t *testing.T) {
 	_, _, err := q.downloadTorrent(ctx, &prowlarr.Search{Title: "x", DownloadURL: "http://indexer/x.torrent"}, false)
 
 	require.Error(t, err)
-	// The client's own retries on the cancelled request take a few seconds;
-	// what matters is that no recovery lookup follows them.
-	assert.Equal(t, 0, qb.polls, "qBittorrent is not asked for the tagged torrent")
+	assert.Eventually(t, func() bool {
+		for _, h := range qb.deletedHashes() {
+			if h == "late" {
+				return true
+			}
+		}
+		return false
+	}, 3*time.Second, 20*time.Millisecond, "the late torrent is deleted with its files")
 }
 
 func TestAddFailureCode(t *testing.T) {

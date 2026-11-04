@@ -77,7 +77,8 @@ func (h *ControlHandler) ListReleases(c *gin.Context) {
 // ManualDownload downloads the release the user chose. The result is the same
 // per-item shape the automatic path returns.
 func (h *ControlHandler) ManualDownload(c *gin.Context) {
-	ctx := c.Request.Context()
+	// Like the automatic path: the add must not die with the caller's connection.
+	ctx := workContext(c)
 	var req controls.ManualDownloadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "item_id is required"})
