@@ -27,26 +27,6 @@ const asyncReconcileBatch = 200
 // a time, so the last of ninety can wait hours for its turn.
 const staleSearchAge = 24 * time.Hour
 
-// downloading reports whether a torrenter response accepted at least one item
-// into a download, which is the moment a row must exist to retry from.
-func downloading(resp dlstatus.DownloadResponse) bool {
-	for _, r := range resp.Results {
-		if r.Outcome == dlstatus.OutcomeDownloading {
-			return true
-		}
-	}
-	return false
-}
-
-// recordDispatched keeps a completed row for a download the torrenter just
-// started from a direct request. Without it a loss reported later (monitor
-// timeout, dead swarm, torrent removed) has nothing to retry from.
-func (i *DownloadInteractor) recordDispatched(ctx context.Context, media tvdb.Media, traceID, spanID string) {
-	if err := i.repo.RecordDispatched(ctx, media, traceID, spanID); err != nil {
-		i.logger.ErrorContext(ctx, "Failed to record dispatched item", "error", err, "media", media.Name)
-	}
-}
-
 func (i *DownloadInteractor) runAsyncFailureReconciler(ctx context.Context) {
 	// Let the services settle after a boot before the first pass.
 	select {

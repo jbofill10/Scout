@@ -112,14 +112,15 @@ func (i *DownloadInteractor) WatchForDueMedia() {
 	go i.runAsyncFailureReconciler(context.Background())
 }
 
-// processDueItem dispatches a single scheduled download and transitions its row
-// to a terminal status (completed/failed) or reschedules it for retry.
-func (i *DownloadInteractor) processDueItem(item repository.DueItem) {
+// processDueItem dispatches a single row and transitions it to a terminal
+// status (completed/failed), reschedules it for retry, or defers it when the
+// torrenter could not be reached. The scheduler calls it with a background
+// context (the scheduled_trace_id column correlates back to the request that
+// scheduled the row); a direct request passes its own, detached from
+// cancellation, so the dispatch stays in the request's trace.
+func (i *DownloadInteractor) processDueItem(ctx context.Context, item repository.DueItem) {
 	media := item.Media
-	// Create a new trace for this scheduled download execution.
-	// Note: this is a new trace, not tied to the original scheduling request;
-	// the scheduled_trace_id column can correlate back.
-	ctx, span := tracer.Start(context.Background(), "scheduled_download",
+	ctx, span := tracer.Start(ctx, "scheduled_download",
 		trace.WithAttributes(
 			attribute.String("media.name", media.Name),
 			attribute.String("media.id", media.Id),
@@ -129,15 +130,14 @@ func (i *DownloadInteractor) processDueItem(item repository.DueItem) {
 	defer span.End()
 
 	i.logger.InfoContext(ctx, "Processing due media", "media", media.Name, "attempts", item.Attempts)
-	// An episode dispatched on its air date is wanted now whoever set it up;
-	// retries keep the priority of the request they came from.
-	if item.Attempts == 0 && media.Source != "" && media.Source != "manual" {
-		media.Source = "scheduled"
-	}
 
 	traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
 
 	resp, err := i.torrenterClient.Download(ctx, media)
+	if torrenterDown(err) {
+		i.deferRows(ctx, []repository.DueItem{item}, err)
+		return
+	}
 	if err != nil {
 		i.logger.ErrorContext(ctx, "Download dispatch error", "error", err, "media", media.Name)
 	}
@@ -308,7 +308,7 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) (
 		"category", req.Category,
 		"anime", isAnime,
 		"episode_count", len(req.Metadata.Episodes))
-	mediaToDownload := []tvdb.Episode{}
+	toDispatch := []repository.DueItem{}
 
 	ids := make([]string, 0, len(req.Metadata.Episodes))
 	for _, episode := range req.Metadata.Episodes {
@@ -365,8 +365,37 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) (
 
 		// Has the episode aired yet?
 		if today.After(episodeAired) {
+			// The request is written down before the torrenter is asked, so a
+			// restart mid-dispatch finds the row and sends it again.
+			rowMedia := i.buildScheduledMedia(req, extendedInfo, isAnime, episode)
+			rowMedia.Source = req.Source
+			item, started, err := i.repo.EnqueueNow(episodeCtx, rowMedia, traceID, spanID)
+			if err != nil {
+				summary.Skipped++
+				episodeSpan.SetAttributes(attribute.String("error", err.Error()))
+				i.logger.ErrorContext(episodeCtx, "Failed to record episode request", "error", err)
+				if histErr := i.repo.InsertDownloadHistory(req.Name, episode.SeasonNumber, episode.Number,
+					episode.AbsoluteNumber, status.Failure, "[Scheduling Error]: "+err.Error(), traceID, spanID); histErr != nil {
+					i.logger.ErrorContext(episodeCtx, "Failed to insert download history", "error", histErr)
+				}
+				episodeSpan.End()
+				continue
+			}
+			if !started {
+				// A dispatch already holds the row: the episode is on its way.
+				i.logger.InfoContext(episodeCtx, "Episode already being dispatched, skipping",
+					"season", episode.SeasonNumber, "episode", episode.Number)
+				episodeSpan.SetAttributes(attribute.String("episode.status", "in_progress"))
+				summary.InProgress++
+				episodeSpan.End()
+				continue
+			}
+			if i.scheduler != nil {
+				// A pending retry row taken over may have had a timer armed.
+				i.scheduler.CancelTimer(item.ID)
+			}
 			episodeSpan.SetAttributes(attribute.String("episode.status", "downloading"))
-			mediaToDownload = append(mediaToDownload, episode)
+			toDispatch = append(toDispatch, item)
 			err = i.repo.InsertDownloadHistory(req.Name, episode.SeasonNumber, episode.Number, episode.AbsoluteNumber,
 				status.Searching, "", traceID, spanID)
 			if err != nil {
@@ -455,91 +484,26 @@ func (i *DownloadInteractor) DownloadShow(ctx context.Context, req tvdb.Media) (
 	i.logger.InfoContext(ctx, "Episode processing complete",
 		"media_name", req.Name,
 		"total_episodes", len(req.Metadata.Episodes),
-		"aired_episodes", len(mediaToDownload),
-		"scheduled_or_skipped", len(req.Metadata.Episodes)-len(mediaToDownload))
+		"aired_episodes", len(toDispatch),
+		"scheduled_or_skipped", len(req.Metadata.Episodes)-len(toDispatch))
 
-	// Only send download request if there are aired episodes
-	if len(mediaToDownload) > 0 {
-		downloadPayload := tvdb.Media{
-			Id:       req.Id,
-			Name:     req.Name,
-			Category: req.Category,
-			Anime:    isAnime,
-			Slug:     req.Slug,
-			Year:     req.Year,
-			Metadata: req.Metadata,
-			Aliases:  i.extractAliases(extendedInfo.Data.Aliases),
-			ImdbID:   extendedInfo.Data.ImdbID(),
-		}
-		downloadPayload.Metadata.Episodes = mediaToDownload
-		summary.QueuedNow = len(mediaToDownload)
-
-		// The torrenter hand-off searches indexers and can take minutes, so it
-		// runs detached from the request. Every queued episode already has a
-		// "searching" notification, which is how progress and failures surface.
+	// The torrenter hand-off searches indexers and can take minutes, so it runs
+	// detached from the request, down the same path a due scheduled row takes:
+	// pack-first when packs are on, then one episode per call, each row settled
+	// on its own answer. Every queued episode already has a "searching"
+	// notification and a queued row, so progress and failures surface through
+	// the notification and a restart before an answer re-arms the row.
+	if len(toDispatch) > 0 {
+		summary.QueuedNow = len(toDispatch)
 		bgCtx := context.WithoutCancel(ctx)
 		i.dispatch(func() {
-			i.dispatchShowDownload(bgCtx, downloadPayload, extendedInfo, isAnime)
+			i.processDueGroup(bgCtx, toDispatch)
 		})
 	} else {
 		i.logger.InfoContext(ctx, "No aired episodes to download immediately")
 	}
 
 	return summary, nil
-}
-
-// dispatchShowDownload sends aired episodes to the torrenter one at a time and
-// reconciles each outcome as it comes back: transient failures get a retry row,
-// permanent ones a failed notification and history entry. It runs on a
-// detached context, so errors are logged rather than returned.
-//
-// One episode per call, because the torrenter searches a request's episodes
-// sequentially and each search can take minutes. Sending a whole season in one
-// request outran the client's deadline, which cancelled the torrenter mid-run
-// and reported every episode unreachable, including the ones it had already
-// added to qBittorrent. Reconciling per episode also means a restart part-way
-// through loses at most the episode in flight, not the retry rows for the ones
-// already answered.
-func (i *DownloadInteractor) dispatchShowDownload(
-	ctx context.Context,
-	payload tvdb.Media,
-	extendedInfo tvdb.TVDBSeriesExtendedResponse,
-	isAnime bool,
-) {
-	ctx, span := tracer.Start(ctx, "dispatch_show_download",
-		trace.WithAttributes(
-			attribute.String("media.name", payload.Name),
-			attribute.Int("episode.count", len(payload.Metadata.Episodes)),
-		),
-	)
-	defer span.End()
-
-	traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
-	unhandled := 0
-	episodes := i.dispatchPacksFirst(ctx, payload, extendedInfo, isAnime, traceID, spanID)
-	for _, ep := range episodes {
-		single := payload
-		single.Metadata.Episodes = []tvdb.Episode{ep}
-
-		resp, dlErr := i.torrenterClient.Download(ctx, single)
-		if dlErr != nil {
-			i.logger.ErrorContext(ctx, "Failed to download episode", "error", dlErr,
-				"media", payload.Name, "season", ep.SeasonNumber, "episode", ep.Number)
-		}
-		if downloading(resp) {
-			i.recordDispatched(ctx, i.buildScheduledMedia(payload, extendedInfo, isAnime, ep), traceID, spanID)
-		}
-
-		allScheduled, scheduleErr := i.handleImmediateShowFailures(ctx, single, extendedInfo, isAnime, resp, traceID, spanID)
-		if !allScheduled || scheduleErr != nil {
-			unhandled++
-			i.logger.ErrorContext(ctx, "Episode download failure could not be scheduled for retry",
-				"error", scheduleErr, "media", payload.Name, "season", ep.SeasonNumber, "episode", ep.Number)
-		}
-	}
-
-	i.logger.InfoContext(ctx, "Sent aired episodes to torrenter",
-		"count", len(payload.Metadata.Episodes), "unhandled_failures", unhandled)
 }
 
 // DownloadMovie handles the download request for a movie. Like DownloadShow it
@@ -577,9 +541,7 @@ func (i *DownloadInteractor) DownloadMovie(ctx context.Context, req tvdb.Media) 
 		// If parse fails or date is invalid, treat as already released
 		i.logger.WarnContext(ctx, "Failed to parse movie release date, treating as released",
 			"error", err, "first_aired", req.Metadata.FirstAired)
-		i.queueMovieNow(ctx, req)
-		summary.QueuedNow = 1
-		return summary, nil
+		return i.queueMovieNow(ctx, req, summary)
 	}
 
 	// Check if release date is in the future
@@ -621,9 +583,7 @@ func (i *DownloadInteractor) DownloadMovie(ctx context.Context, req tvdb.Media) 
 	}
 
 	// Movie has already been released - download immediately
-	i.queueMovieNow(ctx, req)
-	summary.QueuedNow = 1
-	return summary, nil
+	return i.queueMovieNow(ctx, req, summary)
 }
 
 // inProgressItems reports which of the item keys already have a live
@@ -640,10 +600,28 @@ func (i *DownloadInteractor) inProgressItems(ctx context.Context, ids []string) 
 	return active
 }
 
-// queueMovieNow creates the "searching" notification for a released movie and
-// hands the download off to the torrenter in the background.
-func (i *DownloadInteractor) queueMovieNow(ctx context.Context, req tvdb.Media) {
+// queueMovieNow records the released movie as a queued row, creates its
+// "searching" notification and hands the download to the torrenter in the
+// background, down the path a due scheduled row takes. The row exists before
+// the torrenter is asked, so a restart mid-search re-arms it. A row already
+// queued belongs to a dispatch under way, which the summary reports as in
+// progress.
+func (i *DownloadInteractor) queueMovieNow(ctx context.Context, req tvdb.Media, summary DownloadSummary) (DownloadSummary, error) {
 	traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
+
+	item, started, err := i.repo.EnqueueNow(ctx, req, traceID, spanID)
+	if err != nil {
+		i.logger.ErrorContext(ctx, "Failed to record movie request", "error", err, "movie", req.Name)
+		return summary, err
+	}
+	if !started {
+		i.logger.InfoContext(ctx, "Movie already being dispatched, skipping", "movie", req.Name)
+		summary.InProgress = 1
+		return summary, nil
+	}
+	if i.scheduler != nil {
+		i.scheduler.CancelTimer(item.ID)
+	}
 
 	notification, err := notifications.NewFromMovie(req, traceID, spanID)
 	if err != nil {
@@ -657,35 +635,12 @@ func (i *DownloadInteractor) queueMovieNow(ctx context.Context, req tvdb.Media) 
 		}
 	}
 
+	summary.QueuedNow = 1
 	bgCtx := context.WithoutCancel(ctx)
 	i.dispatch(func() {
-		i.dispatchMovieDownload(bgCtx, req)
+		i.processDueItem(bgCtx, item)
 	})
-}
-
-// dispatchMovieDownload sends a movie to the torrenter and reconciles the
-// outcome. It runs on a detached context, so errors are logged, not returned.
-func (i *DownloadInteractor) dispatchMovieDownload(ctx context.Context, req tvdb.Media) {
-	ctx, span := tracer.Start(ctx, "dispatch_movie_download",
-		trace.WithAttributes(attribute.String("media.name", req.Name)),
-	)
-	defer span.End()
-
-	resp, dlErr := i.torrenterClient.Download(ctx, req)
-	if dlErr != nil {
-		i.logger.ErrorContext(ctx, "Failed to download movie", "error", dlErr)
-	}
-	i.logger.InfoContext(ctx, "Sent movie to torrenter", "movie", req.Name)
-
-	traceID, spanID := telemetry.GetTraceSpanIDs(ctx)
-	if downloading(resp) {
-		i.recordDispatched(ctx, req, traceID, spanID)
-	}
-	scheduled, scheduleErr := i.handleImmediateMovieFailure(ctx, req, resp, traceID, spanID)
-	if !scheduled || scheduleErr != nil {
-		i.logger.ErrorContext(ctx, "Movie download failure could not be scheduled for retry",
-			"error", scheduleErr, "movie", req.Name)
-	}
+	return summary, nil
 }
 
 // packSettingsReader is what the torrenter client offers beyond dispatching:
@@ -739,125 +694,9 @@ func (i *DownloadInteractor) packFirstRequest(
 	return resp, rest, true
 }
 
-// dispatchPacksFirst hands the whole episode set to the torrenter as a
-// pack-only request when season packs are on and the request has enough
-// episodes for one, records the episodes a pack covered, settles any other
-// failure, and returns the episodes still to be sent one at a time. With
-// packs off, or when the torrenter cannot be asked, every episode is returned.
-func (i *DownloadInteractor) dispatchPacksFirst(
-	ctx context.Context,
-	payload tvdb.Media,
-	extendedInfo tvdb.TVDBSeriesExtendedResponse,
-	isAnime bool,
-	traceID, spanID string,
-) []tvdb.Episode {
-	resp, rest, attempted := i.packFirstRequest(ctx, payload)
-	if !attempted {
-		return rest
-	}
-	episodes := payload.Metadata.Episodes
-	packReq := payload
-	packReq.PackOnly = true
-
-	episodeByID := make(map[string]tvdb.Episode, len(episodes))
-	for _, ep := range episodes {
-		episodeByID[strconv.Itoa(ep.Id)] = ep
-	}
-	others := dlstatus.DownloadResponse{}
-	packed := 0
-	for _, r := range resp.Results {
-		switch {
-		case r.Outcome == dlstatus.OutcomeDownloading:
-			packed++
-			if ep, ok := episodeByID[r.TvdbID]; ok {
-				i.recordDispatched(ctx, i.buildScheduledMedia(payload, extendedInfo, isAnime, ep), traceID, spanID)
-			}
-		case r.Outcome == dlstatus.OutcomeExists:
-		case r.Code == dlstatus.CodeNoPack:
-		default:
-			others.Results = append(others.Results, r)
-		}
-	}
-	if len(others.Results) > 0 {
-		if allScheduled, scheduleErr := i.handleImmediateShowFailures(ctx, packReq, extendedInfo, isAnime, others,
-			traceID, spanID); !allScheduled || scheduleErr != nil {
-			i.logger.ErrorContext(ctx, "Pack request failure could not be scheduled for retry", "error", scheduleErr,
-				"media", payload.Name)
-		}
-	}
-
-	i.logger.InfoContext(ctx, "Pack-first dispatch", "media", payload.Name, "episodes", len(episodes),
-		"packed", packed, "per_episode", len(rest))
-	return rest
-}
-
-// handleImmediateShowFailures inspects an immediate show download response and,
-// for each failed episode, schedules a retry (transient) or surfaces a failed
-// notification + history row (permanent). It returns whether every failure was
-// handled such that no work was lost (transient failures scheduled; permanent
-// failures are terminal and count as handled), and the first scheduling error.
-func (i *DownloadInteractor) handleImmediateShowFailures(
-	ctx context.Context,
-	payload tvdb.Media,
-	extendedInfo tvdb.TVDBSeriesExtendedResponse,
-	isAnime bool,
-	resp dlstatus.DownloadResponse,
-	traceID, spanID string,
-) (bool, error) {
-	// Index episodes by their tvdb id (string) for per-result lookup.
-	episodeByID := make(map[string]tvdb.Episode, len(payload.Metadata.Episodes))
-	for _, ep := range payload.Metadata.Episodes {
-		episodeByID[strconv.Itoa(ep.Id)] = ep
-	}
-
-	allHandled := true
-	var firstScheduleErr error
-
-	for _, r := range resp.Results {
-		if r.Outcome != dlstatus.OutcomeFailed {
-			continue
-		}
-		reason := r.Reason
-		if reason == "" {
-			reason = r.Code.HumanReason()
-		}
-
-		if r.Code == dlstatus.CodeCancelled {
-			// Cancelled by the user mid-search: nothing to retry or surface.
-			continue
-		}
-
-		if r.Code.Category() == dlstatus.CategoryPermanent {
-			i.surfacePermanentFailure(ctx, payload.Name, r, string(r.Code), reason, traceID, spanID)
-			continue
-		}
-
-		// Transient → schedule a retry row for this single episode.
-		ep, ok := episodeByID[r.TvdbID]
-		if !ok {
-			i.logger.WarnContext(ctx, "Failed result has no matching episode", "tvdb_id", r.TvdbID)
-			allHandled = false
-			continue
-		}
-		retryMedia := i.buildScheduledMedia(payload, extendedInfo, isAnime, ep)
-		if err := i.repo.ScheduleRetry(ctx, retryMedia, retry.FirstAttempt(time.Now()),
-			string(r.Code), reason, traceID, spanID); err != nil {
-			i.logger.ErrorContext(ctx, "Failed to schedule retry for episode", "error", err, "tvdb_id", r.TvdbID)
-			allHandled = false
-			if firstScheduleErr == nil {
-				firstScheduleErr = err
-			}
-			continue
-		}
-		i.updateNotificationStatus(ctx, r.TvdbID, notifications.StatusSearching, r.Code.HumanReason()+" — retry scheduled")
-	}
-
-	return allHandled, firstScheduleErr
-}
-
-// buildScheduledMedia constructs a single-episode media payload identical to the
-// one DownloadShow uses for future scheduling, so ComputeContentHash matches the
-// row a future poll would create (enabling retry dedup).
+// buildScheduledMedia constructs the single-episode media payload a row holds
+// for the episode, the same for a request dispatched now and one scheduled for
+// its air date, so ComputeContentHash finds the one row for the episode.
 func (i *DownloadInteractor) buildScheduledMedia(req tvdb.Media, extendedInfo tvdb.TVDBSeriesExtendedResponse, isAnime bool, episode tvdb.Episode) tvdb.Media {
 	scheduledMedia := tvdb.Media{
 		Id:           req.Id,
@@ -876,44 +715,6 @@ func (i *DownloadInteractor) buildScheduledMedia(req tvdb.Media, extendedInfo tv
 	}
 	scheduledMedia.Metadata.Episodes = []tvdb.Episode{episode}
 	return scheduledMedia
-}
-
-// handleImmediateMovieFailure inspects an immediate movie download response and
-// schedules a retry (transient) or surfaces a failed notification + history row
-// (permanent). The whole req is the media for retry scheduling. Returns whether
-// any failure was handled without losing work, and the first scheduling error.
-func (i *DownloadInteractor) handleImmediateMovieFailure(
-	ctx context.Context,
-	req tvdb.Media,
-	resp dlstatus.DownloadResponse,
-	traceID, spanID string,
-) (bool, error) {
-	failed := failedResult(resp.Results)
-	if failed == nil {
-		return true, nil
-	}
-	reason := failed.Reason
-	if reason == "" {
-		reason = failed.Code.HumanReason()
-	}
-
-	if failed.Code == dlstatus.CodeCancelled {
-		// Cancelled by the user mid-search: nothing to retry or surface.
-		return true, nil
-	}
-
-	if failed.Code.Category() == dlstatus.CategoryPermanent {
-		i.surfacePermanentFailure(ctx, req.Name, *failed, string(failed.Code), reason, traceID, spanID)
-		return true, nil
-	}
-
-	if err := i.repo.ScheduleRetry(ctx, req, retry.FirstAttempt(time.Now()),
-		string(failed.Code), reason, traceID, spanID); err != nil {
-		i.logger.ErrorContext(ctx, "Failed to schedule movie retry", "error", err, "movie", req.Name)
-		return false, err
-	}
-	i.updateNotificationStatus(ctx, failed.TvdbID, notifications.StatusSearching, failed.Code.HumanReason()+" — retry scheduled")
-	return true, nil
 }
 
 func (i *DownloadInteractor) getExtendedInformation(

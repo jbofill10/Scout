@@ -86,9 +86,14 @@ type SchedulerRepository interface {
 	CancelRow(ctx context.Context, id int) error
 	RearmRow(ctx context.Context, id int, resetAttempts bool) error
 	GetUpcoming(ctx context.Context) ([]UpcomingItem, error)
-	// Async failures (see RecordDispatched / RearmCompletedRow): a completed
-	// row keeps the payload of a download the torrenter may still lose.
-	RecordDispatched(ctx context.Context, media tvdb.Media, traceID, spanID string) error
+	// Requests sent straight to the torrenter (see scheduler_requests.go): a
+	// queued row exists before the torrenter is asked, so a restart mid-dispatch
+	// has something to send again.
+	EnqueueNow(ctx context.Context, media tvdb.Media, traceID, spanID string) (DueItem, bool, error)
+	TouchQueued(ctx context.Context, ids []int) error
+	DeferRow(ctx context.Context, id int, code, reason string, next time.Time) error
+	// Async failures (see RearmCompletedRow): a completed row keeps the payload
+	// of a download the torrenter may still lose.
 	RearmCompletedRow(ctx context.Context, id int, code, reason string, nextAttempt time.Time) error
 	FailCompletedRow(ctx context.Context, id int, code, reason string) error
 	// TrackedItemKeys is the item key of every row in any status, so a follow

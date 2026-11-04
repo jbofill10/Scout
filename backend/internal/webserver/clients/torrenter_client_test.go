@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -94,6 +95,9 @@ func (s *TorrenterClientTestSuite) TestDownload_Non200Status() {
 
 	s.Error(err)
 	s.Contains(err.Error(), "torrenter returned status 500")
+	var statusErr *StatusError
+	s.True(errors.As(err, &statusErr), "an error status is typed so callers can tell it from an outage")
+	s.Equal(500, statusErr.StatusCode)
 	// Synthesized response: every episode failed as torrenter-unreachable (transient).
 	s.Len(resp.Results, 2)
 	for _, r := range resp.Results {

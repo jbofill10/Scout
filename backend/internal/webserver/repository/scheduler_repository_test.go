@@ -526,18 +526,6 @@ func (s *SchedulerRepoTestSuite) TestFailCompletedRow() {
 	s.NoError(s.mock.ExpectationsWereMet())
 }
 
-// A dispatched item is kept as a completed row keyed by the same content hash
-// a scheduled row would use, so an existing row for the item is left alone.
-func (s *SchedulerRepoTestSuite) TestRecordDispatched_InsertsCompletedRow() {
-	media := tvdb.Media{Id: "154561", Name: "X", Category: "movie", Year: "2022"}
-	s.mock.ExpectExec(`INSERT INTO ScheduledDownloads`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), StatusCompleted, ComputeContentHash(media, mediaReleaseTime(media)), "trace", "span").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	s.NoError(s.repo.RecordDispatched(context.Background(), media, "trace", "span"))
-	s.NoError(s.mock.ExpectationsWereMet())
-}
-
 func (s *SchedulerRepoTestSuite) TestClaimDueSiblings_QueuesAndReturnsSameShowRows() {
 	media := tvdb.Media{Id: "79349", Name: "Dexter", Category: "series"}
 	media.Metadata.Episodes = []tvdb.Episode{{Id: 308834, SeasonNumber: 1, Number: 2}}
@@ -574,5 +562,65 @@ func (s *SchedulerRepoTestSuite) TestClaimDueSiblings_NoneDue() {
 
 	s.NoError(err)
 	s.Empty(got)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+// A request dispatched now is written as a queued row keyed like the row a
+// scheduled poll would create for the episode, due now with a fresh ladder.
+func (s *SchedulerRepoTestSuite) TestEnqueueNow_WritesQueuedRow() {
+	media := tvdb.Media{Id: "555", Name: "Test Show", Category: "series", Source: "manual"}
+	media.Metadata.Episodes = []tvdb.Episode{{Id: 7, SeasonNumber: 1, Number: 2, Aired: "2007-10-08"}}
+	rel := time.Date(2007, 10, 8, 0, 0, 0, 0, time.UTC)
+	s.mock.ExpectQuery(`INSERT INTO ScheduledDownloads[\s\S]*VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, 0, now\(\), now\(\)\)`+
+		`[\s\S]*ON CONFLICT \(content_hash\) DO UPDATE SET[\s\S]*attempts = 0, next_attempt_at = now\(\), queued_at = now\(\)`+
+		`[\s\S]*WHERE ScheduledDownloads.schedule_status <> EXCLUDED.schedule_status[\s\S]*RETURNING id, release_time`).
+		WithArgs(sqlmock.AnyArg(), rel.Format(time.RFC3339), StatusQueued, ComputeContentHash(media, rel), "trace", "span").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "release_time"}).AddRow(9, rel))
+
+	item, started, err := s.repo.EnqueueNow(context.Background(), media, "trace", "span")
+
+	s.Require().NoError(err)
+	s.True(started)
+	s.Equal(9, item.ID)
+	s.Equal("555", item.Media.Id)
+	s.Equal("manual", item.Media.Source)
+	s.Equal(0, item.Attempts)
+	s.Equal(rel, item.ReleaseTime)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+// A row already queued belongs to a dispatch under way: it is not taken over,
+// and the caller learns nothing new was started.
+func (s *SchedulerRepoTestSuite) TestEnqueueNow_LeavesAQueuedRowAlone() {
+	media := tvdb.Media{Id: "77", Name: "M", Category: "movie"}
+	media.Metadata.FirstAired = "2022-03-04"
+	s.mock.ExpectQuery(`INSERT INTO ScheduledDownloads`).WillReturnError(sql.ErrNoRows)
+
+	_, started, err := s.repo.EnqueueNow(context.Background(), media, "", "")
+
+	s.NoError(err)
+	s.False(started)
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+func (s *SchedulerRepoTestSuite) TestTouchQueued() {
+	s.mock.ExpectExec(`UPDATE ScheduledDownloads SET queued_at = now\(\) WHERE schedule_status = \$1 AND id = ANY\(\$2\)`).
+		WithArgs(StatusQueued, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+
+	s.NoError(s.repo.TouchQueued(context.Background(), []int{2, 3}))
+	s.NoError(s.repo.TouchQueued(context.Background(), nil), "nothing to touch, no query")
+	s.NoError(s.mock.ExpectationsWereMet())
+}
+
+// Deferring a row keeps its attempt count: the torrenter was never reached.
+func (s *SchedulerRepoTestSuite) TestDeferRow_CountsNoAttempt() {
+	next := time.Now().Add(2 * time.Minute)
+	s.mock.ExpectExec(`UPDATE ScheduledDownloads\s+SET schedule_status = \$1, next_attempt_at = \$2, `+
+		`last_failure_code = \$3, last_failure_reason = \$4\s+WHERE id = \$5 AND schedule_status = \$6`).
+		WithArgs(StatusPending, next.Format(time.RFC3339), "torrenter_unreachable", "down", 7, StatusQueued).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	s.NoError(s.repo.DeferRow(context.Background(), 7, "torrenter_unreachable", "down", next))
 	s.NoError(s.mock.ExpectationsWereMet())
 }

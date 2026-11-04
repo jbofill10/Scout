@@ -154,21 +154,6 @@ func TestReconcileAsyncFailures_LeavesOthersAlone(t *testing.T) {
 	}
 }
 
-// Every accepted direct request leaves a completed row behind, so a loss
-// reported later has something to retry from.
-func TestDispatchMovieDownload_RecordsDispatchedRow(t *testing.T) {
-	repo := &fakeSchedulerRepo{}
-	notifs := repoMocks.NewNotificationRepository(t)
-	disp := &fakeDispatcher{resp: dlstatus.DownloadResponse{Results: []dlstatus.EpisodeResult{{TvdbID: "154561", Outcome: dlstatus.OutcomeDownloading}}}}
-	i := &DownloadInteractor{repo: repo, notificationRepo: notifs, logger: testLogger(), torrenterClient: disp, dispatch: func(f func()) { f() }}
-
-	i.dispatchMovieDownload(context.Background(), tvdb.Media{Id: "154561", Name: "X", Category: "movie"})
-
-	require.Len(t, repo.dispatched, 1)
-	assert.Equal(t, "154561", repo.dispatched[0].Id)
-	assert.Equal(t, 0, repo.retryCount, "a download that started is not a failure")
-}
-
 // A notification that has read "searching" for days with no row due to fire
 // for it was lost in a restart: it is failed with a transient code and a
 // reason that says to request it again.

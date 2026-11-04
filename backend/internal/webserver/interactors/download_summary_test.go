@@ -79,10 +79,14 @@ func TestDownloadShow_SummaryCountsEachEpisode(t *testing.T) {
 	require.NotNil(t, summary.NextRelease)
 	assert.True(t, summary.NextRelease.After(time.Now()), "next release should be the future episode")
 
-	// Only the aired episode is handed to the torrenter.
+	// Only the aired episode is handed to the torrenter, and its row was
+	// written first and completed on the answer.
 	assert.Equal(t, 1, dispatcher.callCount())
 	assert.Len(t, dispatcher.payload().Metadata.Episodes, 1)
 	assert.Equal(t, 1, dispatcher.payload().Metadata.Episodes[0].Id)
+	require.Len(t, repo.enqueued, 1)
+	assert.Equal(t, 1, repo.enqueued[0].Metadata.Episodes[0].Id)
+	assert.Equal(t, []int{101}, repo.completedIDs)
 }
 
 // A season's episodes go to the torrenter one per call. The torrenter searches
@@ -121,11 +125,12 @@ func TestDownloadShow_DispatchesOneEpisodePerTorrenterCall(t *testing.T) {
 		assert.Equal(t, "555", p.Id)
 		assert.Equal(t, "Test Show", p.Name)
 	}
-	assert.Equal(t, 0, repo.retryCount, "nothing failed, so nothing is scheduled for retry")
+	assert.Empty(t, repo.recordedIDs, "nothing failed, so no row is put on the retry ladder")
+	assert.Equal(t, []int{101, 102, 103}, repo.completedIDs, "each episode's row is completed on its own answer")
 }
 
-// Each call's outcome is reconciled on its own: one failed episode gets one
-// retry row, and the others are left alone.
+// Each call's outcome is reconciled on its own: the failed episode's row goes
+// on the retry ladder, and the others are completed.
 func TestDownloadShow_RetriesOnlyTheEpisodeThatFailed(t *testing.T) {
 	repo := &fakeSchedulerRepo{}
 	notifRepo := repoMocks.NewNotificationRepository(t)
@@ -157,9 +162,109 @@ func TestDownloadShow_RetriesOnlyTheEpisodeThatFailed(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 3, dispatcher.callCount())
-	require.Equal(t, 1, repo.retryCount)
-	require.Len(t, repo.retryMedia[0].Metadata.Episodes, 1)
-	assert.Equal(t, 2, repo.retryMedia[0].Metadata.Episodes[0].Id)
+	assert.Equal(t, []int{102}, repo.recordedIDs, "only episode 2's row is rescheduled")
+	assert.Equal(t, string(dlstatus.CodeNoTorrentFound), repo.recordedCode)
+	assert.Equal(t, []int{101, 103}, repo.completedIDs)
+}
+
+// The rows are written before the torrenter is asked: a restart while the
+// search runs finds them queued and sends them again, instead of leaving the
+// notifications on "searching" with nothing to recover from.
+func TestDownloadShow_RowsExistBeforeTheTorrenterIsAsked(t *testing.T) {
+	repo := &fakeSchedulerRepo{}
+	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(map[string]bool{}, nil)
+	notifRepo.On("CreateNotification", mock.Anything, mock.Anything).Return(nil)
+
+	release := make(chan struct{})
+	started := make(chan struct{})
+	dispatcher := &fakeDispatcher{blockOn: release, started: started}
+	defer close(release)
+
+	i := newSummaryInteractor(t, repo, notifRepo, dispatcher)
+	i.dispatch = func(fn func()) { go fn() }
+
+	req := tvdb.Media{Id: "555", Name: "Test Show", Category: "series", Source: "manual"}
+	req.Metadata.Episodes = []tvdb.Episode{
+		{Id: 1, SeasonNumber: 1, Number: 1, Aired: aired(-30)},
+		{Id: 2, SeasonNumber: 1, Number: 2, Aired: aired(-23)},
+	}
+
+	summary, err := i.DownloadShow(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, 2, summary.QueuedNow)
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background dispatch never reached the torrenter")
+	}
+	// The torrenter is still working on the first episode; both rows are down already.
+	rows := repo.enqueuedRows()
+	require.Len(t, rows, 2)
+	for _, m := range rows {
+		assert.Equal(t, "555", m.Id)
+		assert.Equal(t, "manual", m.Source, "the row keeps the request's priority")
+		assert.Len(t, m.Metadata.Episodes, 1)
+	}
+}
+
+// An episode whose row is already queued is being dispatched by someone else
+// (a scheduled row that just fired, say): it is reported in progress and not
+// searched for twice.
+func TestDownloadShow_AlreadyQueuedRowCountsAsInProgress(t *testing.T) {
+	repo := &fakeSchedulerRepo{alreadyRun: map[string]bool{"2": true}}
+	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(map[string]bool{}, nil)
+	notifRepo.On("CreateNotification", mock.Anything, mock.MatchedBy(func(n *notifications.Notification) bool {
+		return n.TvdbID != "2"
+	})).Return(nil)
+	dispatcher := &fakeDispatcher{respFor: func(req tvdb.Media) dlstatus.DownloadResponse {
+		ep := req.Metadata.Episodes[0]
+		return dlstatus.DownloadResponse{Results: []dlstatus.EpisodeResult{
+			epResult(strconv.Itoa(ep.Id), dlstatus.OutcomeDownloading, ""),
+		}}
+	}}
+
+	i := newSummaryInteractor(t, repo, notifRepo, dispatcher)
+
+	req := tvdb.Media{Id: "555", Name: "Test Show", Category: "series"}
+	req.Metadata.Episodes = []tvdb.Episode{
+		{Id: 1, SeasonNumber: 1, Number: 1, Aired: aired(-30)},
+		{Id: 2, SeasonNumber: 1, Number: 2, Aired: aired(-23)},
+	}
+
+	summary, err := i.DownloadShow(context.Background(), req)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, summary.QueuedNow)
+	assert.Equal(t, 1, summary.InProgress)
+	require.Len(t, dispatcher.payloads(), 1)
+	assert.Equal(t, 1, dispatcher.payloads()[0].Metadata.Episodes[0].Id)
+}
+
+// When the request cannot be written down there is nothing a restart could
+// recover, so the episode is not started half-tracked: it is skipped and the
+// history says why.
+func TestDownloadShow_UnrecordableEpisodeIsSkipped(t *testing.T) {
+	repo := &fakeSchedulerRepo{enqueueErr: errors.New("db down")}
+	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(map[string]bool{}, nil)
+	dispatcher := &fakeDispatcher{}
+
+	i := newSummaryInteractor(t, repo, notifRepo, dispatcher)
+
+	req := tvdb.Media{Id: "555", Name: "Test Show", Category: "series"}
+	req.Metadata.Episodes = []tvdb.Episode{{Id: 1, SeasonNumber: 1, Number: 1, Aired: aired(-30)}}
+
+	summary, err := i.DownloadShow(context.Background(), req)
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, summary.QueuedNow)
+	assert.Equal(t, 1, summary.Skipped)
+	assert.Equal(t, 0, dispatcher.callCount())
+	assert.Equal(t, 1, repo.historyCount)
+	notifRepo.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
 }
 
 func TestDownloadShow_AlreadyScheduledCountsAsSkipped(t *testing.T) {
@@ -242,6 +347,50 @@ func TestDownloadMovie_ReleasedQueuesImmediately(t *testing.T) {
 	assert.Equal(t, 1, summary.QueuedNow)
 	assert.Equal(t, 0, summary.Scheduled)
 	assert.Equal(t, 1, dispatcher.callCount())
+	// The movie's row was written before the torrenter was asked and completed on its answer.
+	require.Len(t, repo.enqueued, 1)
+	assert.Equal(t, "777", repo.enqueued[0].Id)
+	assert.Equal(t, []int{101}, repo.completedIDs)
+}
+
+// A movie whose request cannot be written down is not started half-tracked:
+// the request fails so the caller knows, and nothing goes to the torrenter.
+func TestDownloadMovie_UnrecordableRequestFails(t *testing.T) {
+	repo := &fakeSchedulerRepo{enqueueErr: errors.New("db down")}
+	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(map[string]bool{}, nil)
+	dispatcher := &fakeDispatcher{}
+
+	i := newSummaryInteractor(t, repo, notifRepo, dispatcher)
+
+	req := tvdb.Media{Id: "777", Name: "Test Movie", Category: "movie"}
+	req.Metadata.FirstAired = aired(-400)
+
+	_, err := i.DownloadMovie(context.Background(), req)
+	require.Error(t, err)
+	assert.Equal(t, 0, dispatcher.callCount())
+	notifRepo.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
+}
+
+// A movie whose row is already queued is being dispatched already.
+func TestDownloadMovie_AlreadyQueuedRowCountsAsInProgress(t *testing.T) {
+	repo := &fakeSchedulerRepo{alreadyRun: map[string]bool{"777": true}}
+	notifRepo := repoMocks.NewNotificationRepository(t)
+	notifRepo.On("ActiveTvdbIDs", mock.Anything, mock.Anything).Return(map[string]bool{}, nil)
+	dispatcher := &fakeDispatcher{}
+
+	i := newSummaryInteractor(t, repo, notifRepo, dispatcher)
+
+	req := tvdb.Media{Id: "777", Name: "Test Movie", Category: "movie"}
+	req.Metadata.FirstAired = aired(-400)
+
+	summary, err := i.DownloadMovie(context.Background(), req)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, summary.InProgress)
+	assert.Equal(t, 0, summary.QueuedNow)
+	assert.Equal(t, 0, dispatcher.callCount())
+	notifRepo.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
 }
 
 func TestDownloadMovie_UnreleasedSchedules(t *testing.T) {

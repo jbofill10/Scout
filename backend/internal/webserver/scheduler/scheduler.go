@@ -90,6 +90,12 @@ func (s *Scheduler) Start(queue chan<- repository.DueItem) {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 
+		// Nothing in flight survives the process: a row still queued was being
+		// dispatched when the last one stopped. Every one of them goes back to
+		// pending so the first poll sends it again at once, however recently it
+		// was queued.
+		s.recoverInterrupted()
+
 		// Immediate poll on startup
 		s.pollAndSchedule(queue)
 
@@ -106,6 +112,21 @@ func (s *Scheduler) Start(queue chan<- repository.DueItem) {
 			}
 		}
 	}()
+}
+
+// recoverInterrupted returns every queued row to pending. It runs once, before
+// the first poll of a new process, when no dispatch can be under way.
+func (s *Scheduler) recoverInterrupted() {
+	ctx, span := s.tracer.Start(context.Background(), "scheduler.recover_interrupted")
+	defer span.End()
+	reset, err := s.repo.ResetStaleQueued(ctx, 0)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "Failed to re-arm downloads interrupted by the restart", "error", err)
+		return
+	}
+	if reset > 0 {
+		s.logger.InfoContext(ctx, "Re-armed downloads interrupted by the restart", "count", reset)
+	}
 }
 
 // pollAndSchedule queries the database for scheduled media and creates timers for future items

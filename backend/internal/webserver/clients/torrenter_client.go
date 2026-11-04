@@ -72,7 +72,7 @@ func (c *TorrenterClient) Download(ctx context.Context, req tvdb.Media) (dlstatu
 		}
 	}()
 	if resp.StatusCode != http.StatusOK {
-		return unreachableResponse(req), fmt.Errorf("torrenter returned status %d", resp.StatusCode)
+		return unreachableResponse(req), &StatusError{StatusCode: resp.StatusCode}
 	}
 
 	var response dlstatus.DownloadResponse
@@ -80,6 +80,17 @@ func (c *TorrenterClient) Download(ctx context.Context, req tvdb.Media) (dlstatu
 		return unreachableResponse(req), err
 	}
 	return response, nil
+}
+
+// StatusError is a torrenter answer with a status other than 200: the service
+// was reached and refused or failed the request. Callers tell it apart from a
+// transport error, which means the torrenter could not be reached at all.
+type StatusError struct {
+	StatusCode int
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("torrenter returned status %d", e.StatusCode)
 }
 
 // unreachableResponse builds a DownloadResponse marking every episode (or the
