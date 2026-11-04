@@ -129,8 +129,9 @@ func main() {
 
 	// Ratings ride along on every search hit, popular row and extended
 	// record: the IMDb rating from IMDb's public table (loaded before serving
-	// so the webserver's first rows carry it), plus the Tomatometer and
-	// Metascore from OMDb when a key is configured.
+	// so the webserver's first rows carry it), the Tomatometer and Metascore
+	// Wikidata records (no key), and a current Tomatometer and Metascore
+	// from OMDb when a key is configured.
 	ratingOpts := ratings.Options{Resolver: ratings.NewResolver(tvdbClient, logger)}
 	if cfg.IMDb.Enabled {
 		dataset := ratings.NewDataset(cfg.IMDb.URL, ratings.NewDatasetHTTPClient(), logger)
@@ -144,14 +145,20 @@ func main() {
 	} else {
 		logger.Info("RATINGS_IMDB=false; no IMDb ratings table")
 	}
+	if cfg.Wikidata.Enabled {
+		ratingOpts.Wikidata = ratings.NewWikidata(cfg.Wikidata.URL, ratings.NewWikidataHTTPClient(), logger)
+		logger.Info("Tomatometer and Metascore read from Wikidata")
+	} else {
+		logger.Info("RATINGS_WIKIDATA=false; no Wikidata scores")
+	}
 	if cfg.OMDb.APIKey != "" {
 		ratingOpts.Source = ratings.NewOMDb(cfg.OMDb.Host, cfg.OMDb.APIKey, ratings.NewOMDbHTTPClient(), logger)
-		logger.Info("Tomatometer and Metascore looked up on OMDb")
+		logger.Info("Current Tomatometer and Metascore looked up on OMDb")
 	} else {
-		logger.Info("OMDB_API_KEY not set; cards show the IMDb rating alone")
+		logger.Info("OMDB_API_KEY not set; Tomatometer comes from Wikidata alone")
 	}
 	var rater handlers.Rater
-	if ratingOpts.IMDb != nil || ratingOpts.Source != nil {
+	if ratingOpts.IMDb != nil || ratingOpts.Wikidata != nil || ratingOpts.Source != nil {
 		rater = ratings.NewService(ratingOpts, logger)
 	}
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sort"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -264,4 +266,100 @@ func TestConcurrentLookupsShareOneCall(t *testing.T) {
 		assert.Equal(t, imdbEight, got)
 	}
 	assert.Equal(t, 1, source.count("tt1"))
+}
+
+// stubScores is a ScoreSource answering from a table and recording each batch.
+type stubScores struct {
+	mu      sync.Mutex
+	answers map[string][]tvdb.Rating
+	err     error
+	batches [][]string
+}
+
+func (s *stubScores) Scores(_ context.Context, ids []string) (map[string][]tvdb.Rating, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.batches = append(s.batches, append([]string(nil), ids...))
+	if s.err != nil {
+		return nil, s.err
+	}
+	out := map[string][]tvdb.Rating{}
+	for _, id := range ids {
+		if ratings, ok := s.answers[id]; ok {
+			out[id] = ratings
+		}
+	}
+	return out, nil
+}
+
+func (s *stubScores) batchCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.batches)
+}
+
+func TestLookupManyMergesTableWikidataAndSource(t *testing.T) {
+	meta84 := tvdb.Rating{Source: tvdb.RatingSourceMetacritic, Value: 84}
+	wikidata := &stubScores{answers: map[string][]tvdb.Rating{
+		"tt1": {{Source: tvdb.RatingSourceRottenTomatoes, Value: 91}, meta84},
+		"tt2": {{Source: tvdb.RatingSourceRottenTomatoes, Value: 70}},
+	}}
+	source := newStubSource()
+	source.answers["tt1"] = []tvdb.Rating{{Source: tvdb.RatingSourceIMDb, Value: 7.9}, tomato97}
+	table := stubTable{"tt1": {Source: tvdb.RatingSourceIMDb, Value: 8, Votes: 500}}
+	s, _ := newTestService(Options{IMDb: table, Wikidata: wikidata, Source: source})
+
+	got := s.LookupMany(context.Background(), []string{"tt1", "tt2", "tt3", "tt1", ""})
+
+	assert.Equal(t, []tvdb.Rating{{Source: tvdb.RatingSourceIMDb, Value: 8, Votes: 500}, tomato97, meta84}, got["tt1"],
+		"table IMDb, the source's current Tomatometer over Wikidata's, Wikidata's Metascore")
+	assert.Equal(t, []tvdb.Rating{{Source: tvdb.RatingSourceRottenTomatoes, Value: 70}}, got["tt2"],
+		"Wikidata alone still gives a Tomatometer")
+	_, ok := got["tt3"]
+	assert.False(t, ok)
+	require.Equal(t, 1, wikidata.batchCount(), "one query for the whole batch")
+	assert.Equal(t, []string{"tt1", "tt2", "tt3"}, wikidata.batches[0], "deduplicated, no empty id")
+
+	s.LookupMany(context.Background(), []string{"tt1", "tt2", "tt3"})
+	assert.Equal(t, 1, wikidata.batchCount(), "hits and misses are cached")
+}
+
+func TestLookupManyChunksWikidataQueries(t *testing.T) {
+	wikidata := &stubScores{answers: map[string][]tvdb.Rating{}}
+	s, _ := newTestService(Options{Wikidata: wikidata})
+	ids := make([]string, WikidataChunk+5)
+	for i := range ids {
+		ids[i] = "tt" + strconv.Itoa(1000+i)
+	}
+
+	s.LookupMany(context.Background(), ids)
+
+	require.Equal(t, 2, wikidata.batchCount())
+	sizes := []int{len(wikidata.batches[0]), len(wikidata.batches[1])}
+	sort.Ints(sizes)
+	assert.Equal(t, []int{5, WikidataChunk}, sizes, "chunks run concurrently, so their order varies")
+}
+
+func TestLookupManyRetriesWikidataAfterAnError(t *testing.T) {
+	wikidata := &stubScores{err: errors.New("429")}
+	s, _ := newTestService(Options{Wikidata: wikidata})
+
+	assert.Empty(t, s.LookupMany(context.Background(), []string{"tt1"}))
+	wikidata.mu.Lock()
+	wikidata.err = nil
+	wikidata.answers = map[string][]tvdb.Rating{"tt1": {tomato97}}
+	wikidata.mu.Unlock()
+	assert.Equal(t, []tvdb.Rating{tomato97}, s.LookupMany(context.Background(), []string{"tt1"})["tt1"])
+	assert.Equal(t, 2, wikidata.batchCount(), "a failed query is not cached")
+}
+
+func TestAttachUsesWikidataForMovies(t *testing.T) {
+	wikidata := &stubScores{answers: map[string][]tvdb.Rating{"tt1": {tomato97}}}
+	table := stubTable{"tt1": imdbEight[0]}
+	s, _ := newTestService(Options{IMDb: table, Wikidata: wikidata})
+
+	media := []tvdb.Media{{Id: "a", Category: "movie", ImdbID: "tt1"}}
+	s.Attach(context.Background(), media)
+
+	assert.Equal(t, []tvdb.Rating{imdbEight[0], tomato97}, media[0].Ratings)
 }

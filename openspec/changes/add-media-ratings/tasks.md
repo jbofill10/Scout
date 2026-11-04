@@ -17,6 +17,9 @@
 - [x] 2.4 Config `RATINGS_IMDB` / `IMDB_RATINGS_URL` / `OMDB_API_KEY` / `OMDB_HOST`; `main.go` loads the table
   before serving and wires the service
 - [x] 2.5 `POST /ratings/batch` handler rating by TVDB id; tests
+- [x] 2.6 Wikidata score source (`wikidata.go`: SPARQL by IMDb id, 50 per query, latest-dated Tomatometer and
+  Metascore), `Service.LookupMany` merging table, Wikidata and OMDb; the batch extended handler rates in one
+  call; config `RATINGS_WIKIDATA` / `WIKIDATA_SPARQL_URL`; tests
 
 ## 3. Webserver
 
@@ -42,3 +45,4 @@
   `pkg/...` (race detector on the new package and handlers)
 - [x] 6.2 `npm run lint`, `tsc -b --noEmit`, `npm test`, `npm run build`
 - [x] 6.3 Deployed; ratings seen on the Home rows, a title search, an actor search and the Library page
+- [x] 6.4 Deployed with Wikidata; Tomatometer seen on movie posters
