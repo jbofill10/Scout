@@ -40,7 +40,7 @@ func (g stubGenres) LookupID(name string) (int, bool) {
 
 func newPopularRouter(ranker *stubRanker) *gin.Engine {
 	gin.SetMode(gin.TestMode)
-	h := NewPopularHandler(ranker, stubGenres{"Drama": 12, "Anime": 27}, slog.Default())
+	h := NewPopularHandler(ranker, stubGenres{"Drama": 12, "Anime": 27}, nil, slog.Default())
 	r := gin.New()
 	r.GET("/series/popular", h.GetPopularSeries)
 	r.GET("/movies/popular", h.GetPopularMovies)

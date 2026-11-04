@@ -22,12 +22,14 @@ type Searcher interface {
 // SearchHandler serves GET /series.
 type SearchHandler struct {
 	searcher Searcher
+	rater    Rater
 	logger   *slog.Logger
 }
 
-// NewSearchHandler returns a SearchHandler backed by searcher.
-func NewSearchHandler(searcher Searcher, logger *slog.Logger) *SearchHandler {
-	return &SearchHandler{searcher: searcher, logger: logger}
+// NewSearchHandler returns a SearchHandler backed by searcher. rater may be
+// nil, in which case hits carry no ratings.
+func NewSearchHandler(searcher Searcher, rater Rater, logger *slog.Logger) *SearchHandler {
+	return &SearchHandler{searcher: searcher, rater: rater, logger: logger}
 }
 
 // GetSeries handles GET /series: a structured media search. Besides mediaName
@@ -59,6 +61,9 @@ func (h *SearchHandler) GetSeries(c *gin.Context) {
 			"error": fmt.Sprintln("Internal Server Error: Unable to query show", query.Title),
 		})
 		return
+	}
+	if h.rater != nil {
+		h.rater.Attach(ctx, response)
 	}
 	h.logger.InfoContext(ctx, "Search response", telemetry.WithTraceContext(ctx, "count", len(response))...)
 	c.JSON(http.StatusOK, response)

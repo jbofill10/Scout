@@ -14,6 +14,7 @@ import (
 	"github.com/jbofill10/scout/backend/internal/tvdbproxy/genres"
 	"github.com/jbofill10/scout/backend/internal/tvdbproxy/handlers"
 	"github.com/jbofill10/scout/backend/internal/tvdbproxy/popular"
+	"github.com/jbofill10/scout/backend/internal/tvdbproxy/ratings"
 	"github.com/jbofill10/scout/backend/internal/tvdbproxy/search"
 	"github.com/jbofill10/scout/backend/internal/tvdbproxy/tvdb"
 	"github.com/jbofill10/scout/backend/pkg/telemetry"
@@ -123,13 +124,24 @@ func main() {
 	// Build the UI's rows now so the webserver's first refresh finds them ready.
 	popularService.Warm(refreshCtx, popular.DefaultRows())
 
+	// Ratings (Tomatometer, IMDb, Metascore) ride along on every search hit,
+	// popular row and extended record when an OMDb key is configured.
+	var rater handlers.Rater
+	if cfg.OMDb.APIKey != "" {
+		rater = ratings.NewService(
+			ratings.NewOMDb(cfg.OMDb.Host, cfg.OMDb.APIKey, ratings.NewOMDbHTTPClient(), logger), logger)
+		logger.Info("Media ratings looked up on OMDb")
+	} else {
+		logger.Info("OMDB_API_KEY not set; media carry no ratings")
+	}
+
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(tvdbClient)
-	searchHandler := handlers.NewSearchHandler(searchService, logger)
-	extendedHandler := handlers.NewExtendedHandler(tvdbClient, logger)
+	searchHandler := handlers.NewSearchHandler(searchService, rater, logger)
+	extendedHandler := handlers.NewExtendedHandler(tvdbClient, rater, logger)
 	episodesHandler := handlers.NewEpisodesHandler(tvdbClient, logger)
 	genreHandler := handlers.NewGenreHandler(genreCache, logger)
-	popularHandler := handlers.NewPopularHandler(popularService, genreCache, logger)
+	popularHandler := handlers.NewPopularHandler(popularService, genreCache, rater, logger)
 
 	router := gin.Default()
 	// Only the compose network sits in front of this service, so only it may

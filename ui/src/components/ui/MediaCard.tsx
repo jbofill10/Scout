@@ -7,7 +7,9 @@ import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import { alpha, useTheme } from "@mui/material/styles";
 import type { Theme } from "@mui/material/styles";
 import type { MediaStatusBadge } from "../../types/MediaStatus";
+import type { RatingBadgeModel } from "../../utils/ratings";
 import { toThumbnailUrl } from "../../utils/images";
+import RatingPill from "./RatingPill";
 
 export interface MediaCardProps {
   media: {
@@ -18,6 +20,8 @@ export interface MediaCardProps {
   };
   onClick: (media: MediaCardProps["media"]) => void;
   statusBadge?: MediaStatusBadge;
+  /** The title's headline score (see pickCardRating), shown in the top-left corner */
+  rating?: RatingBadgeModel | null;
   isLoadingStatus?: boolean;
   onImageLoad?: () => void;
 }
@@ -60,6 +64,7 @@ const HOVER_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
  *
  * Features:
  * - 2:3 aspect ratio poster, served as a TVDB thumbnail with a fade-in once decoded
+ * - Optional rating pill (Tomatometer for movies, IMDb for shows) in the top-left corner
  * - Optional status badge (episode progress for shows, library state for movies)
  * - Keyboard accessible (Enter / Space, hover treatment on focus)
  */
@@ -67,6 +72,7 @@ const MediaCard: React.FC<MediaCardProps> = ({
   media,
   onClick,
   statusBadge,
+  rating,
   isLoadingStatus = false,
   onImageLoad,
 }) => {
@@ -216,13 +222,21 @@ const MediaCard: React.FC<MediaCardProps> = ({
         }}
       />
 
+      {/* Rating pill: the score the title is known by */}
+      {rating && (
+        <RatingPill
+          rating={rating}
+          sx={{ position: "absolute", top: { xs: 6, sm: 10 }, left: { xs: 6, sm: 10 }, zIndex: 1 }}
+        />
+      )}
+
       {/* Status Badge or Loading Shimmer */}
       {isLoadingStatus ? (
         <Skeleton
           variant="rounded"
           width={54}
           height={22}
-          sx={{ position: "absolute", top: 10, right: 10, borderRadius: 999, zIndex: 1 }}
+          sx={{ position: "absolute", top: { xs: 6, sm: 10 }, right: { xs: 6, sm: 10 }, borderRadius: 999, zIndex: 1 }}
           aria-label="Loading status"
         />
       ) : (
@@ -230,13 +244,13 @@ const MediaCard: React.FC<MediaCardProps> = ({
           <Box
             sx={{
               position: "absolute",
-              top: 10,
-              right: 10,
+              top: { xs: 6, sm: 10 },
+              right: { xs: 6, sm: 10 },
               zIndex: 1,
-              px: 1,
+              px: { xs: 0.75, sm: 1 },
               py: "3px",
               borderRadius: 999,
-              fontSize: "0.6875rem",
+              fontSize: { xs: "0.625rem", sm: "0.6875rem" },
               fontWeight: 700,
               letterSpacing: "0.01em",
               lineHeight: 1.3,

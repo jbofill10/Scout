@@ -5,6 +5,7 @@ import MediaCard from "./MediaCard";
 import type { MediaCardProps } from "./MediaCard";
 import type { EnrichedMedia } from "../../types/MediaStatus";
 import { buildStatusBadgeFromEnriched } from "../../utils/statusHelpers";
+import { pickCardRating } from "../../utils/ratings";
 
 interface SearchResultsGridProps {
   results: EnrichedMedia[];
@@ -56,6 +57,7 @@ const SearchResultsGrid: React.FC<SearchResultsGridProps> = ({
           category: cardCategory ?? cardLabel(result),
         },
         statusBadge: buildStatusBadgeFromEnriched(result.status),
+        rating: pickCardRating(result.media.ratings, result.media.type ?? result.status.type),
       })),
     [results, cardCategory],
   );
@@ -94,6 +96,7 @@ const SearchResultsGrid: React.FC<SearchResultsGridProps> = ({
           key={card.media.id}
           media={card.media}
           statusBadge={card.statusBadge}
+          rating={card.rating}
           onClick={handleCardClick}
           isLoadingStatus={false}
         />

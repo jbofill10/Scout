@@ -63,12 +63,23 @@ type AniList struct {
 	Host string
 }
 
+// OMDb configures the rating source behind the scores on media cards: the
+// Rotten Tomatoes Tomatometer, IMDb's rating and the Metascore, looked up
+// by IMDb id. With no key, media carry no ratings.
+type OMDb struct {
+	// APIKey is an OMDb API key (OMDB_API_KEY); free keys allow 1,000 lookups a day.
+	APIKey string
+	// Host overrides the API base URL (OMDB_HOST), for tests.
+	Host string
+}
+
 // Config is tvdb-proxy's configuration.
 type Config struct {
 	TVDB      TVDB
 	Trakt     Trakt
 	Wikipedia Wikipedia
 	AniList   AniList
+	OMDb      OMDb
 	// BindAddress is where the HTTP server listens (BIND_ADDRESS).
 	BindAddress string
 	// TokenRefreshInterval is the raw TVDB_TOKEN_REFRESH_INTERVAL value; see RefreshInterval.
@@ -76,8 +87,8 @@ type Config struct {
 }
 
 // Load reads api.toml when it exists, then applies TVDB_HOST, TVDB_API_KEY and
-// TVDB_PIN on top (environment wins), and reads the Trakt settings from the
-// environment. The only error is a malformed api.toml. Required fields are
+// TVDB_PIN on top (environment wins), and reads the Trakt, Wikipedia, AniList
+// and OMDb settings from the environment. The only error is a malformed api.toml. Required fields are
 // checked separately by Validate.
 func Load() (Config, error) {
 	var cfg Config
@@ -121,6 +132,10 @@ func Load() (Config, error) {
 	cfg.AniList = AniList{
 		Enabled: enabled(os.Getenv("POPULAR_ANILIST")),
 		Host:    os.Getenv("ANILIST_HOST"),
+	}
+	cfg.OMDb = OMDb{
+		APIKey: strings.TrimSpace(os.Getenv("OMDB_API_KEY")),
+		Host:   os.Getenv("OMDB_HOST"),
 	}
 
 	return cfg, nil

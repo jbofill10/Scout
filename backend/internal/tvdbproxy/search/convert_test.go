@@ -19,12 +19,17 @@ func TestSearchItemToMedia_Series(t *testing.T) {
 		Translations: tvdb.Translations{Eng: "Naruto"},
 		Overviews:    tvdb.Overview{Eng: "A young ninja."},
 		Aliases:      []string{"Naruto Shippuden"},
+		RemoteIds: []tvdb.RemoteID{
+			{Id: "10.5240/1", Type: 13, SourceName: "EIDR"},
+			{Id: "tt0409591", Type: 2, SourceName: "IMDB"},
+		},
 	}
 
 	media, ok := searchItemToMedia(item)
 
 	require.True(t, ok)
 	assert.Equal(t, "78857", media.Id)
+	assert.Equal(t, "tt0409591", media.ImdbID, "the IMDb id is picked out of the hit's remote ids")
 	assert.Equal(t, "Naruto", media.Name)
 	assert.Equal(t, "ナルト", media.OriginalName)
 	assert.Equal(t, "series", media.Category)

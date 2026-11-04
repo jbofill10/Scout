@@ -15,6 +15,8 @@ import type { ShowStatus, EnrichedMedia, MediaStatusBadge } from "../../types/Me
 import { useMediaStatus } from "../../hooks/useMediaStatus";
 import { useEnrichedPopular } from "../../hooks/useProgressiveEnrichment";
 import { getStatusBadgeForMediaWithEnriched } from "../../utils/statusHelpers";
+import { pickCardRating } from "../../utils/ratings";
+import type { RatingBadgeModel } from "../../utils/ratings";
 import { useDownloadRequest } from "../../hooks/useDownloadRequest";
 
 interface GenreRowProps {
@@ -26,6 +28,7 @@ interface GenreRowProps {
 interface CardModel {
   media: MediaCardProps["media"];
   statusBadge?: MediaStatusBadge;
+  rating: RatingBadgeModel | null;
 }
 
 /**
@@ -141,8 +144,9 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
           statusMediaType,
           enrichedById.get(item.id),
         ),
+        rating: pickCardRating(item.ratings, mediaType),
       })),
-    [data, statusData, statusMediaType, enrichedById],
+    [data, statusData, statusMediaType, enrichedById, mediaType],
   );
 
   const handleMediaClick = useCallback(
@@ -175,7 +179,12 @@ const GenreRow: React.FC<GenreRowProps> = ({ genre, mediaType }) => {
 
   const renderCard = useCallback(
     (card: CardModel) => (
-      <MediaCard media={card.media} onClick={handleMediaClick} statusBadge={card.statusBadge} />
+      <MediaCard
+        media={card.media}
+        onClick={handleMediaClick}
+        statusBadge={card.statusBadge}
+        rating={card.rating}
+      />
     ),
     [handleMediaClick],
   );
