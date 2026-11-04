@@ -14,6 +14,7 @@ func TestLoadReadsRatingSourcesFromEnvironment(t *testing.T) {
 	t.Setenv("IMDB_RATINGS_URL", "")
 	t.Setenv("RATINGS_WIKIDATA", "")
 	t.Setenv("WIKIDATA_SPARQL_URL", "")
+	t.Setenv("WIKIDATA_API_URL", "")
 	t.Setenv("WIKIPEDIA_API_URL", "")
 	t.Setenv("OMDB_API_KEY", "")
 
@@ -27,14 +28,15 @@ func TestLoadReadsRatingSourcesFromEnvironment(t *testing.T) {
 	t.Setenv("IMDB_RATINGS_URL", "http://imdb.test/ratings.tsv.gz")
 	t.Setenv("RATINGS_WIKIDATA", "off")
 	t.Setenv("WIKIDATA_SPARQL_URL", "http://wd.test/sparql")
+	t.Setenv("WIKIDATA_API_URL", "http://wd.test/api.php")
 	t.Setenv("WIKIPEDIA_API_URL", "http://wp.test/api.php")
 	t.Setenv("OMDB_API_KEY", " abc ")
 	t.Setenv("OMDB_HOST", "http://omdb.test")
 	cfg, err = Load()
 	require.NoError(t, err)
 	assert.Equal(t, IMDb{Enabled: false, URL: "http://imdb.test/ratings.tsv.gz"}, cfg.IMDb)
-	assert.Equal(t, WikidataRatings{Enabled: false, URL: "http://wd.test/sparql", WikipediaURL: "http://wp.test/api.php"},
-		cfg.Wikidata)
+	assert.Equal(t, WikidataRatings{Enabled: false, URL: "http://wd.test/sparql", APIURL: "http://wd.test/api.php",
+		WikipediaURL: "http://wp.test/api.php"}, cfg.Wikidata)
 	assert.Equal(t, OMDb{APIKey: "abc", Host: "http://omdb.test"}, cfg.OMDb, "the key is trimmed")
 }
 

@@ -76,6 +76,10 @@ under a second, so in practice the first search for a title pays it once.
 
 ## Finding the IMDb id
 
+A movie TVDB lists no IMDb id for at all (a few new anime films) is searched on Wikidata by name
+(`wbsearchentities`); the first candidate that is a film with an IMDb id released within a year of the TVDB
+year is taken, so a TV series or a namesake from another decade is passed over. Cached a week.
+
 TVDB's search index returns `remote_ids` on every hit, which was not decoded before; `TVDBSearchItem.ImdbID()`
 picks the IMDb id out, so no extra TVDB call is needed for title searches. Two kinds of media arrive with
 only a TVDB id: person-credit hits (actor:/director: searches come from `/people/{id}/extended`, whose

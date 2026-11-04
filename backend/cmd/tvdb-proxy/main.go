@@ -115,7 +115,9 @@ func main() {
 		logger.Info("RATINGS_IMDB=false; no IMDb ratings table")
 	}
 	if cfg.Wikidata.Enabled {
-		ratingOpts.Wikidata = ratings.NewWikidata(cfg.Wikidata.URL, ratings.NewWikidataHTTPClient(), logger)
+		wikidata := ratings.NewWikidata(cfg.Wikidata.URL, cfg.Wikidata.APIURL, ratings.NewWikidataHTTPClient(), logger)
+		ratingOpts.Wikidata = wikidata
+		ratingOpts.Finder = wikidata
 		ratingOpts.Prose = ratings.NewProse(cfg.Wikidata.WikipediaURL, ratings.NewProseHTTPClient(), logger)
 		logger.Info("Tomatometer and Metascore read from Wikidata and Wikipedia")
 	} else {

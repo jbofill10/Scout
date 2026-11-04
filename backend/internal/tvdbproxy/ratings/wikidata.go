@@ -21,6 +21,10 @@ import (
 const (
 	// DefaultWikidataSPARQLURL is Wikidata's public query service.
 	DefaultWikidataSPARQLURL = "https://query.wikidata.org/sparql"
+	// DefaultWikidataAPIURL is Wikidata's MediaWiki API, used for entity search.
+	DefaultWikidataAPIURL = "https://www.wikidata.org/w/api.php"
+	// findCandidates is how many entity search hits FindIMDbID considers.
+	findCandidates = 5
 	// WikidataChunk is how many titles one query asks about.
 	WikidataChunk = 50
 
@@ -58,6 +62,7 @@ type Record struct {
 // releases, which the article prose and OMDb cover.
 type Wikidata struct {
 	url    string
+	apiURL string
 	http   *http.Client
 	logger *slog.Logger
 }
@@ -68,13 +73,84 @@ func NewWikidataHTTPClient() *http.Client {
 }
 
 // NewWikidata returns a source querying the SPARQL endpoint at url (empty
-// means DefaultWikidataSPARQLURL).
-func NewWikidata(url string, httpClient *http.Client, logger *slog.Logger) *Wikidata {
+// means DefaultWikidataSPARQLURL) and searching entities through apiURL
+// (empty means DefaultWikidataAPIURL).
+func NewWikidata(url, apiURL string, httpClient *http.Client, logger *slog.Logger) *Wikidata {
 	if url == "" {
 		url = DefaultWikidataSPARQLURL
 	}
-	return &Wikidata{url: url, http: httpClient, logger: logger}
+	if apiURL == "" {
+		apiURL = DefaultWikidataAPIURL
+	}
+	return &Wikidata{url: url, apiURL: apiURL, http: httpClient, logger: logger}
 }
+
+// FindIMDbID finds a film's IMDb id by name and release year, for titles
+// TVDB lists no IMDb id for. Entity search gives candidates; the first that
+// is a film released within a year of the given year (release dates differ
+// by region) and carries an IMDb id wins. Without a year, the first film with
+// an IMDb id wins.
+func (w *Wikidata) FindIMDbID(ctx context.Context, name, year string) (string, bool) {
+	query := url.Values{}
+	query.Set("action", "wbsearchentities")
+	query.Set("search", name)
+	query.Set("language", "en")
+	query.Set("type", "item")
+	query.Set("limit", strconv.Itoa(findCandidates))
+	query.Set("format", "json")
+	var search struct {
+		Search []struct {
+			ID string `json:"id"`
+		} `json:"search"`
+	}
+	if err := w.getJSON(ctx, w.apiURL+"?"+query.Encode(), "application/json", &search); err != nil {
+		w.logger.WarnContext(ctx, "Wikidata entity search failed", "name", name, "error", err)
+		return "", false
+	}
+	if len(search.Search) == 0 {
+		return "", false
+	}
+	var items strings.Builder
+	for _, hit := range search.Search {
+		if qidPattern.MatchString(hit.ID) {
+			items.WriteString("wd:" + hit.ID + " ")
+		}
+	}
+	if items.Len() == 0 {
+		return "", false
+	}
+	sparql := `SELECT ?item ?imdb ?date WHERE { VALUES ?item { ` + items.String() + `} ?item wdt:P345 ?imdb . ` +
+		`FILTER EXISTS { ?item wdt:P31/wdt:P279* wd:Q11424 } OPTIONAL { ?item wdt:P577 ?date } }`
+	var result sparqlResponse
+	if err := w.getJSON(ctx, w.url+"?"+url.Values{"query": {sparql}}.Encode(), "application/sparql-results+json",
+		&result); err != nil {
+		w.logger.WarnContext(ctx, "Wikidata film lookup failed", "name", name, "error", err)
+		return "", false
+	}
+	wanted, _ := strconv.Atoi(year)
+	// Keep the candidates in search order: the best name match comes first.
+	for _, hit := range search.Search {
+		for _, binding := range result.Results.Bindings {
+			if !strings.HasSuffix(binding["item"].Value, "/"+hit.ID) {
+				continue
+			}
+			imdbID := binding["imdb"].Value
+			if !wikidataIDPattern.MatchString(imdbID) {
+				continue
+			}
+			if wanted == 0 {
+				return imdbID, true
+			}
+			released, err := strconv.Atoi(binding["date"].Value[:min(4, len(binding["date"].Value))])
+			if err == nil && released >= wanted-1 && released <= wanted+1 {
+				return imdbID, true
+			}
+		}
+	}
+	return "", false
+}
+
+var qidPattern = regexp.MustCompile(`^Q\d+$`)
 
 // sparqlResponse is the part of a SPARQL JSON result the parser reads.
 type sparqlResponse struct {
@@ -102,16 +178,25 @@ func (w *Wikidata) Records(ctx context.Context, imdbIDs []string) (map[string]Re
 
 	query := url.Values{}
 	query.Set("query", sparqlFor(ids))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, w.url+"?"+query.Encode(), nil)
-	if err != nil {
+	var result sparqlResponse
+	if err := w.getJSON(ctx, w.url+"?"+query.Encode(), "application/sparql-results+json", &result); err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/sparql-results+json")
+	return parseRecords(result), nil
+}
+
+// getJSON performs one GET against Wikidata and decodes the JSON answer.
+func (w *Wikidata) getJSON(ctx context.Context, fullURL, accept string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", accept)
 	req.Header.Set("User-Agent", wikidataAgent)
 
 	resp, err := w.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("wikidata: %w", err)
+		return fmt.Errorf("wikidata: %w", err)
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); cerr != nil {
@@ -119,17 +204,16 @@ func (w *Wikidata) Records(ctx context.Context, imdbIDs []string) (map[string]Re
 		}
 	}()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("wikidata: status %d", resp.StatusCode)
+		return fmt.Errorf("wikidata: status %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, wikidataMaxBody))
 	if err != nil {
-		return nil, fmt.Errorf("wikidata: read: %w", err)
+		return fmt.Errorf("wikidata: read: %w", err)
 	}
-	var result sparqlResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("wikidata: decode: %w", err)
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("wikidata: decode: %w", err)
 	}
-	return parseRecords(result), nil
+	return nil
 }
 
 // sparqlFor asks, for the items with the given IMDb ids, for every review

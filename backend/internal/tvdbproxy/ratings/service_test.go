@@ -130,6 +130,46 @@ func TestAttachResolvesTVDBIDsFirst(t *testing.T) {
 	assert.Equal(t, 3, resolver.calls, "one resolution per distinct title")
 }
 
+// stubFinder maps "name|year" to an IMDb id.
+type stubFinder struct {
+	mu    sync.Mutex
+	ids   map[string]string
+	calls int
+}
+
+func (f *stubFinder) FindIMDbID(_ context.Context, name, year string) (string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	id, ok := f.ids[name+"|"+year]
+	return id, ok
+}
+
+func TestAttachFindsIDsForFilmsTVDBLacks(t *testing.T) {
+	resolver := &stubResolver{ids: map[string]string{"movie:10": "tt1"}}
+	finder := &stubFinder{ids: map[string]string{"Mononoke the Movie|2025": "tt2"}}
+	table := stubTable{"tt1": imdbEight[0], "tt2": {Source: tvdb.RatingSourceIMDb, Value: 7.1, Votes: 300}}
+	s, _ := newTestService(Options{IMDb: table, Resolver: resolver, Finder: finder})
+
+	media := []tvdb.Media{
+		{Id: "10", Category: "movie", Name: "Known"},
+		{Id: "20", Category: "movie", Name: "Mononoke the Movie", Year: "2025"},
+		{Id: "30", Category: "movie", Name: "Unknown Film", Year: "2025"},
+		{Id: "40", Category: "series", Name: "Mononoke the Movie", Year: "2025"},
+	}
+	s.Attach(context.Background(), media, DefaultWait)
+
+	assert.Equal(t, "tt1", media[0].ImdbID, "TVDB's own id comes first")
+	assert.Equal(t, "tt2", media[1].ImdbID, "a film TVDB has no id for is found by name and year")
+	assert.Equal(t, 7.1, media[1].Ratings[0].Value)
+	assert.Empty(t, media[2].ImdbID)
+	assert.Empty(t, media[3].ImdbID, "series are not searched")
+	assert.Equal(t, 2, finder.calls, "one search per distinct film title")
+
+	s.Attach(context.Background(), []tvdb.Media{{Id: "20", Category: "movie", Name: "Mononoke the Movie", Year: "2025"}}, DefaultWait)
+	assert.Equal(t, 2, finder.calls, "the answer is cached")
+}
+
 func TestLookupMergesTableAndSource(t *testing.T) {
 	source := newStubSource()
 	source.answers["tt1"] = []tvdb.Rating{{Source: tvdb.RatingSourceIMDb, Value: 7.9}, tomato97}

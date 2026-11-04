@@ -92,6 +92,12 @@ type IDResolver interface {
 	ImdbID(ctx context.Context, mediaType, id string) string
 }
 
+// IDFinder finds a film's IMDb id by name and year, for titles TVDB lists
+// none for; Wikidata implements it.
+type IDFinder interface {
+	FindIMDbID(ctx context.Context, name, year string) (string, bool)
+}
+
 // Options are the parts a Service draws on; any may be nil.
 type Options struct {
 	// IMDb answers the IMDb rating locally.
@@ -104,6 +110,8 @@ type Options struct {
 	Source Source
 	// Resolver fills in IMDb ids for media that arrives with only a TVDB id.
 	Resolver IDResolver
+	// Finder fills in IMDb ids for films TVDB lists none for, by name and year.
+	Finder IDFinder
 }
 
 // Service answers rating lookups: the IMDb rating from the table, the rest
@@ -114,6 +122,7 @@ type Service struct {
 	logger *slog.Logger
 	omdb   *asyncCache[[]tvdb.Rating]
 	chunks *asyncCache[struct{}]
+	found  *asyncCache[string]
 	now    func() time.Time
 
 	mu          sync.Mutex
@@ -128,6 +137,7 @@ func NewService(opts Options, logger *slog.Logger) *Service {
 		logger:   logger,
 		omdb:     newAsyncCache[[]tvdb.Rating](lookupConcurrency, lookupTimeout),
 		chunks:   newAsyncCache[struct{}](chunkConcurrency, chunkTimeout),
+		found:    newAsyncCache[string](chunkConcurrency, chunkTimeout),
 		now:      time.Now,
 		wikidata: map[string]cacheEntry[[]tvdb.Rating]{},
 	}
@@ -205,6 +215,62 @@ func (s *Service) resolveIDs(ctx context.Context, media []tvdb.Media) {
 		go func(key title) {
 			defer wg.Done()
 			imdbID := s.opts.Resolver.ImdbID(ctx, key.mediaType, key.id)
+			mu.Lock()
+			results[key] = imdbID
+			mu.Unlock()
+		}(key)
+	}
+	wg.Wait()
+	for key, indexes := range byTitle {
+		for _, i := range indexes {
+			media[i].ImdbID = results[key]
+		}
+	}
+	s.findIDs(ctx, media)
+}
+
+// findIDs fills ImdbID on films TVDB lists no IMDb id for, by name and
+// year through the finder, one search per distinct title, detached and
+// cached (a week for a hit, a day for a miss).
+func (s *Service) findIDs(ctx context.Context, media []tvdb.Media) {
+	if s.opts.Finder == nil {
+		return
+	}
+	type title struct{ name, year string }
+	byTitle := map[title][]int{}
+	for i, item := range media {
+		if item.ImdbID != "" || item.Category != "movie" || len(item.Ratings) > 0 {
+			continue
+		}
+		name := item.Name
+		if name == "" {
+			name = item.OriginalName
+		}
+		if name == "" {
+			continue
+		}
+		key := title{name, item.Year}
+		byTitle[key] = append(byTitle[key], i)
+	}
+	if len(byTitle) == 0 {
+		return
+	}
+	var (
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		results = make(map[title]string, len(byTitle))
+	)
+	for key := range byTitle {
+		wg.Add(1)
+		go func(key title) {
+			defer wg.Done()
+			imdbID, _ := s.found.get(ctx, key.name+"|"+key.year, func(ctx context.Context) (string, time.Duration) {
+				imdbID, ok := s.opts.Finder.FindIMDbID(ctx, key.name, key.year)
+				if !ok {
+					return "", imdbIDMissTTL
+				}
+				return imdbID, imdbIDTTL
+			})
 			mu.Lock()
 			results[key] = imdbID
 			mu.Unlock()
