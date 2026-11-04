@@ -55,6 +55,12 @@ source knows, SHALL carry no `ratings`.
   (`/{series|movies}/{id}/extended?short=true`) once per title, caching it for 7 days (a miss for 24 hours)
 - **AND** the resolved id SHALL be returned as `imdbId` next to the `ratings`
 
+#### Scenario: Movie TVDB lists no IMDb id for
+
+- **WHEN** TVDB's record of a movie carries no IMDb id and the caller gave the movie's name (and year)
+- **THEN** the proxy SHALL search Wikidata for the name and take the IMDb id of the first candidate that is a
+  film released within a year of the given year, caching the answer for 7 days (a miss for 24 hours)
+
 #### Scenario: Search hits carry ratings
 
 - **WHEN** a client calls `GET /series` and a hit's TVDB `remote_ids` include an IMDb title id

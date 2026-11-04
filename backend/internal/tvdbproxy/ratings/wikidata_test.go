@@ -34,7 +34,64 @@ func wikidataServer(t *testing.T, status int, body string) (*Wikidata, *http.Req
 		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(server.Close)
-	return NewWikidata(server.URL, server.Client(), slog.Default()), &seen
+	return NewWikidata(server.URL, server.URL, server.Client(), slog.Default()), &seen
+}
+
+// findingServer answers wbsearchentities with hits and SPARQL with bindings.
+func findingServer(t *testing.T, hits string, sparql string) *Wikidata {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("action") == "wbsearchentities" {
+			_, _ = w.Write([]byte(hits))
+			return
+		}
+		_, _ = w.Write([]byte(sparql))
+	}))
+	t.Cleanup(server.Close)
+	return NewWikidata(server.URL, server.URL, server.Client(), slog.Default())
+}
+
+const findHits = `{"search":[{"id":"Q1","label":"SK8 the Infinity"},{"id":"Q2","label":"Mononoke the Movie"},{"id":"Q3","label":"Mononoke (1997)"}]}`
+const findSPARQL = `{"results":{"bindings":[
+ {"item":{"value":"http://www.wikidata.org/entity/Q2"},"imdb":{"value":"tt35301440"},"date":{"value":"2025-03-14T00:00:00Z"}},
+ {"item":{"value":"http://www.wikidata.org/entity/Q3"},"imdb":{"value":"tt0119698"},"date":{"value":"1997-07-12T00:00:00Z"}}
+]}}`
+
+func TestWikidataFindIMDbID(t *testing.T) {
+	source := findingServer(t, findHits, findSPARQL)
+
+	id, ok := source.FindIMDbID(context.Background(), "Mononoke the Movie", "2025")
+	require.True(t, ok)
+	assert.Equal(t, "tt35301440", id, "the TV series (no film binding) is skipped, the 2025 film taken")
+
+	id, ok = source.FindIMDbID(context.Background(), "Mononoke the Movie", "2026")
+	require.True(t, ok)
+	assert.Equal(t, "tt35301440", id, "a year off by one still matches")
+
+	id, ok = source.FindIMDbID(context.Background(), "Mononoke", "1997")
+	require.True(t, ok)
+	assert.Equal(t, "tt0119698", id)
+
+	_, ok = source.FindIMDbID(context.Background(), "Mononoke", "2010")
+	assert.False(t, ok, "no film of that year among the candidates")
+
+	id, ok = source.FindIMDbID(context.Background(), "Mononoke", "")
+	require.True(t, ok)
+	assert.Equal(t, "tt35301440", id, "without a year the best-ranked film wins")
+}
+
+func TestWikidataFindIMDbIDNoHits(t *testing.T) {
+	source := findingServer(t, `{"search":[]}`, findSPARQL)
+	_, ok := source.FindIMDbID(context.Background(), "Nothing", "2025")
+	assert.False(t, ok)
+
+	source = findingServer(t, `{"search":[{"id":"not-a-qid"}]}`, findSPARQL)
+	_, ok = source.FindIMDbID(context.Background(), "Nothing", "2025")
+	assert.False(t, ok, "hits that are not items are dropped before any query goes out")
+
+	source, _ = wikidataServer(t, http.StatusBadGateway, "down")
+	_, ok = source.FindIMDbID(context.Background(), "Nothing", "2025")
+	assert.False(t, ok)
 }
 
 func TestWikidataScores(t *testing.T) {

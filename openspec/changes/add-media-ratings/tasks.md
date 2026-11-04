@@ -22,6 +22,8 @@
   time (`popular.Service.SetRater`); config `WIKIPEDIA_API_URL`; tests
 - [x] 2.8 Wikipedia title search (`Prose.Search`) for films Wikidata has no item for; `Attach` passes name/year
   hints; `/ratings/batch` takes optional `title`/`year`, which the Library page sends; tests
+- [x] 2.9 Wikidata entity search (`FindIMDbID`) for movies TVDB lists no IMDb id for; `Service.findIDs`; config
+  `WIKIDATA_API_URL`; tests
 - [x] 2.6 Wikidata score source (`wikidata.go`: SPARQL by IMDb id, 50 per query, latest-dated Tomatometer and
   Metascore), `Service.LookupMany` merging table, Wikidata and OMDb; the batch extended handler rates in one
   call; config `RATINGS_WIKIDATA` / `WIKIDATA_SPARQL_URL`; tests

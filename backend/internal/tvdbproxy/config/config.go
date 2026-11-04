@@ -80,6 +80,8 @@ type WikidataRatings struct {
 	Enabled bool
 	// URL overrides the SPARQL endpoint (WIKIDATA_SPARQL_URL), for tests.
 	URL string
+	// APIURL overrides Wikidata's entity search API (WIKIDATA_API_URL), for tests.
+	APIURL string
 	// WikipediaURL overrides the MediaWiki API (WIKIPEDIA_API_URL), for tests.
 	WikipediaURL string
 }
@@ -163,6 +165,7 @@ func Load() (Config, error) {
 	cfg.Wikidata = WikidataRatings{
 		Enabled:      enabled(os.Getenv("RATINGS_WIKIDATA")),
 		URL:          os.Getenv("WIKIDATA_SPARQL_URL"),
+		APIURL:       os.Getenv("WIKIDATA_API_URL"),
 		WikipediaURL: os.Getenv("WIKIPEDIA_API_URL"),
 	}
 	cfg.OMDb = OMDb{
