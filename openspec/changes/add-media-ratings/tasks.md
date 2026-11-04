@@ -17,6 +17,9 @@
 - [x] 2.4 Config `RATINGS_IMDB` / `IMDB_RATINGS_URL` / `OMDB_API_KEY` / `OMDB_HOST`; `main.go` loads the table
   before serving and wires the service
 - [x] 2.5 `POST /ratings/batch` handler rating by TVDB id; tests
+- [x] 2.7 Wikipedia prose source (`wikipedia.go`: MediaWiki revisions batch, template and prose parsing) for
+  films Wikidata has not scored; explicit waits on `Attach`/`Lookup`/`LookupMany`; popular rows rated at build
+  time (`popular.Service.SetRater`); config `WIKIPEDIA_API_URL`; tests
 - [x] 2.6 Wikidata score source (`wikidata.go`: SPARQL by IMDb id, 50 per query, latest-dated Tomatometer and
   Metascore), `Service.LookupMany` merging table, Wikidata and OMDb; the batch extended handler rates in one
   call; config `RATINGS_WIKIDATA` / `WIKIDATA_SPARQL_URL`; tests
@@ -46,3 +49,4 @@
 - [x] 6.2 `npm run lint`, `tsc -b --noEmit`, `npm test`, `npm run build`
 - [x] 6.3 Deployed; ratings seen on the Home rows, a title search, an actor search and the Library page
 - [x] 6.4 Deployed with Wikidata; Tomatometer seen on movie posters
+- [x] 6.5 Deployed with Wikipedia prose; Tomatometer on every popular movie

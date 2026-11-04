@@ -96,6 +96,42 @@ func main() {
 
 	searchService := search.NewService(tvdbClient, logger)
 
+	// Ratings ride along on every search hit, popular row and extended
+	// record: the IMDb rating from IMDb's public table (loaded before serving
+	// so the webserver's first rows carry it), the Tomatometer and Metascore
+	// Wikidata records (no key), and a current Tomatometer and Metascore
+	// from OMDb when a key is configured.
+	ratingOpts := ratings.Options{Resolver: ratings.NewResolver(tvdbClient, logger)}
+	if cfg.IMDb.Enabled {
+		dataset := ratings.NewDataset(cfg.IMDb.URL, ratings.NewDatasetHTTPClient(), logger)
+		loadCtx, loadCancel := context.WithTimeout(refreshCtx, datasetLoadTimeout)
+		if err := dataset.Load(loadCtx); err != nil {
+			logger.Warn("IMDb ratings table not loaded, retrying in background", "error", err)
+		}
+		loadCancel()
+		dataset.Start(refreshCtx)
+		ratingOpts.IMDb = dataset
+	} else {
+		logger.Info("RATINGS_IMDB=false; no IMDb ratings table")
+	}
+	if cfg.Wikidata.Enabled {
+		ratingOpts.Wikidata = ratings.NewWikidata(cfg.Wikidata.URL, ratings.NewWikidataHTTPClient(), logger)
+		ratingOpts.Prose = ratings.NewProse(cfg.Wikidata.WikipediaURL, ratings.NewProseHTTPClient(), logger)
+		logger.Info("Tomatometer and Metascore read from Wikidata and Wikipedia")
+	} else {
+		logger.Info("RATINGS_WIKIDATA=false; no Wikidata scores")
+	}
+	if cfg.OMDb.APIKey != "" {
+		ratingOpts.Source = ratings.NewOMDb(cfg.OMDb.Host, cfg.OMDb.APIKey, ratings.NewOMDbHTTPClient(), logger)
+		logger.Info("Current Tomatometer and Metascore looked up on OMDb")
+	} else {
+		logger.Info("OMDB_API_KEY not set; Tomatometer comes from Wikidata and Wikipedia")
+	}
+	var rater handlers.Rater
+	if ratingOpts.IMDb != nil || ratingOpts.Wikidata != nil || ratingOpts.Source != nil {
+		rater = ratings.NewService(ratingOpts, logger)
+	}
+
 	// Popular rows: Trakt's most-watched list when a client id is configured,
 	// a recency-weighted TVDB ranking otherwise (and whenever Trakt fails).
 	tvdbPopular := popular.NewTVDBSource(tvdbClient, genreCache, logger)
@@ -124,43 +160,13 @@ func main() {
 		logger.Info("TRAKT_CLIENT_ID not set; popular rows ranked by recency-weighted TVDB score")
 	}
 	popularService := popular.NewService(primaryPopular, tvdbPopular, logger)
+	if rater != nil {
+		// Rows carry their scores from the moment they are cached, so the
+		// webserver's refresh never caches an unrated row.
+		popularService.SetRater(rater)
+	}
 	// Build the UI's rows now so the webserver's first refresh finds them ready.
 	popularService.Warm(refreshCtx, popular.DefaultRows())
-
-	// Ratings ride along on every search hit, popular row and extended
-	// record: the IMDb rating from IMDb's public table (loaded before serving
-	// so the webserver's first rows carry it), the Tomatometer and Metascore
-	// Wikidata records (no key), and a current Tomatometer and Metascore
-	// from OMDb when a key is configured.
-	ratingOpts := ratings.Options{Resolver: ratings.NewResolver(tvdbClient, logger)}
-	if cfg.IMDb.Enabled {
-		dataset := ratings.NewDataset(cfg.IMDb.URL, ratings.NewDatasetHTTPClient(), logger)
-		loadCtx, loadCancel := context.WithTimeout(refreshCtx, datasetLoadTimeout)
-		if err := dataset.Load(loadCtx); err != nil {
-			logger.Warn("IMDb ratings table not loaded, retrying in background", "error", err)
-		}
-		loadCancel()
-		dataset.Start(refreshCtx)
-		ratingOpts.IMDb = dataset
-	} else {
-		logger.Info("RATINGS_IMDB=false; no IMDb ratings table")
-	}
-	if cfg.Wikidata.Enabled {
-		ratingOpts.Wikidata = ratings.NewWikidata(cfg.Wikidata.URL, ratings.NewWikidataHTTPClient(), logger)
-		logger.Info("Tomatometer and Metascore read from Wikidata")
-	} else {
-		logger.Info("RATINGS_WIKIDATA=false; no Wikidata scores")
-	}
-	if cfg.OMDb.APIKey != "" {
-		ratingOpts.Source = ratings.NewOMDb(cfg.OMDb.Host, cfg.OMDb.APIKey, ratings.NewOMDbHTTPClient(), logger)
-		logger.Info("Current Tomatometer and Metascore looked up on OMDb")
-	} else {
-		logger.Info("OMDB_API_KEY not set; Tomatometer comes from Wikidata alone")
-	}
-	var rater handlers.Rater
-	if ratingOpts.IMDb != nil || ratingOpts.Wikidata != nil || ratingOpts.Source != nil {
-		rater = ratings.NewService(ratingOpts, logger)
-	}
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(tvdbClient)

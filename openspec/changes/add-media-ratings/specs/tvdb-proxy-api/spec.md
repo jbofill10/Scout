@@ -6,9 +6,10 @@ The tvdb-proxy SHALL attach critic and audience scores to the media it returns, 
 `ratings` list of `{source, value, votes}` where `source` is `imdb` (value 0-10, with `votes`),
 `rotten_tomatoes` (the Tomatometer, 0-100) or `metacritic` (the Metascore, 0-100), in that order. The IMDb
 rating SHALL come from IMDb's public daily ratings table held in memory (`RATINGS_IMDB`, on by default); the
-Tomatometer and Metascore SHALL come from the review scores Wikidata records (`RATINGS_WIKIDATA`, on by
-default) and, when an API key is configured (`OMDB_API_KEY`), from OMDb, whose figure wins. Media whose IMDb
-id TVDB does not list, or that no source knows, SHALL carry no `ratings`.
+Tomatometer and Metascore SHALL come from the review scores Wikidata records, completed from the film's
+English Wikipedia article when Wikidata has none (`RATINGS_WIKIDATA`, on by default), and, when an API key is
+configured (`OMDB_API_KEY`), from OMDb, whose figure wins. Media whose IMDb id TVDB does not list, or that no
+source knows, SHALL carry no `ratings`.
 
 #### Scenario: Tomatometer from Wikidata
 
@@ -18,6 +19,21 @@ id TVDB does not list, or that no source knows, SHALL carry no `ratings`.
   per source and ignoring Rotten Tomatoes' "x/10" average
 - **AND** it SHALL ask Wikidata for up to 50 titles per query, caching answers for 7 days and misses for 24
   hours
+
+#### Scenario: Tomatometer from the Wikipedia article
+
+- **WHEN** Wikidata records no Rotten Tomatoes score for a film that has an English Wikipedia article
+- **THEN** the proxy SHALL read the article's wikitext and take the Tomatometer from its
+  `{{Rotten Tomatoes prose}}` template or the first critics' percentage after a Rotten Tomatoes mention, and
+  the Metascore from `{{Metacritic film prose}}` or "N out of 100", skipping sentences that give only the
+  audience score
+- **AND** it SHALL fetch up to 20 articles per request and not read articles of series
+
+#### Scenario: Popular rows rated as built
+
+- **WHEN** a popular row is ranked
+- **THEN** its items SHALL be rated before the row is cached, waiting up to 45 seconds for scores not cached
+  yet, so the webserver's refresh never caches an unrated row
 
 #### Scenario: IMDb table loaded at startup
 

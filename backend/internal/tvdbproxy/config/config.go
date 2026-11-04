@@ -72,13 +72,16 @@ type IMDb struct {
 	URL string
 }
 
-// WikidataRatings configures the keyless Tomatometer source: the Rotten
-// Tomatoes and Metacritic scores Wikidata records on film and series items.
+// WikidataRatings configures the keyless Tomatometer sources: the Rotten
+// Tomatoes and Metacritic scores Wikidata records on film and series items,
+// completed from the film's English Wikipedia article when Wikidata has none.
 type WikidataRatings struct {
 	// Enabled is RATINGS_WIKIDATA; anything but false/0/off/no means on.
 	Enabled bool
 	// URL overrides the SPARQL endpoint (WIKIDATA_SPARQL_URL), for tests.
 	URL string
+	// WikipediaURL overrides the MediaWiki API (WIKIPEDIA_API_URL), for tests.
+	WikipediaURL string
 }
 
 // OMDb configures the keyed rating source for a current Rotten Tomatoes
@@ -158,8 +161,9 @@ func Load() (Config, error) {
 		URL:     os.Getenv("IMDB_RATINGS_URL"),
 	}
 	cfg.Wikidata = WikidataRatings{
-		Enabled: enabled(os.Getenv("RATINGS_WIKIDATA")),
-		URL:     os.Getenv("WIKIDATA_SPARQL_URL"),
+		Enabled:      enabled(os.Getenv("RATINGS_WIKIDATA")),
+		URL:          os.Getenv("WIKIDATA_SPARQL_URL"),
+		WikipediaURL: os.Getenv("WIKIPEDIA_API_URL"),
 	}
 	cfg.OMDb = OMDb{
 		APIKey: strings.TrimSpace(os.Getenv("OMDB_API_KEY")),

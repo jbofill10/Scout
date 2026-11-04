@@ -63,7 +63,7 @@ func (h *SearchHandler) GetSeries(c *gin.Context) {
 		return
 	}
 	if h.rater != nil {
-		h.rater.Attach(ctx, response)
+		h.rater.Attach(ctx, response, interactiveWait)
 	}
 	h.logger.InfoContext(ctx, "Search response", telemetry.WithTraceContext(ctx, "count", len(response))...)
 	c.JSON(http.StatusOK, response)

@@ -253,3 +253,38 @@ func TestServiceBuildOutlivesCaller(t *testing.T) {
 	}, time.Second, time.Millisecond)
 	assert.Equal(t, int32(1), atomic.LoadInt32(&src.calls), "the abandoned build finished and was cached")
 }
+
+type stubRowRater struct {
+	mu    sync.Mutex
+	calls int
+	waits []time.Duration
+}
+
+func (r *stubRowRater) Attach(_ context.Context, media []tvdb.Media, wait time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	r.waits = append(r.waits, wait)
+	for i := range media {
+		media[i].Ratings = []tvdb.Rating{{Source: tvdb.RatingSourceIMDb, Value: 8}}
+	}
+}
+
+func TestRankRatesRowsAsTheyAreBuilt(t *testing.T) {
+	src := &stubSource{name: "stub", results: []tvdb.Media{{Id: "1"}, {Id: "2"}}}
+	svc := NewService(nil, src, slog.Default())
+	rater := &stubRowRater{}
+	svc.SetRater(rater)
+
+	first, err := svc.Rank(context.Background(), KindMovie, "", 5)
+	require.NoError(t, err)
+	second, err := svc.Rank(context.Background(), KindMovie, "", 5)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, rater.calls, "rated once per build, not per request")
+	assert.Equal(t, []time.Duration{rowRatingWait}, rater.waits)
+	for _, row := range [][]tvdb.Media{first, second} {
+		require.Len(t, row, 2)
+		assert.Equal(t, 8.0, row[0].Ratings[0].Value, "the cached row carries its scores")
+	}
+}

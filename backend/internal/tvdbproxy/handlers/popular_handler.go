@@ -87,10 +87,10 @@ func (h *PopularHandler) serve(c *gin.Context, kind popular.Kind) {
 	if results == nil {
 		results = []tvdb.Media{}
 	}
-	// Rank hands back a copy of its cached row, so the scores can be set on
-	// it. They are cached for days, so this is a lookup per item, not a call.
+	// Rows are rated as they are built, so this is a cache lookup per item
+	// that only matters for a row ranked before the rater was ready.
 	if h.rater != nil {
-		h.rater.Attach(ctx, results)
+		h.rater.Attach(ctx, results, interactiveWait)
 	}
 
 	h.logger.InfoContext(ctx, "Returning popular row", "kind", string(kind), "count", len(results))

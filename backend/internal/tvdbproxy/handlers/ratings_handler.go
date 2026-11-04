@@ -60,7 +60,7 @@ func (h *RatingsHandler) GetBatch(c *gin.Context) {
 		media[i] = tvdb.Media{Id: req.Id, Category: req.MediaType}
 	}
 	if h.rater != nil {
-		h.rater.Attach(ctx, media)
+		h.rater.Attach(ctx, media, backgroundWait)
 	}
 
 	rated := 0
