@@ -334,6 +334,7 @@ func TestTraktGenreSlug(t *testing.T) {
 	cases := map[string]string{
 		"Action": "action", "Comedy": "comedy", "Drama": "drama", "Sci-Fi": "science-fiction",
 		"Science Fiction": "science-fiction", "Anime": "anime", "Documentary": "documentary",
+		"Horror": "horror", "Thriller": "thriller",
 		"Talk Show": "talk-show", "Home and Garden": "home-and-garden", "Martial Arts": "martial-arts",
 	}
 	for name, want := range cases {

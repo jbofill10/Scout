@@ -213,13 +213,13 @@ func TestServiceWarmBuildsDefaultRows(t *testing.T) {
 	fallback := &stubSource{name: "fallback", results: media("9")}
 	svc := NewService(nil, fallback, slog.Default())
 	rows := DefaultRows()
-	assert.Len(t, rows, 14)
+	assert.Len(t, rows, 18)
 
 	svc.Warm(context.Background(), rows)
 	require.Eventually(t, func() bool {
 		fallback.mu.Lock()
 		defer fallback.mu.Unlock()
-		return len(fallback.limits) == 14
+		return len(fallback.limits) == 18
 	}, 2*time.Second, 5*time.Millisecond)
 
 	// Every warmed row is now a cache hit.
@@ -227,7 +227,7 @@ func TestServiceWarmBuildsDefaultRows(t *testing.T) {
 	require.NoError(t, err)
 	fallback.mu.Lock()
 	defer fallback.mu.Unlock()
-	assert.Equal(t, 14, len(fallback.limits))
+	assert.Equal(t, 18, len(fallback.limits))
 }
 
 // A caller that gives up does not abort the build others wait for, and the
