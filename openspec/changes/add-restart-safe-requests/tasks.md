@@ -14,4 +14,5 @@
 
 ## 4. Verify
 - [x] 4.1 `gofmt -l`, `go vet ./...`, `go test ./internal/webserver/...` green (2026-11-04)
-- [ ] 4.2 Deploy the webserver, confirm "Re-armed downloads interrupted by the restart" on start when rows were queued, re-request the 45 swept episodes
+- [x] 4.2 Deployed the webserver 2026-11-04 20:57 UTC (PR #92) and again 21:06 UTC (PR #93, notification take-over). Re-requested the 45 swept episodes (Cyberpunk: Edgerunners 2, Dan Da Dan 7, JoJo's 26, South Park 10): all 45 answered 202 with a queued row written before dispatch; 43 rows settled within 4 minutes. The second recreate interrupted one row mid-dispatch (Cyberpunk S02E05): the new process logged "Reset stale queued downloads" + "Re-armed downloads interrupted by the restart" at 21:06:16 UTC and re-queued it on its first poll
+- [x] 4.3 Follow-up seen on the way: a re-request did not refresh the old failed notification (plain INSERT on the unique key) → PR #93 makes `CreateNotification` an upsert that clears `notified_status`
