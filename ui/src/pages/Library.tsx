@@ -14,16 +14,21 @@ import { MediaStatusDialog } from "../components/ui/MediaStatusDialog";
 import PageHeader from "../components/ui/PageHeader";
 import { useLibraryShows, useLibraryMovies, useShowEpisodes, useShowMetadataStatus, type LibraryShow } from "../hooks/useLibrary";
 import type { MediaStatusBadge } from "../types/MediaStatus";
+import { useRatingsBatch } from "../hooks/useRatings";
+import type { RatingsItem } from "../hooks/useRatings";
+import { pickCardRating } from "../utils/ratings";
+import type { RatingBadgeModel } from "../utils/ratings";
 
 // ShowCard component that fetches and displays episode count metadata
 interface ShowCardProps {
   item: LibraryShow;
   imageUrl: string;
+  rating: RatingBadgeModel | null;
   handleMediaClick: (tvdbId: string, title: string, thumb: string) => void;
   handleImageLoad: (tvdbId: string) => void;
 }
 
-const ShowCard: React.FC<ShowCardProps> = ({ item, imageUrl, handleMediaClick, handleImageLoad }) => {
+const ShowCard: React.FC<ShowCardProps> = ({ item, imageUrl, rating, handleMediaClick, handleImageLoad }) => {
   // Fetch metadata status for this specific show
   const { data: metadataStatus, isLoading } = useShowMetadataStatus(item.tvdbId);
 
@@ -53,6 +58,7 @@ const ShowCard: React.FC<ShowCardProps> = ({ item, imageUrl, handleMediaClick, h
       }}
       onClick={() => handleMediaClick(item.tvdbId, item.title, item.thumb)}
       statusBadge={getStatusBadge()}
+      rating={rating}
       isLoadingStatus={isLoading}
       onImageLoad={() => handleImageLoad(item.tvdbId)}
     />
@@ -221,7 +227,19 @@ export const Library = () => {
   }, [movies]);
 
   // Determine which items to display
-  const items = activeTab === "shows" ? sortedShows : activeTab === "movies" ? sortedMovies : [];
+  const items = useMemo(
+    () => (activeTab === "shows" ? sortedShows : activeTab === "movies" ? sortedMovies : []),
+    [activeTab, sortedShows, sortedMovies],
+  );
+
+  // Scores for the visible grid: Plex items only carry a TVDB id, so the
+  // backend resolves each to its IMDb id and rates it, in chunks.
+  const cardMediaType = activeTab === "movies" ? "movie" : "series";
+  const ratingItems = useMemo<RatingsItem[]>(
+    () => items.map((item) => ({ id: item.tvdbId, mediaType: cardMediaType })),
+    [items, cardMediaType],
+  );
+  const ratingsById = useRatingsBatch(ratingItems, activeTab === "shows" || activeTab === "movies");
   const isLoading =
     activeTab === "shows" ? showsLoading : activeTab === "movies" ? moviesLoading : activeTab === "following" ? followsLoading : missingLoading;
 
@@ -443,6 +461,7 @@ export const Library = () => {
                     <ShowCard
                       item={item as LibraryShow}
                       imageUrl={imageUrl}
+                      rating={pickCardRating(ratingsById.get(item.tvdbId), "series")}
                       handleMediaClick={handleMediaClick}
                       handleImageLoad={handleImageLoad}
                     />
@@ -455,6 +474,7 @@ export const Library = () => {
                       }}
                       onClick={() => handleMediaClick(item.tvdbId, item.title, item.thumb)}
                       statusBadge={{ type: "movie", inLibrary: true }}
+                      rating={pickCardRating(ratingsById.get(item.tvdbId), "movie")}
                       onImageLoad={() => handleImageLoad(item.tvdbId)}
                     />
                   )}

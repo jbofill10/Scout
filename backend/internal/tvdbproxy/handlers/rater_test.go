@@ -132,3 +132,72 @@ func TestExtendedHandlerRatesRecords(t *testing.T) {
 	assert.Nil(t, byID["2"])
 	assert.Equal(t, []string{"tt0000001", "tt0000001"}, rater.lookups, "records without an IMDb id are not looked up")
 }
+
+// resolvingRater is a stubRater that also knows IMDb ids by "mediaType:id".
+type resolvingRater struct {
+	stubRater
+	byTVDB map[string]string
+}
+
+func (r *resolvingRater) Attach(ctx context.Context, media []tvdb.Media) {
+	for i := range media {
+		if media[i].ImdbID == "" {
+			media[i].ImdbID = r.byTVDB[media[i].Category+":"+media[i].Id]
+		}
+	}
+	r.stubRater.Attach(ctx, media)
+}
+
+func postJSON(r *gin.Engine, target string, body any) *httptest.ResponseRecorder {
+	raw, _ := json.Marshal(body)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, target, bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func TestRatingsHandlerBatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rater := &resolvingRater{
+		stubRater: stubRater{known: map[string][]tvdb.Rating{"tt0000001": tomato}},
+		byTVDB:    map[string]string{"movie:1": "tt0000001", "series:2": "tt0000002"},
+	}
+	h := NewRatingsHandler(rater, slog.Default())
+	r := gin.New()
+	r.POST("/ratings/batch", h.GetBatch)
+
+	w := postJSON(r, "/ratings/batch", []RatingsRequest{
+		{Id: "1", MediaType: "movie"}, {Id: "2", MediaType: "series"}, {Id: "3", MediaType: "movie"},
+	})
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body []RatingsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, []RatingsResponse{
+		{Id: "1", MediaType: "movie", ImdbId: "tt0000001", Ratings: tomato},
+		{Id: "2", MediaType: "series", ImdbId: "tt0000002"},
+		{Id: "3", MediaType: "movie"},
+	}, body)
+}
+
+func TestRatingsHandlerRejectsBadBatches(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewRatingsHandler(nil, slog.Default())
+	r := gin.New()
+	r.POST("/ratings/batch", h.GetBatch)
+
+	assert.Equal(t, http.StatusBadRequest, postJSON(r, "/ratings/batch", []RatingsRequest{}).Code)
+	assert.Equal(t, http.StatusBadRequest, postJSON(r, "/ratings/batch", map[string]string{"id": "1"}).Code)
+	assert.Equal(t, http.StatusBadRequest, postJSON(r, "/ratings/batch", []map[string]string{{"id": "1"}}).Code,
+		"mediaType is required")
+	big := make([]RatingsRequest, ratingsBatchMax+1)
+	for i := range big {
+		big[i] = RatingsRequest{Id: "1", MediaType: "movie"}
+	}
+	assert.Equal(t, http.StatusBadRequest, postJSON(r, "/ratings/batch", big).Code)
+
+	w := postJSON(r, "/ratings/batch", []RatingsRequest{{Id: "1", MediaType: "movie"}})
+	require.Equal(t, http.StatusOK, w.Code, "without a rater titles come back unrated")
+	assert.Equal(t, `[{"id":"1","mediaType":"movie"}]`, w.Body.String())
+}

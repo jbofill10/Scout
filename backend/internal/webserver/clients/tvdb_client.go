@@ -366,3 +366,51 @@ func (c *TVDBProxyClient) GetGenres(ctx context.Context) ([]Genre, error) {
 	}
 	return response.Data, nil
 }
+
+// RatingsRequest names one title by TVDB id for a ratings batch.
+type RatingsRequest struct {
+	Id        string `json:"id" binding:"required"`
+	MediaType string `json:"mediaType" binding:"required"` // "series" or "movie"
+}
+
+// RatingsResponse is one title's scores, with the IMDb id they were found under.
+type RatingsResponse struct {
+	Id        string        `json:"id"`
+	MediaType string        `json:"mediaType"`
+	ImdbId    string        `json:"imdbId,omitempty"`
+	Ratings   []tvdb.Rating `json:"ratings,omitempty"`
+}
+
+// GetRatingsBatch asks tvdb-proxy for the scores of titles that only have a
+// TVDB id, such as the Plex library. Results come back in request order.
+func (c *TVDBProxyClient) GetRatingsBatch(ctx context.Context, requests []RatingsRequest) ([]RatingsResponse, error) {
+	body, err := json.Marshal(requests)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal ratings batch: %w", err)
+	}
+	url := fmt.Sprintf("http://%s/ratings/batch", c.Host)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.WarnContext(ctx, "Failed to close response body", "error", cerr)
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("tvdb-proxy returned status %d", resp.StatusCode)
+	}
+
+	var results []RatingsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+		return nil, fmt.Errorf("failed to decode ratings batch: %w", err)
+	}
+	return results, nil
+}

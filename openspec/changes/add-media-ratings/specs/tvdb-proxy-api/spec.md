@@ -2,10 +2,26 @@
 
 ### Requirement: Media Ratings Enrichment
 
-When an OMDb API key is configured (`OMDB_API_KEY`), the tvdb-proxy SHALL attach critic and audience scores to
-the media it returns, looked up by IMDb id: a `ratings` list of `{source, value, votes}` where `source` is
-`imdb` (value 0-10, with `votes`), `rotten_tomatoes` (the Tomatometer, 0-100) or `metacritic` (the Metascore,
-0-100), in that order. Without a key, or for a title the source does not know, `ratings` SHALL be absent.
+The tvdb-proxy SHALL attach critic and audience scores to the media it returns, looked up by IMDb id: a
+`ratings` list of `{source, value, votes}` where `source` is `imdb` (value 0-10, with `votes`),
+`rotten_tomatoes` (the Tomatometer, 0-100) or `metacritic` (the Metascore, 0-100), in that order. The IMDb
+rating SHALL come from IMDb's public daily ratings table held in memory (`RATINGS_IMDB`, on by default); the
+Tomatometer and Metascore SHALL come from OMDb when an API key is configured (`OMDB_API_KEY`). Media whose
+IMDb id TVDB does not list, or that no source knows, SHALL carry no `ratings`.
+
+#### Scenario: IMDb table loaded at startup
+
+- **WHEN** the proxy starts with `RATINGS_IMDB` on
+- **THEN** it SHALL download and parse IMDb's ratings table before serving requests, giving up after 90
+  seconds and retrying in the background every 10 minutes until it has one
+- **AND** it SHALL download the table again once a day, keeping the old table when a download fails
+
+#### Scenario: Media with only a TVDB id
+
+- **WHEN** media arrives without an IMDb id (a person-credit search hit, a ratings batch entry)
+- **THEN** the proxy SHALL resolve the IMDb id through TVDB's short extended record
+  (`/{series|movies}/{id}/extended?short=true`) once per title, caching it for 7 days (a miss for 24 hours)
+- **AND** the resolved id SHALL be returned as `imdbId` next to the `ratings`
 
 #### Scenario: Search hits carry ratings
 
@@ -33,9 +49,26 @@ the media it returns, looked up by IMDb id: a `ratings` list of `{source, value,
 
 #### Scenario: Refused key pauses lookups
 
-- **WHEN** the rating source refuses the key (daily allowance spent, or the key is wrong)
-- **THEN** the proxy SHALL stop calling the source for one hour
-- **AND** media SHALL be returned without `ratings` meanwhile
+- **WHEN** OMDb refuses the key (daily allowance spent, or the key is wrong)
+- **THEN** the proxy SHALL stop calling OMDb for one hour
+- **AND** media SHALL be returned with the IMDb rating alone meanwhile
+
+### Requirement: Ratings Batch Endpoint
+
+The tvdb-proxy SHALL provide `POST /ratings/batch` taking an array of `{id, mediaType}` (TVDB id; `series`
+or `movie`) and returning an array of `{id, mediaType, imdbId, ratings}` in the same order.
+
+#### Scenario: Rate library titles
+
+- **WHEN** a client posts up to 200 titles
+- **THEN** every title TVDB lists an IMDb id for SHALL come back with `imdbId` and the `ratings` the sources
+  hold for it
+- **AND** a title without an IMDb id or without scores SHALL come back with neither field
+
+#### Scenario: Reject bad batches
+
+- **WHEN** the body is not an array of `{id, mediaType}`, is empty, or holds more than 200 titles
+- **THEN** the proxy SHALL answer 400
 
 #### Scenario: Slow lookups do not hold the response
 

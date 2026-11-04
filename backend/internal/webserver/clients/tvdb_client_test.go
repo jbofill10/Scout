@@ -382,3 +382,40 @@ func (s *TVDBProxyClientTestSuite) TestExtendedToMedia_CarriesImdbIDAndRatings()
 	s.Equal("tt31193180", media.ImdbID)
 	s.Equal(data.Ratings, media.Ratings, "the proxy's ratings ride along into the UI's detail record")
 }
+
+func (s *TVDBProxyClientTestSuite) TestGetRatingsBatch() {
+	var got []RatingsRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.Equal(http.MethodPost, r.Method)
+		s.Equal("/ratings/batch", r.URL.Path)
+		s.NoError(json.NewDecoder(r.Body).Decode(&got))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":"1","mediaType":"movie","imdbId":"tt0000001",` +
+			`"ratings":[{"source":"imdb","value":8.1,"votes":10}]},{"id":"2","mediaType":"series"}]`))
+	}))
+	defer server.Close()
+	client := NewTVDBProxyClient(server.URL[7:])
+
+	results, err := client.GetRatingsBatch(context.Background(),
+		[]RatingsRequest{{Id: "1", MediaType: "movie"}, {Id: "2", MediaType: "series"}})
+
+	s.NoError(err)
+	s.Equal([]RatingsRequest{{Id: "1", MediaType: "movie"}, {Id: "2", MediaType: "series"}}, got)
+	s.Equal([]RatingsResponse{
+		{Id: "1", MediaType: "movie", ImdbId: "tt0000001",
+			Ratings: []tvdb.Rating{{Source: tvdb.RatingSourceIMDb, Value: 8.1, Votes: 10}}},
+		{Id: "2", MediaType: "series"},
+	}, results)
+}
+
+func (s *TVDBProxyClientTestSuite) TestGetRatingsBatchError() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+	client := NewTVDBProxyClient(server.URL[7:])
+
+	_, err := client.GetRatingsBatch(context.Background(), []RatingsRequest{{Id: "1", MediaType: "movie"}})
+
+	s.Error(err)
+}

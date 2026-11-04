@@ -2,13 +2,20 @@
 
 ## Where ratings come from
 
-Rotten Tomatoes has no public API; the Tomatometer is only available through OMDb (omdbapi.com), which
-licenses it and returns it next to IMDb's rating and Metacritic's Metascore in one record keyed by IMDb id.
-One source therefore covers both asks: Tomatometer for movies, IMDb rating for shows (OMDb rarely has a
-Tomatometer for series). The backend carries every score it gets; the UI decides which one leads.
+Two sources, both keyed by IMDb id, merged into one list (IMDb, Rotten Tomatoes, Metacritic):
 
-Alternatives considered: TMDB (no Tomatometer), Trakt ratings (needs a client id the deployment lacks),
-IMDb's daily datasets (no Tomatometer, 100 MB in memory).
+- **IMDb's public dataset** (`title.ratings.tsv.gz`, refreshed daily, no key). Every rated title's average
+  and vote count, about 1.5 million rows. Parsed into 12-byte rows (numeric id, rating in tenths, votes)
+  sorted by id and searched by bisection: about 20 MB, lookups in microseconds. Loaded before the proxy
+  serves (90 s cap, then retried in the background) so the webserver's first popular refresh already carries
+  scores; replaced once a day, and a failed download keeps the old table. This is the baseline: every card
+  can show a score with nothing configured.
+- **OMDb** (omdbapi.com, free key). Rotten Tomatoes has no public API; OMDb licenses the Tomatometer and
+  returns it next to IMDb's rating and the Metascore in one record. When a key is set its Tomatometer leads
+  on movie posters and the Metascore joins the dialog; its IMDb figure is dropped in favour of the table's,
+  which is fresher and always carries votes.
+
+Alternatives considered: TMDB (no Tomatometer), Trakt ratings (needs a client id the deployment lacks).
 
 ## Where the lookup lives
 
@@ -35,12 +42,20 @@ Ratings are decoration. A caller waits at most 4 seconds for an uncached answer;
 (`context.WithoutCancel`) so the answer still lands in the cache for the next request. OMDb answers in well
 under a second, so in practice the first search for a title pays it once.
 
-## Search hits
+## Finding the IMDb id
 
 TVDB's search index returns `remote_ids` on every hit, which was not decoded before; `TVDBSearchItem.ImdbID()`
-picks the IMDb id out, so no extra TVDB call is needed for search results. Person-credit hits (actor:/
-director: searches) come from `/people/{id}/extended`, whose embedded records have no remote ids, so those
-cards carry no rating.
+picks the IMDb id out, so no extra TVDB call is needed for title searches. Two kinds of media arrive with
+only a TVDB id: person-credit hits (actor:/director: searches come from `/people/{id}/extended`, whose
+embedded records have no remote ids) and Plex library items. `Resolver` reads TVDB's short extended record
+(`/{series|movies}/{id}/extended?short=true`: remote ids without the episode and cast lists, one call) and
+caches the mapping for a week (it never changes) or a miss for a day. `Service.Attach` resolves such items
+first and keeps the id on the item, so `POST /ratings/batch` can rate by TVDB id for the Library page, which
+asks in chunks of 40 so the first posters get their score while the rest resolve.
+
+Shared machinery: `asyncCache` memoises detached lookups by key (callers wait only as long as their context
+allows, the lookup runs on under its own timeout and lands in the cache, concurrent callers share it). Both
+the OMDb cache and the resolver cache are instances of it.
 
 ## Card treatment
 

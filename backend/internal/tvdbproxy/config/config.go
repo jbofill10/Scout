@@ -63,9 +63,18 @@ type AniList struct {
 	Host string
 }
 
-// OMDb configures the rating source behind the scores on media cards: the
-// Rotten Tomatoes Tomatometer, IMDb's rating and the Metascore, looked up
-// by IMDb id. With no key, media carry no ratings.
+// IMDb configures the keyless rating source: IMDb's public daily ratings
+// table, held in memory, which gives every card an IMDb rating.
+type IMDb struct {
+	// Enabled is RATINGS_IMDB; anything but false/0/off/no means on.
+	Enabled bool
+	// URL overrides the table's location (IMDB_RATINGS_URL), for tests.
+	URL string
+}
+
+// OMDb configures the keyed rating source that adds the Rotten Tomatoes
+// Tomatometer and the Metascore, looked up by IMDb id. With no key, cards
+// show the IMDb rating alone.
 type OMDb struct {
 	// APIKey is an OMDb API key (OMDB_API_KEY); free keys allow 1,000 lookups a day.
 	APIKey string
@@ -79,6 +88,7 @@ type Config struct {
 	Trakt     Trakt
 	Wikipedia Wikipedia
 	AniList   AniList
+	IMDb      IMDb
 	OMDb      OMDb
 	// BindAddress is where the HTTP server listens (BIND_ADDRESS).
 	BindAddress string
@@ -132,6 +142,10 @@ func Load() (Config, error) {
 	cfg.AniList = AniList{
 		Enabled: enabled(os.Getenv("POPULAR_ANILIST")),
 		Host:    os.Getenv("ANILIST_HOST"),
+	}
+	cfg.IMDb = IMDb{
+		Enabled: enabled(os.Getenv("RATINGS_IMDB")),
+		URL:     os.Getenv("IMDB_RATINGS_URL"),
 	}
 	cfg.OMDb = OMDb{
 		APIKey: strings.TrimSpace(os.Getenv("OMDB_API_KEY")),

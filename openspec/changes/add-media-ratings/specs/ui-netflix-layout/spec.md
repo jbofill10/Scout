@@ -17,7 +17,7 @@ The UI SHALL provide a media card component that displays poster images with hov
 - **THEN** the card SHALL show one score as a pill in its top-left corner, next to the library badge in the
   top-right
 - **AND** for a movie the pill SHALL show the Rotten Tomatoes Tomatometer as a percentage with a tomato (60%
-  and up) or splat (below 60%) glyph, falling back to the IMDb rating and then the Metascore
+  and up) or splat (below 60%) glyph when there is one, otherwise the IMDb rating, otherwise the Metascore
 - **AND** for a series the pill SHALL show the IMDb rating to one decimal with a star glyph, falling back to
   the Tomatometer and then the Metascore
 - **AND** the pill SHALL name its source and value for assistive technology (e.g. "Tomatometer 97%")

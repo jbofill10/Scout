@@ -199,6 +199,7 @@ func main() {
 	statusHandler := handlers.NewStatusHandler(torrenterClient, logger)
 	mediaExtendedHandler := handlers.NewMediaExtendedHandler(tvdbClient, logger)
 	libraryHandler := handlers.NewLibraryHandler(torrenterClient, logger)
+	ratingsHandler := handlers.NewRatingsHandler(tvdbClient, logger)
 	tvdbHandler := handlers.NewTVDBHandler(tvdbClient, logger)
 	activityInteractor := interactors.NewActivityInteractor(notificationRepo, schedulerRepo, logger)
 	activityHandler := handlers.NewActivityHandler(activityInteractor, logger)
@@ -293,6 +294,8 @@ func main() {
 	r.GET("/library/shows/:tvdbId", libraryHandler.GetShowDetails)
 	r.GET("/library/shows/:tvdbId/metadata-status", libraryHandler.GetShowMetadataStatus)
 	r.GET("/library/movies", libraryHandler.GetMovies)
+	// Scores for titles that only have a TVDB id (the Library page's cards)
+	r.POST("/ratings/batch", ratingsHandler.PostBatch)
 	r.GET("/library/missing", missingHandler.List)
 	r.POST("/library/shows/:tvdbId/fill-missing", missingHandler.Fill)
 
