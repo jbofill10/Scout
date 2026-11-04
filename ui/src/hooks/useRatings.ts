@@ -3,10 +3,15 @@ import { useQueries } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { MediaRating } from "../types/MediaStatus";
 
-/** One title to rate, by TVDB id. */
+/**
+ * One title to rate, by TVDB id. Title and year are optional and let the
+ * backend find a film's Wikipedia article when Wikidata has no item for it.
+ */
 export interface RatingsItem {
   id: string;
   mediaType: "series" | "movie";
+  title?: string;
+  year?: string;
 }
 
 /** One row of POST /api/ratings/batch. */

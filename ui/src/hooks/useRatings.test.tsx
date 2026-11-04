@@ -7,6 +7,8 @@ import type { RatingsItem } from "./useRatings";
 const items: RatingsItem[] = Array.from({ length: 45 }, (_, i) => ({
   id: String(i + 1),
   mediaType: i % 2 === 0 ? "series" : "movie",
+  title: `Title ${i + 1}`,
+  year: i % 2 === 0 ? undefined : "2025",
 }));
 
 afterEach(() => vi.unstubAllGlobals());
@@ -40,7 +42,9 @@ describe("useRatingsBatch", () => {
     await waitFor(() => expect(result.current.size).toBe(44));
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][0]).toBe("/api/ratings/batch");
-    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toHaveLength(40);
+    const firstBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(firstBody).toHaveLength(40);
+    expect(firstBody[1]).toEqual({ id: "2", mediaType: "movie", title: "Title 2", year: "2025" });
     expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toHaveLength(5);
     expect(result.current.get("1")).toEqual([{ source: "imdb", value: 7 }]);
     expect(result.current.has("3")).toBe(false);

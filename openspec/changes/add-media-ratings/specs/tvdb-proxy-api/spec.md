@@ -29,6 +29,12 @@ source knows, SHALL carry no `ratings`.
   audience score
 - **AND** it SHALL fetch up to 20 articles per request and not read articles of series
 
+#### Scenario: Film without a Wikidata item
+
+- **WHEN** Wikidata has no item for a film's IMDb id and the caller gave the film's name (and year)
+- **THEN** the proxy SHALL search English Wikipedia for an article with that name, accepting only a film
+  article (one carrying `{{Infobox film}}`) that names the year, and read its scores as above
+
 #### Scenario: Popular rows rated as built
 
 - **WHEN** a popular row is ranked
@@ -81,8 +87,9 @@ source knows, SHALL carry no `ratings`.
 
 ### Requirement: Ratings Batch Endpoint
 
-The tvdb-proxy SHALL provide `POST /ratings/batch` taking an array of `{id, mediaType}` (TVDB id; `series`
-or `movie`) and returning an array of `{id, mediaType, imdbId, ratings}` in the same order.
+The tvdb-proxy SHALL provide `POST /ratings/batch` taking an array of `{id, mediaType, title?, year?}` (TVDB
+id; `series` or `movie`; the optional title and year serve as hints for the article search) and returning an
+array of `{id, mediaType, imdbId, ratings}` in the same order.
 
 #### Scenario: Rate library titles
 

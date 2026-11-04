@@ -367,10 +367,13 @@ func (c *TVDBProxyClient) GetGenres(ctx context.Context) ([]Genre, error) {
 	return response.Data, nil
 }
 
-// RatingsRequest names one title by TVDB id for a ratings batch.
+// RatingsRequest names one title by TVDB id for a ratings batch. Title and
+// year are optional hints for titles Wikidata has no item for.
 type RatingsRequest struct {
 	Id        string `json:"id" binding:"required"`
 	MediaType string `json:"mediaType" binding:"required"` // "series" or "movie"
+	Title     string `json:"title,omitempty"`
+	Year      string `json:"year,omitempty"`
 }
 
 // RatingsResponse is one title's scores, with the IMDb id they were found under.

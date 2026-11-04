@@ -81,6 +81,54 @@ type mediawikiQuery struct {
 	} `json:"query"`
 }
 
+// searchCandidates is how many search hits Search reads before giving up.
+const searchCandidates = 5
+
+var infoboxFilm = regexp.MustCompile(`(?i)\{\{\s*Infobox film\b`)
+
+// Search finds the article for a film by name and release year, for titles
+// Wikidata has no item for. A hit counts only if it is a film article (it
+// carries {{Infobox film}}) and names the year in its lead, so a namesake
+// from another year is not taken.
+func (p *Prose) Search(ctx context.Context, name, year string) (string, bool) {
+	query := url.Values{}
+	query.Set("action", "query")
+	query.Set("list", "search")
+	query.Set("srsearch", `intitle:"`+strings.ReplaceAll(name, `"`, "")+`"`)
+	query.Set("srlimit", strconv.Itoa(searchCandidates))
+	query.Set("format", "json")
+	query.Set("formatversion", "2")
+	var result struct {
+		Query struct {
+			Search []struct {
+				Title string `json:"title"`
+			} `json:"search"`
+		} `json:"query"`
+	}
+	if err := p.getJSON(ctx, query, &result); err != nil {
+		p.logger.WarnContext(ctx, "Wikipedia search failed", "name", name, "error", err)
+		return "", false
+	}
+	for _, hit := range result.Query.Search {
+		texts, err := p.wikitext(ctx, []string{hit.Title})
+		if err != nil {
+			return "", false
+		}
+		text := texts[hit.Title]
+		if !infoboxFilm.MatchString(text) {
+			continue
+		}
+		lead := text
+		if len(lead) > 3000 {
+			lead = lead[:3000]
+		}
+		if year == "" || strings.Contains(lead, year) {
+			return hit.Title, true
+		}
+	}
+	return "", false
+}
+
 // Scores returns the Tomatometer and Metascore found in each article's
 // wikitext, keyed by the title as given. Articles without either are absent.
 func (p *Prose) Scores(ctx context.Context, titles []string) (map[string][]tvdb.Rating, error) {
@@ -96,15 +144,20 @@ func (p *Prose) Scores(ctx context.Context, titles []string) (map[string][]tvdb.
 
 // fetch reads one chunk of articles into scores.
 func (p *Prose) fetch(ctx context.Context, titles []string, scores map[string][]tvdb.Rating) error {
-	query := url.Values{}
-	query.Set("action", "query")
-	query.Set("prop", "revisions")
-	query.Set("rvprop", "content")
-	query.Set("rvslots", "main")
-	query.Set("redirects", "1")
-	query.Set("format", "json")
-	query.Set("formatversion", "2")
-	query.Set("titles", strings.Join(titles, "|"))
+	texts, err := p.wikitext(ctx, titles)
+	if err != nil {
+		return err
+	}
+	for title, text := range texts {
+		if ratings := scoresFromWikitext(text); len(ratings) > 0 {
+			scores[title] = ratings
+		}
+	}
+	return nil
+}
+
+// getJSON performs one MediaWiki API query and decodes its JSON answer.
+func (p *Prose) getJSON(ctx context.Context, query url.Values, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.url+"?"+query.Encode(), nil)
 	if err != nil {
 		return err
@@ -127,9 +180,27 @@ func (p *Prose) fetch(ctx context.Context, titles []string, scores map[string][]
 	if err != nil {
 		return fmt.Errorf("wikipedia: read: %w", err)
 	}
-	var result mediawikiQuery
-	if err := json.Unmarshal(body, &result); err != nil {
+	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("wikipedia: decode: %w", err)
+	}
+	return nil
+}
+
+// wikitext fetches the current wikitext of each article, keyed by the title
+// as given. Missing articles are absent.
+func (p *Prose) wikitext(ctx context.Context, titles []string) (map[string]string, error) {
+	query := url.Values{}
+	query.Set("action", "query")
+	query.Set("prop", "revisions")
+	query.Set("rvprop", "content")
+	query.Set("rvslots", "main")
+	query.Set("redirects", "1")
+	query.Set("format", "json")
+	query.Set("formatversion", "2")
+	query.Set("titles", strings.Join(titles, "|"))
+	var result mediawikiQuery
+	if err := p.getJSON(ctx, query, &result); err != nil {
+		return nil, err
 	}
 
 	// The API answers under normalised and redirected titles; map each
@@ -148,6 +219,7 @@ func (p *Prose) fetch(ctx context.Context, titles []string, scores map[string][]
 			texts[page.Title] = page.Revisions[0].Slots.Main.Content
 		}
 	}
+	out := make(map[string]string, len(titles))
 	for _, title := range titles {
 		resolved := title
 		if to, ok := normalized[resolved]; ok {
@@ -156,15 +228,11 @@ func (p *Prose) fetch(ctx context.Context, titles []string, scores map[string][]
 		if to, ok := redirects[resolved]; ok {
 			resolved = to
 		}
-		text, ok := texts[resolved]
-		if !ok {
-			continue
-		}
-		if ratings := scoresFromWikitext(text); len(ratings) > 0 {
-			scores[title] = ratings
+		if text, ok := texts[resolved]; ok {
+			out[title] = text
 		}
 	}
-	return nil
+	return out, nil
 }
 
 // scoresFromWikitext reads the Tomatometer and Metascore an article states,

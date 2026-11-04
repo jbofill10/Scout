@@ -65,10 +65,21 @@ type RecordSource interface {
 	Records(ctx context.Context, imdbIDs []string) (map[string]Record, error)
 }
 
-// ProseSource reads scores out of Wikipedia articles by title; Prose
-// implements it. Titles without scores are absent from the map.
+// ProseSource reads scores out of Wikipedia articles; Prose implements it.
 type ProseSource interface {
+	// Scores reads each article's scores by title; titles without are absent.
 	Scores(ctx context.Context, titles []string) (map[string][]tvdb.Rating, error)
+	// Search finds a film's article by name and year, for titles Wikidata has
+	// no item for.
+	Search(ctx context.Context, name, year string) (string, bool)
+}
+
+// Hint is what a caller knows about a title besides its IMDb id, used to
+// find its Wikipedia article when Wikidata has no item for the id.
+type Hint struct {
+	Name string
+	Year string
+	Film bool
 }
 
 // IMDbTable answers IMDb ratings from a local table; Dataset implements it.
@@ -143,11 +154,18 @@ func (s *Service) Attach(ctx context.Context, media []tvdb.Media, wait time.Dura
 		return
 	}
 	ids := make([]string, 0, len(byID))
-	for id := range byID {
+	hints := make(map[string]Hint, len(byID))
+	for id, indexes := range byID {
 		ids = append(ids, id)
+		item := media[indexes[0]]
+		name := item.Name
+		if name == "" {
+			name = item.OriginalName
+		}
+		hints[id] = Hint{Name: name, Year: item.Year, Film: item.Category == "movie"}
 	}
 
-	results := s.LookupMany(ctx, ids, wait)
+	results := s.lookupMany(ctx, ids, hints, wait)
 	for id, indexes := range byID {
 		ratings := results[id]
 		if len(ratings) == 0 {
@@ -214,6 +232,13 @@ func (s *Service) Lookup(ctx context.Context, imdbID string, wait time.Duration)
 // otherwise, each from its cache or waiting at most wait for a new lookup.
 // Ids with nothing known yet, or nothing at all, are absent.
 func (s *Service) LookupMany(ctx context.Context, imdbIDs []string, wait time.Duration) map[string][]tvdb.Rating {
+	return s.lookupMany(ctx, imdbIDs, nil, wait)
+}
+
+// lookupMany is LookupMany with hints for the article search.
+func (s *Service) lookupMany(
+	ctx context.Context, imdbIDs []string, hints map[string]Hint, wait time.Duration,
+) map[string][]tvdb.Rating {
 	ctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
 
@@ -231,7 +256,7 @@ func (s *Service) LookupMany(ctx context.Context, imdbIDs []string, wait time.Du
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		recorded = s.fromWikidata(ctx, ids)
+		recorded = s.fromWikidata(ctx, ids, hints)
 	}()
 	if s.opts.Source != nil {
 		for _, id := range ids {
@@ -293,7 +318,7 @@ func (s *Service) merge(imdbID string, sourced, recorded []tvdb.Rating) []tvdb.R
 // Wikipedia article for films Wikidata has not scored: cached answers at
 // once, the rest through one query per chunk of ids, run detached and
 // shared by every caller asking for that chunk.
-func (s *Service) fromWikidata(ctx context.Context, ids []string) map[string][]tvdb.Rating {
+func (s *Service) fromWikidata(ctx context.Context, ids []string, hints map[string]Hint) map[string][]tvdb.Rating {
 	if s.opts.Wikidata == nil {
 		return nil
 	}
@@ -321,6 +346,7 @@ func (s *Service) fromWikidata(ctx context.Context, ids []string) map[string][]t
 						telemetry.WithTraceContext(ctx, "count", len(chunk), "error", err)...)
 					return struct{}{}, 0
 				}
+				s.findArticles(ctx, chunk, records, hints)
 				scores := s.completeFromProse(ctx, records)
 				s.mu.Lock()
 				defer s.mu.Unlock()
@@ -355,6 +381,27 @@ func (s *Service) fromWikidata(ctx context.Context, ids []string) map[string][]t
 		}
 	}
 	return results
+}
+
+// findArticles adds a record for each film Wikidata has no item for, when
+// its hint names it and Wikipedia has a film article for that name and
+// year. One search per such title, inside the chunk's detached lookup.
+func (s *Service) findArticles(ctx context.Context, ids []string, records map[string]Record, hints map[string]Hint) {
+	if s.opts.Prose == nil {
+		return
+	}
+	for _, id := range ids {
+		if _, known := records[id]; known {
+			continue
+		}
+		hint, ok := hints[id]
+		if !ok || !hint.Film || hint.Name == "" {
+			continue
+		}
+		if article, found := s.opts.Prose.Search(ctx, hint.Name, hint.Year); found {
+			records[id] = Record{Article: article, Film: true}
+		}
+	}
 }
 
 // completeFromProse returns each record's scores, with the Tomatometer and

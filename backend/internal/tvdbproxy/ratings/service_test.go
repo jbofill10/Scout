@@ -295,12 +295,23 @@ func (s *stubScores) Records(_ context.Context, ids []string) (map[string]Record
 	return out, nil
 }
 
-// stubProse is a ProseSource answering from a table of article titles.
+// stubProse is a ProseSource answering from a table of article titles and
+// a table of "name|year" → article for searches.
 type stubProse struct {
-	mu      sync.Mutex
-	answers map[string][]tvdb.Rating
-	err     error
-	asked   [][]string
+	mu       sync.Mutex
+	answers  map[string][]tvdb.Rating
+	articles map[string]string
+	err      error
+	asked    [][]string
+	searched []string
+}
+
+func (p *stubProse) Search(_ context.Context, name, year string) (string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.searched = append(p.searched, name+"|"+year)
+	article, ok := p.articles[name+"|"+year]
+	return article, ok
 }
 
 func (p *stubProse) Scores(_ context.Context, titles []string) (map[string][]tvdb.Rating, error) {
@@ -421,6 +432,34 @@ func TestAttachUsesWikidataForMovies(t *testing.T) {
 	s.Attach(context.Background(), media, DefaultWait)
 
 	assert.Equal(t, []tvdb.Rating{imdbEight[0], tomato97}, media[0].Ratings)
+}
+
+func TestAttachSearchesArticlesForFilmsWikidataLacks(t *testing.T) {
+	wikidata := &stubScores{records: map[string]Record{"tt1": {Article: "Known Film", Film: true}}}
+	prose := &stubProse{
+		answers:  map[string][]tvdb.Rating{"Known Film": {tomato97}, "Last Take (film)": {{Source: tvdb.RatingSourceRottenTomatoes, Value: 86}}},
+		articles: map[string]string{"Last Take|2025": "Last Take (film)"},
+	}
+	s, _ := newTestService(Options{Wikidata: wikidata, Prose: prose})
+
+	media := []tvdb.Media{
+		{Id: "a", Category: "movie", ImdbID: "tt1", Name: "Known Film", Year: "2020"},
+		{Id: "b", Category: "movie", ImdbID: "tt2", Name: "Last Take", Year: "2025"},
+		{Id: "c", Category: "movie", ImdbID: "tt3", Name: "Unknown Doc", Year: "2025"},
+		{Id: "d", Category: "series", ImdbID: "tt4", Name: "Some Show", Year: "2025"},
+	}
+	s.Attach(context.Background(), media, DefaultWait)
+
+	assert.Equal(t, []tvdb.Rating{tomato97}, media[0].Ratings)
+	assert.Equal(t, []tvdb.Rating{{Source: tvdb.RatingSourceRottenTomatoes, Value: 86}}, media[1].Ratings,
+		"a film Wikidata has no item for is found by name and year")
+	assert.Nil(t, media[2].Ratings)
+	assert.Nil(t, media[3].Ratings)
+	assert.ElementsMatch(t, []string{"Last Take|2025", "Unknown Doc|2025"}, prose.searched,
+		"only films without a Wikidata item are searched; series are not")
+
+	s.LookupMany(context.Background(), []string{"tt2"}, DefaultWait)
+	assert.Len(t, prose.searched, 2, "the answer is cached with the chunk")
 }
 
 func TestLookupManyKeepsWikidataScoresWhenProseFails(t *testing.T) {
