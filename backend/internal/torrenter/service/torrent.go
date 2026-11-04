@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -445,6 +446,18 @@ func (q *QbittHandler) processEpisodeDownload(
 	return q.initiateDownloadAndMonitor(outcome.winningCtx, outcome.match, searchRequestFor(req, strategies[0]), done, wg)
 }
 
+// addFailureCode classifies a failed torrent add by what happened to the
+// search context underneath it. Only an explicit cancellation (a user cancel,
+// or the caller giving up) is reported as cancelled, which the webserver does
+// not retry; a deadline that ran out while qBittorrent was slow to answer, like
+// any other add error, is a transient torrent-client error worth a retry.
+func addFailureCode(ctx context.Context) dlstatus.FailureCode {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return dlstatus.CodeCancelled
+	}
+	return dlstatus.CodeTorrentClientError
+}
+
 // initiateDownloadAndMonitor starts the download and begins monitoring for completion
 func (q *QbittHandler) initiateDownloadAndMonitor(
 	ctx context.Context,
@@ -472,19 +485,26 @@ func (q *QbittHandler) initiateDownloadAndMonitor(
 		return q.failedResult(ss, dlstatus.CodeInsufficientDiskSpace)
 	}
 
+	// The search's deadline may run out while the add is in flight; the steps
+	// that follow the add (notifications, the in-flight row, the monitor) must
+	// not be cut short by it, or a torrent qBittorrent holds is left untracked.
+	keep := context.WithoutCancel(ctx)
 	infoHash, trackingUUID, err := q.downloadTorrent(ctx, match.Torrent, isPack)
 	if err != nil {
-		if ctx.Err() != nil {
-			// The search context was cancelled underneath the add (a user cancel,
-			// or the caller gave up); neither wants a retry scheduled from here.
-			q.logger.InfoContext(ctx, "Torrent add abandoned: context cancelled", "error", err)
-			return q.failedResult(ss, dlstatus.CodeCancelled)
+		code := addFailureCode(ctx)
+		if code == dlstatus.CodeCancelled {
+			// The search was cancelled underneath the add (a user cancel, or the
+			// caller gave up); neither wants a retry scheduled from here.
+			q.logger.InfoContext(keep, "Torrent add abandoned: request cancelled", "error", err)
+			return q.failedResult(ss, code)
 		}
-		q.logger.ErrorContext(ctx, "Failed to download torrent", "error", err)
-		// Transient torrent-client error: keep the notification searching for the retry engine.
-		q.applyFailureNotification(ctx, ss.EpisodeTvdbID, dlstatus.CodeTorrentClientError)
-		return q.failedResult(ss, dlstatus.CodeTorrentClientError)
+		q.logger.ErrorContext(keep, "Failed to download torrent", "error", err, "ctx_err", ctx.Err())
+		// Transient torrent-client error (a deadline that expired underneath a
+		// slow add counts): keep the notification searching for the retry engine.
+		q.applyFailureNotification(keep, ss.EpisodeTvdbID, code)
+		return q.failedResult(ss, code)
 	}
+	ctx = keep
 
 	// Update notification: download has started successfully
 	q.updateNotificationStatus(ctx, ss.EpisodeTvdbID, "", notifications.StatusDownloading)
