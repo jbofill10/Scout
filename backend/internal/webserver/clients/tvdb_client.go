@@ -260,6 +260,8 @@ func ExtendedToMedia(data tvdb.TVDBSeriesExtendedData, mediaType string) tvdb.Me
 		OriginalCountry:  data.OriginalCountry,
 		OriginalLanguage: data.OriginalLanguage,
 		Score:            data.Score,
+		ImdbID:           data.ImdbID(),
+		Ratings:          data.Ratings,
 		Metadata: tvdb.TVDBSeriesMetadata{
 			FirstAired: data.FirstAired,
 			LastAired:  data.LastAired,

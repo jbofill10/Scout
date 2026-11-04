@@ -49,6 +49,7 @@ func searchItemToMedia(item tvdb.TVDBSearchItem) (tvdb.Media, bool) {
 		Network:          item.Network,
 		OriginalCountry:  item.Country,
 		OriginalLanguage: item.PrimaryLanguage,
+		ImdbID:           item.ImdbID(),
 		Metadata:         tvdb.TVDBSeriesMetadata{Episodes: []tvdb.Episode{}},
 	}, true
 }

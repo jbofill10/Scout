@@ -2,12 +2,13 @@ import React, { useCallback, useState } from "react";
 import MediaStatusDialog from "./ui/MediaStatusDialog";
 import SearchResultsGrid from "./ui/SearchResultsGrid";
 import { useDownloadRequest } from "../hooks/useDownloadRequest";
-import type { EnrichedMedia, ShowStatus } from "../types/MediaStatus";
+import type { EnrichedMedia, MediaRating, ShowStatus } from "../types/MediaStatus";
 
 export interface SearchResult {
   id: string;
   image_url: string;
   mediaName: string;
+  ratings?: MediaRating[];
   metadata?: {
     episodes?: Array<{
       aired: string;

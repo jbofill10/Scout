@@ -365,3 +365,20 @@ func (s *TVDBProxyClientTestSuite) TestGetMediaDetails_EmptyPayloadErrors() {
 
 	s.Error(err)
 }
+
+func (s *TVDBProxyClientTestSuite) TestExtendedToMedia_CarriesImdbIDAndRatings() {
+	data := tvdb.TVDBSeriesExtendedData{
+		Id:        1,
+		Name:      "Sinners",
+		RemoteIds: []tvdb.RemoteID{{Id: "tt31193180", Type: tvdb.RemoteIDTypeIMDb, SourceName: "IMDB"}},
+		Ratings: []tvdb.Rating{
+			{Source: tvdb.RatingSourceIMDb, Value: 7.7, Votes: 151234},
+			{Source: tvdb.RatingSourceRottenTomatoes, Value: 97},
+		},
+	}
+
+	media := ExtendedToMedia(data, "movie")
+
+	s.Equal("tt31193180", media.ImdbID)
+	s.Equal(data.Ratings, media.Ratings, "the proxy's ratings ride along into the UI's detail record")
+}

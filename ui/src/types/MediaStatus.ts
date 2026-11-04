@@ -80,6 +80,16 @@ export interface MediaStatusInfo {
 }
 
 /**
+ * One critic or audience score (tvdb.Rating). value is in the source's own
+ * scale: 0-10 for imdb, 0-100 for rotten_tomatoes and metacritic.
+ */
+export interface MediaRating {
+  source: string;
+  value: number;
+  votes?: number;
+}
+
+/**
  * A media record as returned by the backend (tvdb.Media).
  * Detail fields are optional because the popular/search list endpoints only
  * populate a subset; the details endpoint fills in the rest.
@@ -108,6 +118,10 @@ export interface MediaRecord {
   network?: string;
   /** Why a search returned this when it was not a title match, e.g. "Mia Goth · Actor" */
   matchedVia?: string;
+  /** IMDb id, "tt1234567", when TVDB knows it */
+  imdbId?: string;
+  /** Critic and audience scores, when a rating source is configured and knows the title */
+  ratings?: MediaRating[];
   metadata?: {
     firstAired?: string;
     lastAired?: string;

@@ -23,12 +23,14 @@ type ExtendedFetcher interface {
 // ExtendedHandler serves GET /series/:id/extended and POST /series/batch/extended.
 type ExtendedHandler struct {
 	fetcher ExtendedFetcher
+	rater   Rater
 	logger  *slog.Logger
 }
 
-// NewExtendedHandler returns an ExtendedHandler backed by fetcher.
-func NewExtendedHandler(fetcher ExtendedFetcher, logger *slog.Logger) *ExtendedHandler {
-	return &ExtendedHandler{fetcher: fetcher, logger: logger}
+// NewExtendedHandler returns an ExtendedHandler backed by fetcher. rater may
+// be nil, in which case records carry no ratings.
+func NewExtendedHandler(fetcher ExtendedFetcher, rater Rater, logger *slog.Logger) *ExtendedHandler {
+	return &ExtendedHandler{fetcher: fetcher, rater: rater, logger: logger}
 }
 
 // BatchExtendedRequest represents a single request in the batch
@@ -59,6 +61,7 @@ func (h *ExtendedHandler) GetExtended(c *gin.Context) {
 		})
 		return
 	}
+	rateExtended(ctx, h.rater, info)
 
 	c.JSON(http.StatusOK, info)
 }
@@ -118,6 +121,7 @@ func (h *ExtendedHandler) GetBatchExtended(c *gin.Context) {
 					"error", err)
 				response.Error = err.Error()
 			} else {
+				rateExtended(ctx, h.rater, info)
 				response.Data = info
 			}
 

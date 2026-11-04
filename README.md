@@ -114,6 +114,7 @@ Required secrets:
 
 ### Optional integrations
 - **Trakt**: `TRAKT_CLIENT_ID` (a free app at https://trakt.tv/oauth/applications) ranks the Home, Shows and Movies rows by what people watched this week (`TRAKT_PERIOD`) or are watching now (`TRAKT_LIST=trending`). Without it the rows rank recent TVDB titles by what people are reading about on English Wikipedia this week, and the Anime rows lead with AniList's trending anime (no keys needed; `POPULAR_WIKIPEDIA=false` and `POPULAR_ANILIST=false` turn those off).
+- **Ratings**: `OMDB_API_KEY` (a free key at https://www.omdbapi.com/apikey.aspx, 1,000 lookups a day) puts a score on every poster: the Rotten Tomatoes Tomatometer for movies, the IMDb rating for shows, and all three (plus the Metascore) in the detail view. Scores are cached for a week; without a key the cards carry none.
 - **Subtitles**: `OPENSUBTITLES_API_KEY` (+ account) turns on subtitle fetching.
 - **Relay rotation**: install `tools/relay-agent` on the host and set `RELAY_AGENT_URL` / `RELAY_AGENT_TOKEN`; see `tools/relay-agent/README.md`.
 - **Notifications**: add webhook, ntfy or Discord targets on the Settings page; a Home Assistant webhook URL works as a webhook target.

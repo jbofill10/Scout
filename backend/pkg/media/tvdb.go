@@ -49,6 +49,26 @@ type Popularity struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+// Rating sources, as Media.Ratings reports them.
+const (
+	// RatingSourceIMDb is IMDb's user rating, 0-10.
+	RatingSourceIMDb = "imdb"
+	// RatingSourceRottenTomatoes is the Tomatometer, 0-100.
+	RatingSourceRottenTomatoes = "rotten_tomatoes"
+	// RatingSourceMetacritic is the Metascore, 0-100.
+	RatingSourceMetacritic = "metacritic"
+)
+
+// Rating is one critic or audience score for a title. Value is in the
+// source's own scale: 0-10 for IMDb, 0-100 for Rotten Tomatoes and
+// Metacritic.
+type Rating struct {
+	Source string  `json:"source"`
+	Value  float64 `json:"value"`
+	// Votes is how many people rated it, when the source says (IMDb).
+	Votes int `json:"votes,omitempty"`
+}
+
 type Media struct {
 	// TVDB Id for show
 	Id string `json:"id"`
@@ -91,6 +111,9 @@ type Media struct {
 	// IMDb id ("tt1234567") for the show or movie, from the TVDB extended
 	// record's remote ids. Used to look up subtitles; empty when TVDB has none.
 	ImdbID string `json:"imdbId,omitempty"`
+	// Ratings are the title's critic and audience scores, looked up by IMDb
+	// id; empty when the title has none or no rating source is configured.
+	Ratings []Rating `json:"ratings,omitempty"`
 	// Director, as TVDB's search index lists it (movies only)
 	Director string `json:"director,omitempty"`
 	// Production studios (movies only)
@@ -164,6 +187,14 @@ type TVDBSearchItem struct {
 	PrimaryLanguage string `json:"primary_language"`
 	// TVDB's numeric id as a string, "154561". Person hits carry it too.
 	TvdbID string `json:"tvdb_id"`
+	// External ids (IMDb, TMDb, ...); search hits carry them like extended records do
+	RemoteIds []RemoteID `json:"remote_ids"`
+}
+
+// ImdbID returns the IMDb id from the hit's remote ids, or "" when TVDB lists
+// none or lists something that is not a title id.
+func (i TVDBSearchItem) ImdbID() string {
+	return imdbIDFrom(i.RemoteIds)
 }
 
 // TVDBPeopleExtendedResponse wraps /people/{id}/extended.
@@ -293,6 +324,9 @@ type TVDBSeriesExtendedData struct {
 	FirstRelease   Release         `json:"first_release"`  // Earliest release, usually country "global"
 	Releases       []Release       `json:"releases"`       // Per-country release dates
 	Tagline        string          `json:"tagline"`        // Filled from translations, not returned inline
+	// Ratings is not a TVDB field: tvdb-proxy fills it from its rating source
+	// by the record's IMDb id, so the webserver can carry it into Media.
+	Ratings []Rating `json:"ratings,omitempty"`
 }
 
 // Release is a dated release of a movie in one country.
@@ -374,7 +408,12 @@ var imdbIDPattern = regexp.MustCompile(`^tt\d{5,10}$`)
 // ImdbID returns the IMDb id from the extended record's remote ids, or "" when
 // TVDB lists none or lists something that is not a title id.
 func (d TVDBSeriesExtendedData) ImdbID() string {
-	for _, rid := range d.RemoteIds {
+	return imdbIDFrom(d.RemoteIds)
+}
+
+// imdbIDFrom picks the IMDb title id out of a remote id list.
+func imdbIDFrom(ids []RemoteID) string {
+	for _, rid := range ids {
 		if rid.Type != RemoteIDTypeIMDb && !strings.EqualFold(rid.SourceName, "IMDB") {
 			continue
 		}

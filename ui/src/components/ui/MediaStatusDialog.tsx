@@ -24,6 +24,8 @@ import useMediaQuery from "@mui/material/useMediaQuery";
 import { useShowMetadataStatus } from "../../hooks/useLibrary";
 import { useMediaDetails } from "../../hooks/useMediaDetails";
 import FollowButton from "./FollowButton";
+import RatingPill from "./RatingPill";
+import { orderedRatings } from "../../utils/ratings";
 
 export interface MediaStatusDialogProps {
   open: boolean;
@@ -149,12 +151,13 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
       genres: details?.genres?.length ? details.genres : base?.genres ?? [],
       runtime: details?.runtime || base?.runtime || 0,
       contentRating: details?.contentRating || base?.contentRating || "",
+      ratings: orderedRatings(details?.ratings?.length ? details.ratings : base?.ratings, mediaType),
       firstAired: details?.metadata?.firstAired || base?.metadata?.firstAired || "",
       lastAired: details?.metadata?.lastAired || base?.metadata?.lastAired || "",
       anime: base?.anime ?? details?.anime ?? false,
       episodes: listEpisodes.length > 0 ? listEpisodes : details?.metadata?.episodes ?? [],
     };
-  }, [enrichedMedia, details]);
+  }, [enrichedMedia, details, mediaType]);
 
   // Merge TVDB episode metadata with Plex download status
   const enrichedSeasons = useMemo<EnrichedSeasonInfo[]>(() => {
@@ -309,6 +312,15 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
     >
       {facts.join(" · ")}
     </Typography>
+  );
+
+  // Critic and audience scores, the one the card led with first
+  const ratingsRow = info.ratings.length > 0 && (
+    <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mt: 1 }} aria-label="Ratings">
+      {info.ratings.map((rating) => (
+        <RatingPill key={rating.source} rating={rating} size="detail" />
+      ))}
+    </Box>
   );
 
   // TVDB sometimes files a whole synopsis under "tagline" — only show it when it
@@ -515,6 +527,7 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
               {mediaName}
             </Typography>
             {factsRow}
+            {ratingsRow}
             {taglineRow}
             <Box sx={{ mt: 1.5 }}>{libraryPill}</Box>
             {genreChips}
@@ -576,6 +589,7 @@ export const MediaStatusDialog: React.FC<MediaStatusDialogProps> = ({
             {mediaName}
           </Typography>
           {factsRow}
+          {ratingsRow}
           {taglineRow}
           {enrichedSeasons.length > 0 && (
             <>

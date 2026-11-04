@@ -28,13 +28,15 @@ type PopularRanker interface {
 type PopularHandler struct {
 	ranker PopularRanker
 	genres GenreLookup
+	rater  Rater
 	logger *slog.Logger
 }
 
 // NewPopularHandler returns a PopularHandler that ranks through ranker and
-// validates genre names through genres.
-func NewPopularHandler(ranker PopularRanker, genres GenreLookup, logger *slog.Logger) *PopularHandler {
-	return &PopularHandler{ranker: ranker, genres: genres, logger: logger}
+// validates genre names through genres. rater may be nil, in which case rows
+// carry no ratings.
+func NewPopularHandler(ranker PopularRanker, genres GenreLookup, rater Rater, logger *slog.Logger) *PopularHandler {
+	return &PopularHandler{ranker: ranker, genres: genres, rater: rater, logger: logger}
 }
 
 // GetPopularSeries handles GET /series/popular
@@ -84,6 +86,11 @@ func (h *PopularHandler) serve(c *gin.Context, kind popular.Kind) {
 	}
 	if results == nil {
 		results = []tvdb.Media{}
+	}
+	// Rank hands back a copy of its cached row, so the scores can be set on
+	// it. They are cached for days, so this is a lookup per item, not a call.
+	if h.rater != nil {
+		h.rater.Attach(ctx, results)
 	}
 
 	h.logger.InfoContext(ctx, "Returning popular row", "kind", string(kind), "count", len(results))
