@@ -14,4 +14,4 @@
 
 ## 4. Verify
 - [x] 4.1 `go vet ./...`, `gofmt -l`, `go test ./...` (all packages green 2026-11-04)
-- [ ] 4.2 Deploy torrenter + webserver; re-request Dexter S01-S06: episodes linked from the finished pack, no indexer query in the logs
+- [x] 4.2 Deployed torrenter + webserver 2026-11-04 18:06 UTC (PR #90). Re-requested Dexter's 72 missing episodes: 67 queued, one "Episodes covered by a finished download" event for pack FEC8D3A3, "Season pack processed wanted=67 linked=67" 112 s later, 0 Prowlarr queries mentioning Dexter; notifications 91 completed, S01-S05 12/12 each in the library
