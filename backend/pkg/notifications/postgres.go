@@ -39,12 +39,27 @@ func (r *PostgresRepository) CreateNotification(ctx context.Context, notificatio
 		notification.SpanID = spanID
 	}
 
+	// An episode requested again after its notification settled (failed, cancelled,
+	// completed) takes that notification over rather than failing on the unique
+	// key: the new request's status, reason, trace and dismissal state replace the
+	// old outcome, so the Activity page shows the search that is running, not the
+	// failure it replaced, and notified_status is cleared so the new outcome is
+	// delivered to the outbound targets even when it matches the old one.
+	// Movies carry NULL season/episode and never conflict.
 	stmt := `
 		INSERT INTO Notifications (
 			tvdb_id, media_title, category, season, episode, absolute_episode,
 			poster_url, is_anime, status, reason, failure_code,
 			is_read, auto_dismissed, trace_id, span_id, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		ON CONFLICT (tvdb_id, season, episode) DO UPDATE SET
+			media_title = EXCLUDED.media_title, category = EXCLUDED.category,
+			absolute_episode = EXCLUDED.absolute_episode, poster_url = EXCLUDED.poster_url,
+			is_anime = EXCLUDED.is_anime, status = EXCLUDED.status, reason = EXCLUDED.reason,
+			failure_code = EXCLUDED.failure_code, is_read = EXCLUDED.is_read,
+			auto_dismissed = EXCLUDED.auto_dismissed, trace_id = EXCLUDED.trace_id,
+			span_id = EXCLUDED.span_id, updated_at = EXCLUDED.updated_at,
+			notified_status = NULL
 		RETURNING id, created_at, updated_at
 	`
 
@@ -76,7 +91,7 @@ func (r *PostgresRepository) CreateNotification(ctx context.Context, notificatio
 		return fmt.Errorf("failed to insert notification: %w", err)
 	}
 
-	r.logger.InfoContext(ctx, "Created notification",
+	r.logger.InfoContext(ctx, "Created or took over notification",
 		"id", notification.ID,
 		"tvdb_id", notification.TvdbID,
 		"media_title", notification.MediaTitle,

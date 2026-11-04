@@ -58,7 +58,10 @@ func (s *PostgresRepositoryTestSuite) TestCreateNotification_Series() {
 		SpanID:          "span456",
 	}
 
-	s.mock.ExpectQuery(`INSERT INTO Notifications`).
+	// A second request for the same episode takes the old notification over.
+	s.mock.ExpectQuery(`INSERT INTO Notifications[\s\S]*ON CONFLICT \(tvdb_id, season, episode\) DO UPDATE SET`+
+		`[\s\S]*status = EXCLUDED.status, reason = EXCLUDED.reason,[\s\S]*auto_dismissed = EXCLUDED.auto_dismissed`+
+		`[\s\S]*notified_status = NULL`).
 		WithArgs(
 			notification.TvdbID,
 			notification.MediaTitle,
