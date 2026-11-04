@@ -61,3 +61,25 @@ func TestLoadReadsTraktFromEnvironment(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, Trakt{Host: "https://trakt.test", ClientID: "abc", List: "trending", Period: "monthly"}, cfg.Trakt)
 }
+
+func TestLoadReadsDatabaseFromEnvironment(t *testing.T) {
+	t.Setenv("TVDB_HOST", "https://tvdb.test")
+	t.Setenv("TVDB_API_KEY", "key")
+	t.Setenv("DB_HOST", "")
+	t.Setenv("DB_USER", "")
+	t.Setenv("DB_PASSWORD", "")
+	t.Setenv("DB_NAME", "")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, Database{User: "scoutuser", Password: "scoutpass", Name: "scoutdb"}, cfg.Database)
+	assert.Empty(t, cfg.Database.ConnStr(), "no host means no store")
+
+	t.Setenv("DB_HOST", "postgres")
+	t.Setenv("DB_USER", "u")
+	t.Setenv("DB_PASSWORD", "p")
+	t.Setenv("DB_NAME", "n")
+	cfg, err = Load()
+	require.NoError(t, err)
+	assert.Equal(t, "host=postgres port=5432 user=u password=p dbname=n sslmode=disable", cfg.Database.ConnStr())
+}

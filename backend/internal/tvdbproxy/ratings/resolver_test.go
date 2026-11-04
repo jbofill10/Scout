@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // stubTVDB answers GETs from a table of uri → body and counts them.
@@ -58,4 +59,24 @@ func TestResolverRetriesAfterAnError(t *testing.T) {
 	client.mu.Unlock()
 	assert.Equal(t, "tt0000005", r.ImdbID(context.Background(), "movie", "5"))
 	assert.Len(t, client.uris, 2)
+}
+
+func TestResolverPersistsResolvedIDs(t *testing.T) {
+	client := &stubTVDB{bodies: map[string]string{
+		"/movies/358595/extended?short=true": `{"data":{"id":358595,"remoteIds":[{"id":"tt31193180","type":2,"sourceName":"IMDB"}]}}`,
+	}}
+	store := newStubStore()
+	r := NewResolver(client, slog.Default())
+	r.SetStore(store)
+
+	assert.Equal(t, "tt31193180", r.ImdbID(context.Background(), "movie", "358595"))
+	entry, found := store.entry("imdb-id:movies:358595")
+	require.True(t, found)
+	assert.JSONEq(t, `"tt31193180"`, string(entry.Value))
+
+	// A fresh resolver with the same store does not ask TVDB.
+	fresh := NewResolver(client, slog.Default())
+	fresh.SetStore(store)
+	assert.Equal(t, "tt31193180", fresh.ImdbID(context.Background(), "movie", "358595"))
+	assert.Len(t, client.uris, 1)
 }

@@ -74,3 +74,8 @@ func (r *Resolver) ImdbID(ctx context.Context, mediaType, id string) string {
 	})
 	return imdbID
 }
+
+// SetStore keeps resolved ids across restarts.
+func (r *Resolver) SetStore(store Store) {
+	r.cache.persist = &persistence{store: store, prefix: "imdb-id:", logger: r.logger}
+}

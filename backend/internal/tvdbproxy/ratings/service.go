@@ -8,11 +8,14 @@
 // Media that only carries a TVDB id (library items, person-credit search
 // hits) is resolved to an IMDb id first. Answers are cached for days and
 // concurrent asks share one lookup, since a free OMDb key allows 1,000
-// calls a day and Wikidata's query service is shared by everyone.
+// calls a day and Wikidata's query service is shared by everyone; with a
+// Store they also outlive restarts, and an expired answer stands in until
+// its refresh lands.
 package ratings
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"sort"
@@ -112,6 +115,8 @@ type Options struct {
 	Resolver IDResolver
 	// Finder fills in IMDb ids for films TVDB lists none for, by name and year.
 	Finder IDFinder
+	// Store keeps the answers across restarts.
+	Store Store
 }
 
 // Service answers rating lookups: the IMDb rating from the table, the rest
@@ -124,6 +129,8 @@ type Service struct {
 	chunks *asyncCache[struct{}]
 	found  *asyncCache[string]
 	now    func() time.Time
+	// store persists the per-title Wikidata scores; nil without a Store.
+	store *persistence
 
 	mu          sync.Mutex
 	pausedUntil time.Time
@@ -132,7 +139,7 @@ type Service struct {
 
 // NewService returns a service drawing on opts.
 func NewService(opts Options, logger *slog.Logger) *Service {
-	return &Service{
+	s := &Service{
 		opts:     opts,
 		logger:   logger,
 		omdb:     newAsyncCache[[]tvdb.Rating](lookupConcurrency, lookupTimeout),
@@ -141,6 +148,12 @@ func NewService(opts Options, logger *slog.Logger) *Service {
 		now:      time.Now,
 		wikidata: map[string]cacheEntry[[]tvdb.Rating]{},
 	}
+	if opts.Store != nil {
+		s.omdb.persist = &persistence{store: opts.Store, prefix: "omdb:", logger: logger}
+		s.found.persist = &persistence{store: opts.Store, prefix: "found:", logger: logger}
+		s.store = &persistence{store: opts.Store, prefix: "wikidata:", logger: logger}
+	}
+	return s
 }
 
 // Attach fills Ratings on every item that has no ratings yet. Items without
@@ -383,20 +396,13 @@ func (s *Service) merge(imdbID string, sourced, recorded []tvdb.Rating) []tvdb.R
 // fromWikidata returns Wikidata's scores for the ids, completed from the
 // Wikipedia article for films Wikidata has not scored: cached answers at
 // once, the rest through one query per chunk of ids, run detached and
-// shared by every caller asking for that chunk.
+// shared by every caller asking for that chunk. An expired answer stands
+// in until the query that refreshes it lands.
 func (s *Service) fromWikidata(ctx context.Context, ids []string, hints map[string]Hint) map[string][]tvdb.Rating {
 	if s.opts.Wikidata == nil {
 		return nil
 	}
-	s.mu.Lock()
-	now := s.now()
-	var need []string
-	for _, id := range ids {
-		if e, ok := s.wikidata[id]; !ok || !now.Before(e.expires) {
-			need = append(need, id)
-		}
-	}
-	s.mu.Unlock()
+	need := s.restoreScores(ctx, ids)
 
 	var wg sync.WaitGroup
 	for start := 0; start < len(need); start += WikidataChunk {
@@ -413,24 +419,7 @@ func (s *Service) fromWikidata(ctx context.Context, ids []string, hints map[stri
 					return struct{}{}, 0
 				}
 				s.findArticles(ctx, chunk, records, hints)
-				scores := s.completeFromProse(ctx, records)
-				s.mu.Lock()
-				defer s.mu.Unlock()
-				now := s.now()
-				if len(s.wikidata) >= pruneAbove {
-					for key, e := range s.wikidata {
-						if now.After(e.expires) {
-							delete(s.wikidata, key)
-						}
-					}
-				}
-				for _, id := range chunk {
-					ratings, ttl := scores[id], missTTL
-					if len(ratings) > 0 {
-						ttl = ratingTTL
-					}
-					s.wikidata[id] = cacheEntry[[]tvdb.Rating]{value: ratings, expires: now.Add(ttl)}
-				}
+				s.keepScores(ctx, chunk, s.completeFromProse(ctx, records))
 				return struct{}{}, chunkTTL
 			})
 		}(chunk)
@@ -439,14 +428,71 @@ func (s *Service) fromWikidata(ctx context.Context, ids []string, hints map[stri
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now = s.now()
 	results := make(map[string][]tvdb.Rating, len(ids))
 	for _, id := range ids {
-		if e, ok := s.wikidata[id]; ok && now.Before(e.expires) && len(e.value) > 0 {
+		if e, ok := s.wikidata[id]; ok && len(e.value) > 0 {
 			results[id] = e.value
 		}
 	}
 	return results
+}
+
+// restoreScores returns the ids whose scores are not current in memory,
+// after bringing in what the store holds for the ids never seen.
+func (s *Service) restoreScores(ctx context.Context, ids []string) []string {
+	s.mu.Lock()
+	var unknown []string
+	for _, id := range ids {
+		if _, ok := s.wikidata[id]; !ok {
+			unknown = append(unknown, id)
+		}
+	}
+	s.mu.Unlock()
+	stored := s.store.load(ctx, unknown)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, entry := range stored {
+		var ratings []tvdb.Rating
+		if err := json.Unmarshal(entry.Value, &ratings); err != nil {
+			continue
+		}
+		s.wikidata[id] = cacheEntry[[]tvdb.Rating]{value: ratings, expires: entry.Expires}
+	}
+	now := s.now()
+	var need []string
+	for _, id := range ids {
+		if e, ok := s.wikidata[id]; !ok || !now.Before(e.expires) {
+			need = append(need, id)
+		}
+	}
+	return need
+}
+
+// keepScores caches each id's scores, a week with scores and a day without,
+// in memory and in the store.
+func (s *Service) keepScores(ctx context.Context, ids []string, scores map[string][]tvdb.Rating) {
+	s.mu.Lock()
+	now := s.now()
+	if len(s.wikidata) >= pruneAbove {
+		for key, e := range s.wikidata {
+			if now.After(e.expires) {
+				delete(s.wikidata, key)
+			}
+		}
+	}
+	answers := make(map[string]answer, len(ids))
+	for _, id := range ids {
+		ratings, ttl := scores[id], missTTL
+		if len(ratings) > 0 {
+			ttl = ratingTTL
+		}
+		expires := now.Add(ttl)
+		s.wikidata[id] = cacheEntry[[]tvdb.Rating]{value: ratings, expires: expires}
+		answers[id] = answer{value: ratings, expires: expires}
+	}
+	s.mu.Unlock()
+	s.store.save(ctx, answers)
 }
 
 // findArticles adds a record for each film Wikidata has no item for, when

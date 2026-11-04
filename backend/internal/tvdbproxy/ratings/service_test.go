@@ -79,6 +79,8 @@ func newTestService(opts Options) (*Service, *time.Time) {
 	s := NewService(opts, slog.Default())
 	s.now = func() time.Time { return now }
 	s.omdb.now = s.now
+	s.found.now = s.now
+	s.chunks.now = s.now
 	return s, &now
 }
 
@@ -516,4 +518,81 @@ func TestLookupManyKeepsWikidataScoresWhenProseFails(t *testing.T) {
 	assert.Nil(t, got["tt1"])
 	assert.Equal(t, []tvdb.Rating{meta59}, got["tt5"], "Wikidata's own scores still stand")
 	assert.Len(t, prose.asked, 1)
+}
+
+func TestLookupManyRestoresWikidataScoresFromTheStore(t *testing.T) {
+	wikidata := &stubScores{answers: map[string][]tvdb.Rating{"tt1": {{Source: tvdb.RatingSourceRottenTomatoes, Value: 50}}}}
+	store := newStubStore()
+	s, now := newTestService(Options{Wikidata: wikidata, Store: store})
+	store.seed(t, "wikidata:tt1", []tvdb.Rating{tomato97}, now.Add(time.Hour))
+
+	got := s.LookupMany(context.Background(), []string{"tt1"}, DefaultWait)
+
+	assert.Equal(t, []tvdb.Rating{tomato97}, got["tt1"], "the stored scores answer")
+	assert.Equal(t, 0, wikidata.batchCount(), "nothing is asked for a current stored answer")
+	s.LookupMany(context.Background(), []string{"tt1"}, DefaultWait)
+	assert.Equal(t, 1, store.count("gets"), "a restored answer is held in memory")
+}
+
+func TestLookupManyPersistsWikidataScoresAndMisses(t *testing.T) {
+	wikidata := &stubScores{answers: map[string][]tvdb.Rating{"tt1": {tomato97}}}
+	store := newStubStore()
+	s, now := newTestService(Options{Wikidata: wikidata, Store: store})
+
+	s.LookupMany(context.Background(), []string{"tt1", "tt2"}, DefaultWait)
+
+	hit, found := store.entry("wikidata:tt1")
+	require.True(t, found)
+	assert.JSONEq(t, `[{"source":"rotten_tomatoes","value":97}]`, string(hit.Value))
+	assert.Equal(t, now.Add(ratingTTL), hit.Expires, "scores keep for a week")
+	miss, found := store.entry("wikidata:tt2")
+	require.True(t, found, "a miss is stored too, so the next restart does not ask again")
+	assert.JSONEq(t, `null`, string(miss.Value))
+	assert.Equal(t, now.Add(missTTL), miss.Expires, "misses keep for a day")
+}
+
+func TestLookupManyStandsInWithExpiredStoredScoresWhenWikidataFails(t *testing.T) {
+	wikidata := &stubScores{err: errors.New("503")}
+	store := newStubStore()
+	s, now := newTestService(Options{Wikidata: wikidata, Store: store})
+	store.seed(t, "wikidata:tt1", []tvdb.Rating{tomato97}, now.Add(-time.Hour))
+
+	got := s.LookupMany(context.Background(), []string{"tt1"}, DefaultWait)
+
+	assert.Equal(t, 1, wikidata.batchCount(), "an expired answer is looked up again")
+	assert.Equal(t, []tvdb.Rating{tomato97}, got["tt1"], "and stands in while the lookup fails")
+}
+
+func TestLookupManyPersistsSourceAnswers(t *testing.T) {
+	source := newStubSource()
+	source.answers["tt1"] = []tvdb.Rating{tomato97}
+	store := newStubStore()
+	s, now := newTestService(Options{Source: source, Store: store})
+
+	assert.Equal(t, []tvdb.Rating{tomato97}, s.Lookup(context.Background(), "tt1", DefaultWait))
+
+	entry, found := store.entry("omdb:tt1")
+	require.True(t, found)
+	assert.JSONEq(t, `[{"source":"rotten_tomatoes","value":97}]`, string(entry.Value))
+	assert.Equal(t, now.Add(ratingTTL), entry.Expires)
+
+	// A fresh service with the same store answers without asking the source.
+	fresh, _ := newTestService(Options{Source: source, Store: store})
+	assert.Equal(t, []tvdb.Rating{tomato97}, fresh.Lookup(context.Background(), "tt1", DefaultWait))
+	assert.Equal(t, 1, source.count("tt1"))
+}
+
+func TestAttachPersistsFoundIDs(t *testing.T) {
+	finder := &stubFinder{ids: map[string]string{"Weapons|2025": "tt26581740"}}
+	store := newStubStore()
+	s, now := newTestService(Options{Resolver: &stubResolver{ids: map[string]string{}}, Finder: finder, Store: store})
+
+	media := []tvdb.Media{{Id: "1", Category: "movie", Name: "Weapons", Year: "2025"}}
+	s.Attach(context.Background(), media, DefaultWait)
+
+	assert.Equal(t, "tt26581740", media[0].ImdbID)
+	entry, found := store.entry("found:Weapons|2025")
+	require.True(t, found)
+	assert.JSONEq(t, `"tt26581740"`, string(entry.Value))
+	assert.Equal(t, now.Add(imdbIDTTL), entry.Expires)
 }

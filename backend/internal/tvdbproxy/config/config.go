@@ -5,6 +5,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -96,6 +97,29 @@ type OMDb struct {
 	Host string
 }
 
+// Database configures the ratings store: the PostgreSQL the other services
+// share, where every rating answer is kept across restarts. Without a host
+// the proxy keeps ratings in memory only and looks them all up again after
+// each restart.
+type Database struct {
+	// Host is DB_HOST; empty means no store.
+	Host string
+	// User, Password and Name are DB_USER, DB_PASSWORD and DB_NAME, with
+	// the other services' defaults.
+	User     string
+	Password string
+	Name     string
+}
+
+// ConnStr is the lib/pq connection string, "" without a host.
+func (d Database) ConnStr() string {
+	if d.Host == "" {
+		return ""
+	}
+	return fmt.Sprintf("host=%s port=5432 user=%s password=%s dbname=%s sslmode=disable",
+		d.Host, d.User, d.Password, d.Name)
+}
+
 // Config is tvdb-proxy's configuration.
 type Config struct {
 	TVDB      TVDB
@@ -105,6 +129,7 @@ type Config struct {
 	IMDb      IMDb
 	Wikidata  WikidataRatings
 	OMDb      OMDb
+	Database  Database
 	// BindAddress is where the HTTP server listens (BIND_ADDRESS).
 	BindAddress string
 	// TokenRefreshInterval is the raw TVDB_TOKEN_REFRESH_INTERVAL value; see RefreshInterval.
@@ -112,9 +137,9 @@ type Config struct {
 }
 
 // Load reads api.toml when it exists, then applies TVDB_HOST, TVDB_API_KEY and
-// TVDB_PIN on top (environment wins), and reads the Trakt, Wikipedia, AniList
-// and OMDb settings from the environment. The only error is a malformed api.toml. Required fields are
-// checked separately by Validate.
+// TVDB_PIN on top (environment wins), and reads the Trakt, Wikipedia, AniList,
+// rating source and database settings from the environment. The only error is
+// a malformed api.toml. Required fields are checked separately by Validate.
 func Load() (Config, error) {
 	var cfg Config
 
@@ -172,8 +197,22 @@ func Load() (Config, error) {
 		APIKey: strings.TrimSpace(os.Getenv("OMDB_API_KEY")),
 		Host:   os.Getenv("OMDB_HOST"),
 	}
+	cfg.Database = Database{
+		Host:     os.Getenv("DB_HOST"),
+		User:     envOr("DB_USER", "scoutuser"),
+		Password: envOr("DB_PASSWORD", "scoutpass"),
+		Name:     envOr("DB_NAME", "scoutdb"),
+	}
 
 	return cfg, nil
+}
+
+// envOr reads an environment variable with a default for when it is unset.
+func envOr(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
 }
 
 // enabled reads an on-by-default boolean setting.
