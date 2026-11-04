@@ -92,6 +92,7 @@ type SchedulerRepository interface {
 	EnqueueNow(ctx context.Context, media tvdb.Media, traceID, spanID string) (DueItem, bool, error)
 	TouchQueued(ctx context.Context, ids []int) error
 	DeferRow(ctx context.Context, id int, code, reason string, next time.Time) error
+	RowStatus(ctx context.Context, id int) (string, error)
 	// Async failures (see RearmCompletedRow): a completed row keeps the payload
 	// of a download the torrenter may still lose.
 	RearmCompletedRow(ctx context.Context, id int, code, reason string, nextAttempt time.Time) error

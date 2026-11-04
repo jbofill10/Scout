@@ -624,3 +624,15 @@ func (s *SchedulerRepoTestSuite) TestDeferRow_CountsNoAttempt() {
 	s.NoError(s.repo.DeferRow(context.Background(), 7, "torrenter_unreachable", "down", next))
 	s.NoError(s.mock.ExpectationsWereMet())
 }
+
+func (s *SchedulerRepoTestSuite) TestRowStatus() {
+	s.mock.ExpectQuery(`SELECT schedule_status FROM ScheduledDownloads WHERE id = \$1`).
+		WithArgs(7).
+		WillReturnRows(sqlmock.NewRows([]string{"schedule_status"}).AddRow(StatusCompleted))
+
+	status, err := s.repo.RowStatus(context.Background(), 7)
+
+	s.NoError(err)
+	s.Equal(StatusCompleted, status)
+	s.NoError(s.mock.ExpectationsWereMet())
+}

@@ -93,3 +93,17 @@ func (r *SchedulerRepo) DeferRow(ctx context.Context, id int, code, reason strin
 	}
 	return nil
 }
+
+// RowStatus is the current schedule_status of a row, so a dispatcher can tell
+// whether the row it was handed is still its to dispatch.
+func (r *SchedulerRepo) RowStatus(ctx context.Context, id int) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var status string
+	err := r.db.QueryRowContext(ctx, `SELECT schedule_status FROM ScheduledDownloads WHERE id = $1`, id).Scan(&status)
+	if err != nil {
+		return "", fmt.Errorf("failed to read row status: %w", err)
+	}
+	return status, nil
+}
