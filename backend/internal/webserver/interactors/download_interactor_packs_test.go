@@ -25,8 +25,8 @@ func threeAiredEpisodes() tvdb.Media {
 }
 
 // With packs on, the whole episode set goes to the torrenter once as a
-// pack-only request; what a pack covered is recorded as dispatched and the
-// rest is sent one episode at a time.
+// pack-only request; the rows a pack covered are completed and the rest is
+// sent one episode at a time.
 func TestDownloadShow_PacksFirstThenPerEpisode(t *testing.T) {
 	repo := &fakeSchedulerRepo{}
 	notifRepo := repoMocks.NewNotificationRepository(t)
@@ -61,8 +61,8 @@ func TestDownloadShow_PacksFirstThenPerEpisode(t *testing.T) {
 	require.Len(t, payloads[1].Metadata.Episodes, 1)
 	assert.Equal(t, 3, payloads[1].Metadata.Episodes[0].Id)
 
-	require.Len(t, repo.dispatched, 3, "every started episode has a row to retry from")
-	assert.Equal(t, 0, repo.retryCount)
+	assert.ElementsMatch(t, []int{101, 102, 103}, repo.completedIDs, "every started episode's row is completed")
+	assert.Empty(t, repo.recordedIDs)
 }
 
 // With packs off, or the torrenter's settings unreadable, episodes go one at
@@ -99,7 +99,7 @@ func TestDownloadShow_PacksOffSendsOneAtATime(t *testing.T) {
 }
 
 // A pack-only answer that fails an episode for another reason is settled
-// like any immediate failure: a retry row, not a per-episode dispatch.
+// like any failure: its row goes on the retry ladder, no per-episode dispatch.
 func TestDownloadShow_PackOnlyOtherFailuresScheduleRetries(t *testing.T) {
 	repo := &fakeSchedulerRepo{}
 	notifRepo := repoMocks.NewNotificationRepository(t)
@@ -123,6 +123,7 @@ func TestDownloadShow_PackOnlyOtherFailuresScheduleRetries(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, dispatcher.callCount(), "nothing is sent per episode")
-	assert.Equal(t, 1, repo.retryCount, "the disk-space failure gets a retry row")
-	assert.Len(t, repo.dispatched, 2)
+	assert.Equal(t, []int{103}, repo.recordedIDs, "the disk-space failure puts episode 3's row on the ladder")
+	assert.Equal(t, string(dlstatus.CodeInsufficientDiskSpace), repo.recordedCode)
+	assert.ElementsMatch(t, []int{101, 102}, repo.completedIDs)
 }

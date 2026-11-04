@@ -171,33 +171,6 @@ func (r *SchedulerRepo) FailCompletedRow(ctx context.Context, id int, code, reas
 	return nil
 }
 
-// RecordDispatched keeps a completed row for an item the torrenter accepted
-// straight from a request, so the media payload exists to retry from when the
-// download is lost later. A row for the item (canonical or retry) already
-// tracking it is left alone.
-func (r *SchedulerRepo) RecordDispatched(ctx context.Context, media tvdb.Media, traceID, spanID string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	mediaJSON, err := json.Marshal(media)
-	if err != nil {
-		return fmt.Errorf("failed to marshal media: %w", err)
-	}
-	hashTime := mediaReleaseTime(media)
-	contentHash := ComputeContentHash(media, hashTime)
-
-	_, err = r.db.ExecContext(ctx,
-		`INSERT INTO ScheduledDownloads
-		 (media, release_time, schedule_status, content_hash, scheduled_trace_id, scheduled_span_id, attempts, queued_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, 0, now())
-		 ON CONFLICT (content_hash) DO NOTHING`,
-		mediaJSON, hashTime.Format(time.RFC3339), StatusCompleted, contentHash, traceID, spanID)
-	if err != nil {
-		return fmt.Errorf("failed to record dispatched item: %w", err)
-	}
-	return nil
-}
-
 // GetUpcoming returns every pending row, soonest first by its effective due
 // time (next retry when one is set, otherwise release).
 func (r *SchedulerRepo) GetUpcoming(ctx context.Context) ([]UpcomingItem, error) {

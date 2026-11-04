@@ -1,6 +1,7 @@
 package interactors
 
 import (
+	"context"
 	"strconv"
 	"testing"
 	"time"
@@ -156,7 +157,7 @@ func TestProcessDueItem_OldContentCap(t *testing.T) {
 	i := groupInteractor(repo, &fakeDispatcher{resp: noResult}, newNotif())
 	row := dueRow(1, 11, 1, 1, "2007-10-01")
 	row.Attempts = 1
-	i.processDueItem(row)
+	i.processDueItem(context.Background(), row)
 	require.NotNil(t, repo.permFailedID)
 	assert.Equal(t, string(dlstatus.CodeMaxRetries), repo.permFailedCode)
 	assert.Nil(t, repo.recordedID)
@@ -165,7 +166,7 @@ func TestProcessDueItem_OldContentCap(t *testing.T) {
 	i = groupInteractor(repo, &fakeDispatcher{resp: noResult}, newNotif())
 	row = dueRow(1, 11, 1, 1, time.Now().Add(-24*time.Hour).Format("2006-01-02"))
 	row.Attempts = 1
-	i.processDueItem(row)
+	i.processDueItem(context.Background(), row)
 	require.NotNil(t, repo.recordedID)
 	assert.Nil(t, repo.permFailedID)
 }

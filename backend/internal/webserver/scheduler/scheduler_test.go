@@ -174,3 +174,24 @@ collecting:
 	s.Equal(1, queuedCount, "Should queue only the already-due media, not future media")
 	scheduler.Stop()
 }
+
+// A new process re-arms every queued row before its first poll: whatever was
+// mid-dispatch when the last process stopped is pending again at once, not
+// after the stale threshold.
+func (s *SchedulerTestSuite) TestStart_ReArmsInterruptedRowsBeforePolling() {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	mockRepo := schedMocks.NewSchedulerRepository(s.T())
+	scheduler := NewScheduler(mockRepo, logger)
+
+	mockRepo.On("ResetStaleQueued", mock.Anything, time.Duration(0)).Return(int64(2), nil).Once()
+	mockRepo.On("ResetStaleQueued", mock.Anything, 30*time.Minute).Return(int64(0), nil)
+	mockRepo.On("GetDueMedia", mock.Anything, mock.Anything).Return([]repository.DueItem{}, nil)
+
+	queue := make(chan repository.DueItem, 1)
+	scheduler.Start(queue)
+	time.Sleep(100 * time.Millisecond)
+
+	mockRepo.AssertCalled(s.T(), "ResetStaleQueued", mock.Anything, time.Duration(0))
+	mockRepo.AssertCalled(s.T(), "ResetStaleQueued", mock.Anything, 30*time.Minute)
+	scheduler.Stop()
+}

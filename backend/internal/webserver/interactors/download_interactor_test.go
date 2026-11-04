@@ -106,7 +106,6 @@ type fakeSchedulerRepo struct {
 	pendingMetaErr   error
 	// async failure reconciliation
 	rows            []repository.ScheduledRow
-	dispatched      []tvdb.Media
 	rearmedComplete []int
 	rearmedCode     string
 	rearmedNext     time.Time
@@ -122,6 +121,54 @@ type fakeSchedulerRepo struct {
 	completedIDs  []int
 	recordedIDs   []int
 	permFailedIDs []int
+	// requests written down before dispatch
+	mu          sync.Mutex
+	enqueued    []tvdb.Media
+	enqueueErr  error
+	alreadyRun  map[string]bool // item key -> EnqueueNow answers "already being dispatched"
+	nextRowID   int
+	touched     [][]int
+	deferredIDs []int
+	deferCode   string
+	deferNext   time.Time
+}
+
+// EnqueueNow hands out row ids 101, 102, ... in call order and remembers the
+// media written, so tests can check the row exists before the torrenter is
+// asked and match settle calls to it.
+func (f *fakeSchedulerRepo) EnqueueNow(_ context.Context, media tvdb.Media, _, _ string) (repository.DueItem, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.enqueueErr != nil {
+		return repository.DueItem{}, false, f.enqueueErr
+	}
+	if f.alreadyRun[repository.NotificationKey(media)] {
+		return repository.DueItem{}, false, nil
+	}
+	f.nextRowID++
+	f.enqueued = append(f.enqueued, media)
+	return repository.DueItem{ID: 100 + f.nextRowID, Media: media, DueAt: time.Now()}, true, nil
+}
+
+func (f *fakeSchedulerRepo) enqueuedRows() []tvdb.Media {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]tvdb.Media(nil), f.enqueued...)
+}
+
+func (f *fakeSchedulerRepo) TouchQueued(_ context.Context, ids []int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.touched = append(f.touched, append([]int(nil), ids...))
+	return nil
+}
+
+func (f *fakeSchedulerRepo) DeferRow(_ context.Context, id int, code, _ string, next time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deferredIDs = append(f.deferredIDs, id)
+	f.deferCode, f.deferNext = code, next
+	return nil
 }
 
 func (f *fakeSchedulerRepo) ClaimDueSiblings(_ context.Context, showID string, exceptID int, until time.Time) ([]repository.DueItem, error) {
@@ -130,10 +177,6 @@ func (f *fakeSchedulerRepo) ClaimDueSiblings(_ context.Context, showID string, e
 	return f.siblings, f.siblingErr
 }
 
-func (f *fakeSchedulerRepo) RecordDispatched(_ context.Context, media tvdb.Media, _, _ string) error {
-	f.dispatched = append(f.dispatched, media)
-	return nil
-}
 func (f *fakeSchedulerRepo) RearmCompletedRow(_ context.Context, id int, code, _ string, next time.Time) error {
 	f.rearmedComplete = append(f.rearmedComplete, id)
 	f.rearmedCode, f.rearmedNext = code, next
@@ -291,7 +334,7 @@ func TestProcessDueItem(t *testing.T) {
 			}
 
 			item := repository.DueItem{ID: 42, Media: tvdb.Media{Name: "Test", Id: "555"}, Attempts: tt.attempts}
-			i.processDueItem(item)
+			i.processDueItem(context.Background(), item)
 
 			if tt.wantCompleted {
 				assert.NotNil(t, repo.completedID, "expected MarkCompleted")
