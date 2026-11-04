@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -46,19 +45,45 @@ func (s *stubSource) count(imdbID string) int {
 	return s.calls[imdbID]
 }
 
-var imdbEight = []tvdb.Rating{{Source: tvdb.RatingSourceIMDb, Value: 8}}
+// stubTable is an IMDbTable with a fixed set of rows.
+type stubTable map[string]tvdb.Rating
 
-func newTestService(source Source) (*Service, *time.Time) {
+func (t stubTable) Rating(imdbID string) (tvdb.Rating, bool) {
+	rating, ok := t[imdbID]
+	return rating, ok
+}
+
+// stubResolver maps "mediaType:id" to an IMDb id and counts asks.
+type stubResolver struct {
+	mu    sync.Mutex
+	ids   map[string]string
+	calls int
+}
+
+func (r *stubResolver) ImdbID(_ context.Context, mediaType, id string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	return r.ids[mediaType+":"+id]
+}
+
+var (
+	imdbEight = []tvdb.Rating{{Source: tvdb.RatingSourceIMDb, Value: 8}}
+	tomato97  = tvdb.Rating{Source: tvdb.RatingSourceRottenTomatoes, Value: 97}
+)
+
+func newTestService(opts Options) (*Service, *time.Time) {
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
-	s := NewService(source, slog.Default())
+	s := NewService(opts, slog.Default())
 	s.now = func() time.Time { return now }
+	s.omdb.now = s.now
 	return s, &now
 }
 
 func TestAttachFillsRatingsOncePerTitle(t *testing.T) {
 	source := newStubSource()
 	source.answers["tt1"] = imdbEight
-	s, _ := newTestService(source)
+	s, _ := newTestService(Options{Source: source})
 
 	media := []tvdb.Media{
 		{Id: "a", ImdbID: "tt1"},
@@ -70,7 +95,7 @@ func TestAttachFillsRatingsOncePerTitle(t *testing.T) {
 	s.Attach(context.Background(), media)
 
 	assert.Equal(t, imdbEight, media[0].Ratings)
-	assert.Nil(t, media[1].Ratings, "no IMDb id, nothing to look up")
+	assert.Nil(t, media[1].Ratings, "no IMDb id and no resolver, nothing to look up")
 	assert.Equal(t, imdbEight, media[2].Ratings, "the second item with the same id shares the answer")
 	assert.Nil(t, media[3].Ratings, "the source has nothing for tt2")
 	assert.Equal(t, []tvdb.Rating{{Source: "x", Value: 1}}, media[4].Ratings, "already rated items are left alone")
@@ -79,10 +104,58 @@ func TestAttachFillsRatingsOncePerTitle(t *testing.T) {
 	assert.Equal(t, 0, source.count("tt3"))
 }
 
+func TestAttachResolvesTVDBIDsFirst(t *testing.T) {
+	resolver := &stubResolver{ids: map[string]string{"series:10": "tt1", "movie:20": "tt2"}}
+	table := stubTable{"tt1": imdbEight[0], "tt2": {Source: tvdb.RatingSourceIMDb, Value: 6.5, Votes: 12}}
+	s, _ := newTestService(Options{IMDb: table, Resolver: resolver})
+
+	media := []tvdb.Media{
+		{Id: "10", Category: "series"},
+		{Id: "20", Category: "movie"},
+		{Id: "10", Category: "series"},
+		{Id: "30", Category: "movie"},
+		{Id: "40", Category: "movie", ImdbID: "tt2"},
+	}
+	s.Attach(context.Background(), media)
+
+	assert.Equal(t, "tt1", media[0].ImdbID, "the resolved id is kept on the item")
+	assert.Equal(t, imdbEight, media[0].Ratings)
+	assert.Equal(t, 6.5, media[1].Ratings[0].Value)
+	assert.Equal(t, imdbEight, media[2].Ratings)
+	assert.Empty(t, media[3].ImdbID)
+	assert.Nil(t, media[3].Ratings, "TVDB lists no IMDb id for 30")
+	assert.Equal(t, 6.5, media[4].Ratings[0].Value, "an item that came with its id is not resolved")
+	assert.Equal(t, 3, resolver.calls, "one resolution per distinct title")
+}
+
+func TestLookupMergesTableAndSource(t *testing.T) {
+	source := newStubSource()
+	source.answers["tt1"] = []tvdb.Rating{{Source: tvdb.RatingSourceIMDb, Value: 7.9}, tomato97}
+	table := stubTable{"tt1": {Source: tvdb.RatingSourceIMDb, Value: 8, Votes: 500}}
+	s, _ := newTestService(Options{IMDb: table, Source: source})
+
+	got := s.Lookup(context.Background(), "tt1")
+
+	assert.Equal(t, []tvdb.Rating{{Source: tvdb.RatingSourceIMDb, Value: 8, Votes: 500}, tomato97}, got,
+		"the table's IMDb figure leads, the source adds the rest")
+}
+
+func TestLookupTableOnlyAndSourceOnly(t *testing.T) {
+	table := stubTable{"tt1": {Source: tvdb.RatingSourceIMDb, Value: 8, Votes: 500}}
+	s, _ := newTestService(Options{IMDb: table})
+	assert.Equal(t, []tvdb.Rating{{Source: tvdb.RatingSourceIMDb, Value: 8, Votes: 500}}, s.Lookup(context.Background(), "tt1"))
+	assert.Nil(t, s.Lookup(context.Background(), "tt2"))
+
+	source := newStubSource()
+	source.answers["tt1"] = []tvdb.Rating{{Source: tvdb.RatingSourceIMDb, Value: 7.9}, tomato97}
+	s, _ = newTestService(Options{Source: source})
+	assert.Equal(t, source.answers["tt1"], s.Lookup(context.Background(), "tt1"), "without a table the source's IMDb figure stands")
+}
+
 func TestLookupCachesHitsAndMisses(t *testing.T) {
 	source := newStubSource()
 	source.answers["tt1"] = imdbEight
-	s, now := newTestService(source)
+	s, now := newTestService(Options{Source: source})
 
 	assert.Equal(t, imdbEight, s.Lookup(context.Background(), "tt1"))
 	assert.Nil(t, s.Lookup(context.Background(), "tt2"))
@@ -104,7 +177,7 @@ func TestLookupCachesHitsAndMisses(t *testing.T) {
 
 func TestLookupEmptyIDAsksNothing(t *testing.T) {
 	source := newStubSource()
-	s, _ := newTestService(source)
+	s, _ := newTestService(Options{Source: source})
 
 	assert.Nil(t, s.Lookup(context.Background(), ""))
 	assert.Empty(t, source.calls)
@@ -113,23 +186,25 @@ func TestLookupEmptyIDAsksNothing(t *testing.T) {
 func TestLookupPausesWhenTheKeyIsRefused(t *testing.T) {
 	source := newStubSource()
 	source.err = ErrRateLimited
-	s, now := newTestService(source)
+	table := stubTable{"tt2": imdbEight[0]}
+	s, now := newTestService(Options{IMDb: table, Source: source})
 
 	assert.Nil(t, s.Lookup(context.Background(), "tt1"))
-	assert.Nil(t, s.Lookup(context.Background(), "tt2"))
+	assert.Equal(t, imdbEight, s.Lookup(context.Background(), "tt2"), "the table still answers while paused")
 	assert.Equal(t, 1, source.count("tt1"))
-	assert.Equal(t, 0, source.count("tt2"), "no lookups while paused")
+	assert.Equal(t, 0, source.count("tt2"), "no source lookups while paused")
 
 	source.err = nil
-	source.answers["tt2"] = imdbEight
+	source.answers["tt2"] = []tvdb.Rating{tomato97}
 	*now = now.Add(pauseFor + time.Second)
-	assert.Equal(t, imdbEight, s.Lookup(context.Background(), "tt2"), "lookups resume after the pause")
+	assert.Equal(t, []tvdb.Rating{imdbEight[0], tomato97}, s.Lookup(context.Background(), "tt2"),
+		"lookups resume after the pause")
 }
 
 func TestLookupRetriesAfterASourceError(t *testing.T) {
 	source := newStubSource()
 	source.err = errors.New("connection reset")
-	s, _ := newTestService(source)
+	s, _ := newTestService(Options{Source: source})
 
 	assert.Nil(t, s.Lookup(context.Background(), "tt1"))
 	source.err = nil
@@ -141,7 +216,7 @@ func TestLookupRetriesAfterASourceError(t *testing.T) {
 func TestAttachGivesUpAfterTheBudgetAndCachesLater(t *testing.T) {
 	source := newStubSource()
 	source.answers["tt1"] = imdbEight
-	s, _ := newTestService(source)
+	s, _ := newTestService(Options{Source: source})
 	s.budget = 30 * time.Millisecond
 
 	source.gate.Lock() // the lookup blocks until released
@@ -153,9 +228,7 @@ func TestAttachGivesUpAfterTheBudgetAndCachesLater(t *testing.T) {
 
 	source.gate.Unlock()
 	require.Eventually(t, func() bool {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		_, ok := s.cache["tt1"]
+		_, ok := s.omdb.peek("tt1")
 		return ok
 	}, time.Second, 5*time.Millisecond, "the detached lookup still lands in the cache")
 
@@ -167,7 +240,7 @@ func TestAttachGivesUpAfterTheBudgetAndCachesLater(t *testing.T) {
 func TestConcurrentLookupsShareOneCall(t *testing.T) {
 	source := newStubSource()
 	source.answers["tt1"] = imdbEight
-	s, _ := newTestService(source)
+	s, _ := newTestService(Options{Source: source})
 
 	source.gate.Lock()
 	var wg sync.WaitGroup
@@ -180,9 +253,9 @@ func TestConcurrentLookupsShareOneCall(t *testing.T) {
 		}(i)
 	}
 	require.Eventually(t, func() bool {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		return len(s.inflight) == 1
+		s.omdb.mu.Lock()
+		defer s.omdb.mu.Unlock()
+		return len(s.omdb.inflight) == 1
 	}, time.Second, time.Millisecond)
 	source.gate.Unlock()
 	wg.Wait()
@@ -191,25 +264,4 @@ func TestConcurrentLookupsShareOneCall(t *testing.T) {
 		assert.Equal(t, imdbEight, got)
 	}
 	assert.Equal(t, 1, source.count("tt1"))
-}
-
-func TestCachePrunesExpiredEntriesOnceLarge(t *testing.T) {
-	source := newStubSource()
-	source.answers["ttnew"] = imdbEight
-	s, now := newTestService(source)
-
-	s.mu.Lock()
-	for i := 0; i < pruneAbove; i++ {
-		s.cache["old"+strconv.Itoa(i)] = entry{expires: now.Add(-time.Second)}
-	}
-	s.cache["live"] = entry{ratings: imdbEight, expires: now.Add(time.Hour)}
-	s.mu.Unlock()
-
-	s.Lookup(context.Background(), "ttnew")
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	assert.Len(t, s.cache, 2, "expired entries are swept once the cache is large")
-	assert.Contains(t, s.cache, "live")
-	assert.Contains(t, s.cache, "ttnew")
 }

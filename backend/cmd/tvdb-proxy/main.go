@@ -28,6 +28,9 @@ const (
 	loginTimeout = 30 * time.Second
 	// shutdownTimeout bounds how long in-flight requests get to finish on shutdown.
 	shutdownTimeout = 10 * time.Second
+	// datasetLoadTimeout bounds the startup download of IMDb's ratings table;
+	// past it the proxy serves without it and keeps trying in the background.
+	datasetLoadTimeout = 90 * time.Second
 )
 
 func main() {
@@ -124,15 +127,32 @@ func main() {
 	// Build the UI's rows now so the webserver's first refresh finds them ready.
 	popularService.Warm(refreshCtx, popular.DefaultRows())
 
-	// Ratings (Tomatometer, IMDb, Metascore) ride along on every search hit,
-	// popular row and extended record when an OMDb key is configured.
-	var rater handlers.Rater
-	if cfg.OMDb.APIKey != "" {
-		rater = ratings.NewService(
-			ratings.NewOMDb(cfg.OMDb.Host, cfg.OMDb.APIKey, ratings.NewOMDbHTTPClient(), logger), logger)
-		logger.Info("Media ratings looked up on OMDb")
+	// Ratings ride along on every search hit, popular row and extended
+	// record: the IMDb rating from IMDb's public table (loaded before serving
+	// so the webserver's first rows carry it), plus the Tomatometer and
+	// Metascore from OMDb when a key is configured.
+	ratingOpts := ratings.Options{Resolver: ratings.NewResolver(tvdbClient, logger)}
+	if cfg.IMDb.Enabled {
+		dataset := ratings.NewDataset(cfg.IMDb.URL, ratings.NewDatasetHTTPClient(), logger)
+		loadCtx, loadCancel := context.WithTimeout(refreshCtx, datasetLoadTimeout)
+		if err := dataset.Load(loadCtx); err != nil {
+			logger.Warn("IMDb ratings table not loaded, retrying in background", "error", err)
+		}
+		loadCancel()
+		dataset.Start(refreshCtx)
+		ratingOpts.IMDb = dataset
 	} else {
-		logger.Info("OMDB_API_KEY not set; media carry no ratings")
+		logger.Info("RATINGS_IMDB=false; no IMDb ratings table")
+	}
+	if cfg.OMDb.APIKey != "" {
+		ratingOpts.Source = ratings.NewOMDb(cfg.OMDb.Host, cfg.OMDb.APIKey, ratings.NewOMDbHTTPClient(), logger)
+		logger.Info("Tomatometer and Metascore looked up on OMDb")
+	} else {
+		logger.Info("OMDB_API_KEY not set; cards show the IMDb rating alone")
+	}
+	var rater handlers.Rater
+	if ratingOpts.IMDb != nil || ratingOpts.Source != nil {
+		rater = ratings.NewService(ratingOpts, logger)
 	}
 
 	// Initialize handlers
@@ -142,6 +162,7 @@ func main() {
 	episodesHandler := handlers.NewEpisodesHandler(tvdbClient, logger)
 	genreHandler := handlers.NewGenreHandler(genreCache, logger)
 	popularHandler := handlers.NewPopularHandler(popularService, genreCache, rater, logger)
+	ratingsHandler := handlers.NewRatingsHandler(rater, logger)
 
 	router := gin.Default()
 	// Only the compose network sits in front of this service, so only it may
@@ -161,6 +182,7 @@ func main() {
 	router.GET("/genres", genreHandler.GetGenres)
 	router.GET("/series/popular", popularHandler.GetPopularSeries)
 	router.GET("/movies/popular", popularHandler.GetPopularMovies)
+	router.POST("/ratings/batch", ratingsHandler.GetBatch)
 
 	// Setup graceful shutdown
 	sigChan := make(chan os.Signal, 1)
