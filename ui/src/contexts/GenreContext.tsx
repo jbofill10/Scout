@@ -1,14 +1,10 @@
 import React, { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { curatedGenres } from '../utils/curatedGenres';
+import type { Genre } from '../utils/curatedGenres';
 
-/**
- * Genre data structure from the API
- */
-export interface Genre {
-  name: string;
-  slug: string;
-}
+export type { Genre };
 
 /**
  * Genre context value type
@@ -22,30 +18,7 @@ interface GenreContextValue {
 const GenreContext = createContext<GenreContextValue | undefined>(undefined);
 
 /**
- * The 6 curated genres for Scout's Netflix-style UI
- */
-const CURATED_GENRES = [
-  'Action',
-  'Comedy',
-  'Drama',
-  'Sci-Fi',
-  'Anime',
-  'Documentary',
-];
-
-/**
- * Maps genre names from the API to our curated genre names
- * Handles the "Science Fiction" → "Sci-Fi" mapping
- */
-const mapGenreName = (apiGenreName: string): string => {
-  if (apiGenreName === 'Science Fiction') {
-    return 'Sci-Fi';
-  }
-  return apiGenreName;
-};
-
-/**
- * Fetches genres from the webserver API
+ * Fetches genres from the webserver API and keeps the curated ones, in row order
  */
 const fetchGenres = async (): Promise<Genre[]> => {
   const response = await fetch('/api/genres');
@@ -55,23 +28,15 @@ const fetchGenres = async (): Promise<Genre[]> => {
   }
 
   const allGenres: Genre[] = await response.json();
-
-  // Filter to only our 6 curated genres and map names
-  const filtered = allGenres
-    .map((genre) => ({
-      ...genre,
-      name: mapGenreName(genre.name),
-    }))
-    .filter((genre) => CURATED_GENRES.includes(genre.name));
-
-  return filtered;
+  return curatedGenres(allGenres);
 };
 
 /**
  * Genre Provider Component
  *
  * Fetches and provides genre data to the application.
- * Filters to 6 curated genres: Action, Comedy, Drama, Sci-Fi, Anime, Documentary
+ * Filters to the curated genres in `utils/curatedGenres.ts`
+ * (Action, Comedy, Drama, Sci-Fi, Horror, Thriller, Anime, Documentary)
  */
 export const GenreProvider: React.FC<{ children: ReactNode }> = ({
   children,

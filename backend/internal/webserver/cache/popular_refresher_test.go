@@ -183,13 +183,13 @@ func TestRefreshAll_Success(t *testing.T) {
 	}
 
 	// Verify API calls were made
-	// 7 categories: "", "Action", "Comedy", "Drama", "Sci-Fi", "Anime", "Documentary"
-	if tvdbClient.getPopularShowsCalls.Load() != 7 {
-		t.Errorf("Expected 7 GetPopularShows calls, got %d", tvdbClient.getPopularShowsCalls.Load())
+	// 9 categories: "", "Action", "Comedy", "Drama", "Sci-Fi", "Horror", "Thriller", "Anime", "Documentary"
+	if tvdbClient.getPopularShowsCalls.Load() != 9 {
+		t.Errorf("Expected 9 GetPopularShows calls, got %d", tvdbClient.getPopularShowsCalls.Load())
 	}
 
-	if tvdbClient.getPopularMoviesCalls.Load() != 7 {
-		t.Errorf("Expected 7 GetPopularMovies calls, got %d", tvdbClient.getPopularMoviesCalls.Load())
+	if tvdbClient.getPopularMoviesCalls.Load() != 9 {
+		t.Errorf("Expected 9 GetPopularMovies calls, got %d", tvdbClient.getPopularMoviesCalls.Load())
 	}
 }
 
@@ -470,8 +470,8 @@ func TestStart_RetriesPartialRefresh(t *testing.T) {
 		popularShows:  map[string][]tvdb.Media{"": {{Id: "1", Name: "Show"}}},
 		popularMovies: map[string][]tvdb.Media{"": {{Id: "2", Name: "Movie"}}},
 	}
-	// The first refresh asks for shows once per category (7); every one fails.
-	tvdbClient.failShowsCalls.Store(7)
+	// The first refresh asks for shows once per category (9); every one fails.
+	tvdbClient.failShowsCalls.Store(9)
 	interactor := &mockPopularEnrichedInteractor{
 		enrichedShows:  map[string][]tvdb.EnrichedMedia{"": {{Media: tvdb.Media{Id: "3"}}}},
 		enrichedMovies: map[string][]tvdb.EnrichedMedia{"": {{Media: tvdb.Media{Id: "4"}}}},
@@ -486,7 +486,7 @@ func TestStart_RetriesPartialRefresh(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		stats := cache.GetCacheStats()
-		if stats.BasicShowsCategories == 7 && stats.BasicMoviesCategories == 7 {
+		if stats.BasicShowsCategories == 9 && stats.BasicMoviesCategories == 9 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -494,7 +494,7 @@ func TestStart_RetriesPartialRefresh(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if calls := tvdbClient.getPopularShowsCalls.Load(); calls < 14 {
-		t.Errorf("expected a second refresh (at least 14 show calls), got %d", calls)
+	if calls := tvdbClient.getPopularShowsCalls.Load(); calls < 18 {
+		t.Errorf("expected a second refresh (at least 18 show calls), got %d", calls)
 	}
 }

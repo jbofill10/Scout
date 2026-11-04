@@ -156,8 +156,8 @@ func (r *PopularRefresher) refreshAll() bool {
 	r.logger.InfoContext(ctx, "Fetched genres", telemetry.WithTraceContext(ctx, "count", len(genres))...)
 
 	// Step 2: Define categories to cache
-	// Empty string ("") for generic popular content + 6 curated genres
-	categories := []string{"", "Action", "Comedy", "Drama", "Sci-Fi", "Anime", "Documentary"}
+	// Empty string ("") for generic popular content + the 8 curated genres
+	categories := []string{"", "Action", "Comedy", "Drama", "Sci-Fi", "Horror", "Thriller", "Anime", "Documentary"}
 
 	// Step 3: Fetch basic content for all categories
 	basicShows := make(map[string][]tvdb.Media)

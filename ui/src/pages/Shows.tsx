@@ -5,6 +5,7 @@ import Typography from '@mui/material/Typography';
 import Alert from '@mui/material/Alert';
 import { useTheme } from '@mui/material/styles';
 import { useGenres } from '../contexts/GenreContext';
+import { CURATED_GENRES } from '../utils/curatedGenres';
 import GenreRow, { MediaRowSkeleton } from '../components/ui/GenreRow';
 import PageHeader from '../components/ui/PageHeader';
 
@@ -15,7 +16,8 @@ import PageHeader from '../components/ui/PageHeader';
  * Features:
  * - Page title "TV Shows"
  * - Uses GenreContext to fetch available genres
- * - Filters to 6 curated genres: Action, Comedy, Drama, Sci-Fi, Anime, Documentary
+ * - Shows the curated genres from utils/curatedGenres.ts
+ *   (Action, Comedy, Drama, Sci-Fi, Horror, Thriller, Anime, Documentary)
  * - Renders GenreRow for each genre with mediaType="series"
  * - Loading state with skeletons
  * - Error handling
@@ -23,11 +25,8 @@ import PageHeader from '../components/ui/PageHeader';
  */
 const Shows: React.FC = () => {
   const theme = useTheme();
+  // GenreContext already keeps only the curated genres, in row order
   const { genres, isLoading, error } = useGenres();
-
-  // Filter to the 6 curated genres
-  const curatedGenres = ['Action', 'Comedy', 'Drama', 'Sci-Fi', 'Anime', 'Documentary'];
-  const filteredGenres = genres.filter((genre) => curatedGenres.includes(genre.name));
 
   return (
     <Box
@@ -48,7 +47,7 @@ const Shows: React.FC = () => {
         {/* Loading State */}
         {isLoading && (
           <Box>
-            {Array.from({ length: 6 }).map((_, index) => (
+            {Array.from({ length: CURATED_GENRES.length }).map((_, index) => (
               <MediaRowSkeleton key={index} />
             ))}
           </Box>
@@ -62,16 +61,16 @@ const Shows: React.FC = () => {
         )}
 
         {/* Genre Rows */}
-        {!isLoading && !error && filteredGenres.length > 0 && (
+        {!isLoading && !error && genres.length > 0 && (
           <>
-            {filteredGenres.map((genre) => (
+            {genres.map((genre) => (
               <GenreRow key={genre.slug} genre={genre.name} mediaType="series" />
             ))}
           </>
         )}
 
         {/* Empty State - No matching genres found */}
-        {!isLoading && !error && filteredGenres.length === 0 && (
+        {!isLoading && !error && genres.length === 0 && (
           <Typography
             variant="body1"
             sx={{

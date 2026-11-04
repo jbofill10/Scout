@@ -169,11 +169,13 @@ type Row struct {
 }
 
 // DefaultRows are the rows the UI shows: the unfiltered Home rows and the
-// six curated genres on the Shows and Movies pages.
+// eight curated genres on the Shows and Movies pages.
 func DefaultRows() []Row {
 	var rows []Row
 	for _, kind := range []Kind{KindSeries, KindMovie} {
-		for _, genre := range []string{"", "Action", "Comedy", "Drama", "Sci-Fi", "Anime", "Documentary"} {
+		for _, genre := range []string{
+			"", "Action", "Comedy", "Drama", "Sci-Fi", "Horror", "Thriller", "Anime", "Documentary",
+		} {
 			rows = append(rows, Row{Kind: kind, Genre: genre, Limit: DefaultLimit})
 		}
 	}
