@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	tvdb "github.com/jbofill10/scout/backend/pkg/media"
@@ -24,20 +25,20 @@ type stubRater struct {
 	lookups []string
 }
 
-func (r *stubRater) Attach(_ context.Context, media []tvdb.Media) {
+func (r *stubRater) Attach(_ context.Context, media []tvdb.Media, _ time.Duration) {
 	for i := range media {
 		media[i].Ratings = r.known[media[i].ImdbID]
 	}
 }
 
-func (r *stubRater) Lookup(_ context.Context, imdbID string) []tvdb.Rating {
+func (r *stubRater) Lookup(_ context.Context, imdbID string, _ time.Duration) []tvdb.Rating {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.lookups = append(r.lookups, imdbID)
 	return r.known[imdbID]
 }
 
-func (r *stubRater) LookupMany(_ context.Context, imdbIDs []string) map[string][]tvdb.Rating {
+func (r *stubRater) LookupMany(_ context.Context, imdbIDs []string, _ time.Duration) map[string][]tvdb.Rating {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.lookups = append(r.lookups, imdbIDs...)
@@ -153,13 +154,13 @@ type resolvingRater struct {
 	byTVDB map[string]string
 }
 
-func (r *resolvingRater) Attach(ctx context.Context, media []tvdb.Media) {
+func (r *resolvingRater) Attach(ctx context.Context, media []tvdb.Media, wait time.Duration) {
 	for i := range media {
 		if media[i].ImdbID == "" {
 			media[i].ImdbID = r.byTVDB[media[i].Category+":"+media[i].Id]
 		}
 	}
-	r.stubRater.Attach(ctx, media)
+	r.stubRater.Attach(ctx, media, wait)
 }
 
 func postJSON(r *gin.Engine, target string, body any) *httptest.ResponseRecorder {

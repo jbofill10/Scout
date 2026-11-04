@@ -74,12 +74,24 @@ type GenreLookup interface {
 	LookupID(name string) (int, bool)
 }
 
+// Rater fills critic and audience scores on a freshly ranked row before it
+// is cached, waiting at most wait for scores not cached yet.
+type Rater interface {
+	Attach(ctx context.Context, media []tvdb.Media, wait time.Duration)
+}
+
+// rowRatingWait is how long a row build holds for its scores: builds run
+// detached with a 3-minute cap, and a row cached without scores would
+// serve for an hour.
+const rowRatingWait = 45 * time.Second
+
 // Service serves ranked rows from a cache. A miss is filled from the primary
 // source; when there is none, or it fails or returns nothing, the fallback
 // source answers instead. Concurrent misses on one row share a single build.
 type Service struct {
 	primary  Source
 	fallback Source
+	rater    Rater
 	lists    *ttlCache[[]tvdb.Media]
 	logger   *slog.Logger
 
@@ -104,6 +116,11 @@ func NewService(primary, fallback Source, logger *slog.Logger) *Service {
 		logger:   logger,
 		inflight: map[string]*build{},
 	}
+}
+
+// SetRater makes every row carry its scores when it is cached.
+func (s *Service) SetRater(rater Rater) {
+	s.rater = rater
 }
 
 // Rank returns up to limit items for the row, most popular first.
@@ -142,6 +159,9 @@ func (s *Service) run(ctx context.Context, key string, b *build, kind Kind, genr
 	defer cancel()
 
 	results, source, err := s.fetch(buildCtx, kind, genre, limit)
+	if err == nil && s.rater != nil {
+		s.rater.Attach(buildCtx, results, rowRatingWait)
+	}
 	switch {
 	case err != nil:
 	case buildCtx.Err() != nil:

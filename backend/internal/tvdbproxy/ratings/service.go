@@ -1,8 +1,10 @@
-// Package ratings attaches critic and audience scores to media. Three
+// Package ratings attaches critic and audience scores to media. Four
 // sources, all keyed by IMDb id: IMDb's public daily dataset for the IMDb
 // rating (no key), Wikidata's recorded review scores for the Rotten
-// Tomatoes Tomatometer and Metascore (no key, lags on new releases), and
-// OMDb for a current Tomatometer and Metascore when a key is configured.
+// Tomatoes Tomatometer and Metascore (no key, lags on new releases), the
+// English Wikipedia article's reception prose for films Wikidata has not
+// scored yet (no key), and OMDb for a current Tomatometer and Metascore
+// when a key is configured.
 // Media that only carries a TVDB id (library items, person-credit search
 // hits) is resolved to an IMDb id first. Answers are cached for days and
 // concurrent asks share one lookup, since a free OMDb key allows 1,000
@@ -44,10 +46,11 @@ const (
 	// concurrent asks for one chunk share it; the per-title answers it
 	// produced live for ratingTTL.
 	chunkTTL = time.Minute
-	// waitBudget is how long a caller waits for an answer not cached yet.
-	// Ratings are decoration: past the budget the response goes out
-	// without them and the next request finds them cached.
-	waitBudget = 4 * time.Second
+	// DefaultWait is how long a caller waits for an answer not cached yet.
+	// Ratings are decoration: past the wait the response goes out without
+	// them and the next request finds them cached. Callers filling a cache
+	// rather than answering a person pass a longer wait.
+	DefaultWait = 4 * time.Second
 )
 
 // Source looks up a title's ratings by IMDb id. nil, nil means the source
@@ -56,10 +59,16 @@ type Source interface {
 	Lookup(ctx context.Context, imdbID string) ([]tvdb.Rating, error)
 }
 
-// ScoreSource looks up many titles' scores at once; Wikidata implements it.
-// Ids the source has nothing for are absent from the map.
-type ScoreSource interface {
-	Scores(ctx context.Context, imdbIDs []string) (map[string][]tvdb.Rating, error)
+// RecordSource looks up many titles at once; Wikidata implements it. Ids
+// the source has no item for are absent from the map.
+type RecordSource interface {
+	Records(ctx context.Context, imdbIDs []string) (map[string]Record, error)
+}
+
+// ProseSource reads scores out of Wikipedia articles by title; Prose
+// implements it. Titles without scores are absent from the map.
+type ProseSource interface {
+	Scores(ctx context.Context, titles []string) (map[string][]tvdb.Rating, error)
 }
 
 // IMDbTable answers IMDb ratings from a local table; Dataset implements it.
@@ -77,7 +86,9 @@ type Options struct {
 	// IMDb answers the IMDb rating locally.
 	IMDb IMDbTable
 	// Wikidata answers the Tomatometer and Metascore without a key.
-	Wikidata ScoreSource
+	Wikidata RecordSource
+	// Prose reads them from a film's Wikipedia article when Wikidata has none.
+	Prose ProseSource
 	// Source is the keyed source (OMDb) for a current Tomatometer and Metascore.
 	Source Source
 	// Resolver fills in IMDb ids for media that arrives with only a TVDB id.
@@ -93,7 +104,6 @@ type Service struct {
 	omdb   *asyncCache[[]tvdb.Rating]
 	chunks *asyncCache[struct{}]
 	now    func() time.Time
-	budget time.Duration
 
 	mu          sync.Mutex
 	pausedUntil time.Time
@@ -108,7 +118,6 @@ func NewService(opts Options, logger *slog.Logger) *Service {
 		omdb:     newAsyncCache[[]tvdb.Rating](lookupConcurrency, lookupTimeout),
 		chunks:   newAsyncCache[struct{}](chunkConcurrency, chunkTimeout),
 		now:      time.Now,
-		budget:   waitBudget,
 		wikidata: map[string]cacheEntry[[]tvdb.Rating]{},
 	}
 }
@@ -116,9 +125,9 @@ func NewService(opts Options, logger *slog.Logger) *Service {
 // Attach fills Ratings on every item that has no ratings yet. Items without
 // an IMDb id are resolved from their TVDB id first (and keep the id); items
 // sharing an id share one lookup. It returns once every lookup has answered
-// or the wait budget is spent, whichever is first.
-func (s *Service) Attach(ctx context.Context, media []tvdb.Media) {
-	ctx, cancel := context.WithTimeout(ctx, s.budget)
+// or wait is spent, whichever is first.
+func (s *Service) Attach(ctx context.Context, media []tvdb.Media, wait time.Duration) {
+	ctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
 
 	s.resolveIDs(ctx, media)
@@ -138,7 +147,7 @@ func (s *Service) Attach(ctx context.Context, media []tvdb.Media) {
 		ids = append(ids, id)
 	}
 
-	results := s.LookupMany(ctx, ids)
+	results := s.LookupMany(ctx, ids, wait)
 	for id, indexes := range byID {
 		ratings := results[id]
 		if len(ratings) == 0 {
@@ -192,20 +201,20 @@ func (s *Service) resolveIDs(ctx context.Context, media []tvdb.Media) {
 }
 
 // Lookup returns the ratings for one IMDb id; see LookupMany.
-func (s *Service) Lookup(ctx context.Context, imdbID string) []tvdb.Rating {
+func (s *Service) Lookup(ctx context.Context, imdbID string, wait time.Duration) []tvdb.Rating {
 	if imdbID == "" {
 		return nil
 	}
-	return s.LookupMany(ctx, []string{imdbID})[imdbID]
+	return s.LookupMany(ctx, []string{imdbID}, wait)[imdbID]
 }
 
 // LookupMany returns the ratings for each IMDb id, IMDb first, then Rotten
 // Tomatoes, then Metacritic: the IMDb rating from the table, the rest from
-// the source where it has them and Wikidata otherwise, each from its cache
-// or waiting at most the wait budget for a new lookup. Ids with nothing
-// known yet, or nothing at all, are absent.
-func (s *Service) LookupMany(ctx context.Context, imdbIDs []string) map[string][]tvdb.Rating {
-	ctx, cancel := context.WithTimeout(ctx, s.budget)
+// the source where it has them and Wikidata (or the Wikipedia article)
+// otherwise, each from its cache or waiting at most wait for a new lookup.
+// Ids with nothing known yet, or nothing at all, are absent.
+func (s *Service) LookupMany(ctx context.Context, imdbIDs []string, wait time.Duration) map[string][]tvdb.Rating {
+	ctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
 
 	ids := uniqueIDs(imdbIDs)
@@ -280,7 +289,8 @@ func (s *Service) merge(imdbID string, sourced, recorded []tvdb.Rating) []tvdb.R
 	return ratings
 }
 
-// fromWikidata returns Wikidata's scores for the ids: cached answers at
+// fromWikidata returns Wikidata's scores for the ids, completed from the
+// Wikipedia article for films Wikidata has not scored: cached answers at
 // once, the rest through one query per chunk of ids, run detached and
 // shared by every caller asking for that chunk.
 func (s *Service) fromWikidata(ctx context.Context, ids []string) map[string][]tvdb.Rating {
@@ -304,13 +314,14 @@ func (s *Service) fromWikidata(ctx context.Context, ids []string) map[string][]t
 		go func(chunk []string) {
 			defer wg.Done()
 			s.chunks.get(ctx, strings.Join(chunk, ","), func(ctx context.Context) (struct{}, time.Duration) {
-				scores, err := s.opts.Wikidata.Scores(ctx, chunk)
+				records, err := s.opts.Wikidata.Records(ctx, chunk)
 				if err != nil {
 					// A failed query is simply retried by the next asker.
 					s.logger.WarnContext(ctx, "Wikidata scores lookup failed",
 						telemetry.WithTraceContext(ctx, "count", len(chunk), "error", err)...)
 					return struct{}{}, 0
 				}
+				scores := s.completeFromProse(ctx, records)
 				s.mu.Lock()
 				defer s.mu.Unlock()
 				now := s.now()
@@ -344,6 +355,76 @@ func (s *Service) fromWikidata(ctx context.Context, ids []string) map[string][]t
 		}
 	}
 	return results
+}
+
+// completeFromProse returns each record's scores, with the Tomatometer and
+// Metascore read from the Wikipedia article for films whose record lacks
+// one. A failed article fetch leaves the Wikidata scores as they are.
+func (s *Service) completeFromProse(ctx context.Context, records map[string]Record) map[string][]tvdb.Rating {
+	scores := make(map[string][]tvdb.Rating, len(records))
+	var titles []string
+	byTitle := map[string][]string{}
+	for id, record := range records {
+		scores[id] = record.Ratings
+		if s.opts.Prose == nil || !record.Film || record.Article == "" || hasSource(record.Ratings, tvdb.RatingSourceRottenTomatoes) {
+			continue
+		}
+		if _, seen := byTitle[record.Article]; !seen {
+			titles = append(titles, record.Article)
+		}
+		byTitle[record.Article] = append(byTitle[record.Article], id)
+	}
+	if len(titles) == 0 {
+		return scores
+	}
+	sort.Strings(titles)
+	prose, err := s.opts.Prose.Scores(ctx, titles)
+	if err != nil {
+		s.logger.WarnContext(ctx, "Wikipedia prose lookup failed",
+			telemetry.WithTraceContext(ctx, "count", len(titles), "error", err)...)
+		return scores
+	}
+	for title, ids := range byTitle {
+		for _, id := range ids {
+			scores[id] = mergeScores(scores[id], prose[title])
+		}
+	}
+	return scores
+}
+
+// mergeScores adds the extra scores whose source the base list lacks,
+// keeping Rotten Tomatoes before Metacritic.
+func mergeScores(base, extra []tvdb.Rating) []tvdb.Rating {
+	merged := append([]tvdb.Rating(nil), base...)
+	for _, rating := range extra {
+		if !hasSource(merged, rating.Source) {
+			merged = append(merged, rating)
+		}
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		return sourceRank(merged[i].Source) < sourceRank(merged[j].Source)
+	})
+	return merged
+}
+
+func hasSource(ratings []tvdb.Rating, source string) bool {
+	for _, rating := range ratings {
+		if rating.Source == source {
+			return true
+		}
+	}
+	return false
+}
+
+func sourceRank(source string) int {
+	switch source {
+	case tvdb.RatingSourceIMDb:
+		return 0
+	case tvdb.RatingSourceRottenTomatoes:
+		return 1
+	default:
+		return 2
+	}
 }
 
 // fromSource returns the source's ratings for an id through the cache,

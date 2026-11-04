@@ -39,11 +39,23 @@ var (
 	outOf100Pattern   = regexp.MustCompile(`^(\d{1,3})\s*/\s*100$`)
 )
 
+// Record is what Wikidata knows about one title: the scores it records and
+// where its English Wikipedia article is, for the prose fallback.
+type Record struct {
+	Ratings []tvdb.Rating
+	// Article is the English Wikipedia article title, "" when there is none.
+	Article string
+	// Film says the item is a film (or a kind of film), which is where the
+	// article's reception prose is read from.
+	Film bool
+}
+
 // Wikidata reads the Rotten Tomatoes Tomatometer and the Metascore that
 // Wikidata records on film and series items ("review score", P444, with
-// "review score by" naming the critic site), keyed by IMDb id (P345). The
-// data is CC0 and needs no key; bots keep it current for established titles
-// but it lags on new releases, which is why OMDb's figure wins when present.
+// "review score by" naming the critic site), keyed by IMDb id (P345), along
+// with each item's English Wikipedia article. The data is CC0 and needs no
+// key; bots keep it current for established titles but it lags on new
+// releases, which the article prose and OMDb cover.
 type Wikidata struct {
 	url    string
 	http   *http.Client
@@ -73,10 +85,11 @@ type sparqlResponse struct {
 	} `json:"results"`
 }
 
-// Scores returns the Tomatometer and Metascore Wikidata holds for each IMDb
-// id, Rotten Tomatoes first. Ids with neither are absent from the map. Ids
-// that are not title ids are ignored.
-func (w *Wikidata) Scores(ctx context.Context, imdbIDs []string) (map[string][]tvdb.Rating, error) {
+// Records returns what Wikidata holds for each IMDb id: the Tomatometer and
+// Metascore (Rotten Tomatoes first) and the English Wikipedia article. Ids
+// Wikidata has no item for are absent from the map; ids that are not title
+// ids are ignored.
+func (w *Wikidata) Records(ctx context.Context, imdbIDs []string) (map[string]Record, error) {
 	ids := make([]string, 0, len(imdbIDs))
 	for _, id := range imdbIDs {
 		if wikidataIDPattern.MatchString(id) {
@@ -84,7 +97,7 @@ func (w *Wikidata) Scores(ctx context.Context, imdbIDs []string) (map[string][]t
 		}
 	}
 	if len(ids) == 0 {
-		return map[string][]tvdb.Rating{}, nil
+		return map[string]Record{}, nil
 	}
 
 	query := url.Values{}
@@ -116,19 +129,55 @@ func (w *Wikidata) Scores(ctx context.Context, imdbIDs []string) (map[string][]t
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("wikidata: decode: %w", err)
 	}
-	return parseScores(result), nil
+	return parseRecords(result), nil
 }
 
-// sparqlFor asks for every review score, its reviewer and its date on the
-// items with the given IMDb ids.
+// sparqlFor asks, for the items with the given IMDb ids, for every review
+// score with its reviewer and date, the English Wikipedia article, and
+// whether the item is a film.
 func sparqlFor(ids []string) string {
 	var values strings.Builder
 	for _, id := range ids {
 		values.WriteString(`"` + id + `" `)
 	}
-	return `SELECT ?imdb ?score ?by ?date WHERE { VALUES ?imdb { ` + values.String() + `} ` +
-		`?item wdt:P345 ?imdb . ?item p:P444 ?st . ?st ps:P444 ?score . ?st pq:P447 ?by . ` +
-		`OPTIONAL { ?st pq:P585 ?date } }`
+	return `SELECT ?imdb ?score ?by ?date ?article ?film WHERE { VALUES ?imdb { ` + values.String() + `} ` +
+		`?item wdt:P345 ?imdb . ` +
+		`OPTIONAL { ?article schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> . } ` +
+		`OPTIONAL { ?item p:P444 ?st . ?st ps:P444 ?score . ?st pq:P447 ?by . OPTIONAL { ?st pq:P585 ?date } } ` +
+		`BIND(EXISTS { ?item wdt:P31/wdt:P279* wd:Q11424 } AS ?film) }`
+}
+
+// parseRecords folds the result rows into one Record per id.
+func parseRecords(result sparqlResponse) map[string]Record {
+	scores := parseScores(result)
+	records := map[string]Record{}
+	for _, binding := range result.Results.Bindings {
+		id := binding["imdb"].Value
+		record := records[id]
+		if article, ok := binding["article"]; ok && record.Article == "" {
+			record.Article = articleTitle(article.Value)
+		}
+		if film, ok := binding["film"]; ok && film.Value == "true" {
+			record.Film = true
+		}
+		record.Ratings = scores[id]
+		records[id] = record
+	}
+	return records
+}
+
+// articleTitle turns "https://en.wikipedia.org/wiki/Sinners_(2025_film)" into
+// "Sinners (2025 film)".
+func articleTitle(link string) string {
+	path := link[strings.LastIndex(link, "/wiki/")+len("/wiki/"):]
+	if strings.LastIndex(link, "/wiki/") < 0 {
+		return ""
+	}
+	title, err := url.PathUnescape(path)
+	if err != nil {
+		title = path
+	}
+	return strings.ReplaceAll(title, "_", " ")
 }
 
 // scored is one candidate score with the date it was taken.

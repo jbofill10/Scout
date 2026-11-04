@@ -83,7 +83,7 @@ func (h *ExtendedHandler) rateBatch(ctx context.Context, results []BatchExtended
 	if len(ids) == 0 {
 		return
 	}
-	scores := h.rater.LookupMany(ctx, ids)
+	scores := h.rater.LookupMany(ctx, ids, backgroundWait)
 	for i := range results {
 		if results[i].Data == nil {
 			continue

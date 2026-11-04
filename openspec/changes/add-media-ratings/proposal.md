@@ -9,11 +9,12 @@ each card: the Tomatometer for movies and "something significant" for shows.
 
 ## What Changes
 
-- tvdb-proxy gains a ratings package (`internal/tvdbproxy/ratings`) with three sources. IMDb's public daily
+- tvdb-proxy gains a ratings package (`internal/tvdbproxy/ratings`) with four sources. IMDb's public daily
   ratings table (`title.ratings.tsv.gz`, no key) is held in memory and gives every title an IMDb rating.
   Wikidata's recorded review scores (CC0, no key) give the Rotten Tomatoes Tomatometer and Metascore for
-  established titles. OMDb, the only API that licenses a current Tomatometer, adds the Tomatometer and
-  Metascore for everything when `OMDB_API_KEY` is set, winning over Wikidata's figure. All are keyed by IMDb
+  established titles, and the film's English Wikipedia article (read through the MediaWiki API, no key)
+  gives them for new releases Wikidata has not scored yet. OMDb, the only API that licenses Rotten Tomatoes'
+  own current figures, replaces those when `OMDB_API_KEY` is set. All are keyed by IMDb
   id, which TVDB lists on search hits (`remote_ids`, now decoded) and extended records; anything that arrives
   with only a TVDB id (library items, person-credit search hits) is resolved through TVDB's short extended
   record.
@@ -41,7 +42,9 @@ each card: the Tomatometer for movies and "something significant" for shows.
   `types/MediaStatus.ts`.
 - Config: `.env.template`, `docker-compose.yml.template`, README, DEPLOYMENT.
 - External traffic: a 9 MB download from IMDb at startup and once a day; about 20 MB of memory for the
-  table. One Wikidata SPARQL query per 50 titles the proxy has not seen in a week (two in flight at most).
+  table. One Wikidata SPARQL query per 50 titles the proxy has not seen in a week (two in flight at most),
+  plus one MediaWiki request per 20 film articles Wikidata had no Tomatometer for (20-100 KB of wikitext each).
+  Popular rows are rated as they are built (45 s wait) so a cold start never caches an unrated row.
   With an OMDb key, one lookup per title the proxy has not seen in a week (a free key allows 1,000 a day;
   the warm popular rows need roughly 250 on a cold start). One short TVDB extended call per title that
   arrives without an IMDb id, cached for a week.
