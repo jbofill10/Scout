@@ -28,6 +28,13 @@ Four sources, all keyed by IMDb id, merged into one list (IMDb, Rotten Tomatoes,
   Metascore win over Wikidata's; its IMDb figure is dropped in favour of the table's, which always carries
   votes.
 
+Coverage ceiling, checked on 2026-11-03 against the live rows: every movie card whose title has a published
+Tomatometer anywhere shows it. The 21 uncovered movie cards (11 anime films and specials, 6 streaming
+documentaries, a 2026 release not yet out, a TV film, two titles with no Wikidata item) have no Rotten
+Tomatoes score in Wikidata or their article, and their rottentomatoes.com pages carry review counts of 0-9
+with no published score (or no page at all). Only OMDb's licensed feed could change that, and it would not
+for these. Those cards show the Metascore or the IMDb rating instead.
+
 `Service.LookupMany(ctx, ids, wait)` runs the sources in parallel per batch of ids and merges per id;
 `Lookup` is the one-id case and the batch extended handler rates a whole batch in one call. Waits are
 explicit: 4 s for a search a person is waiting on, 15 s for the batch endpoints the UI and webserver fetch
