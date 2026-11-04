@@ -106,9 +106,11 @@ func (q *QbittHandler) downloadTorrent(ctx context.Context, torrent *prowlarr.Se
 	afterAdd := context.WithoutCancel(ctx)
 	if err := q.c.AddTorrentFromUrlCtx(ctx, url, options); err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
-			// A user cancel (or the caller giving up) does not want the torrent
-			// even if qBittorrent took it; CancelItem removes what it finds.
+			// A user cancel does not want the torrent, but qBittorrent may still
+			// carry out an add it had already received: whatever arrives under
+			// this tag is removed rather than left to download untracked.
 			q.logger.InfoContext(afterAdd, "Torrent add cancelled", "error", err, "tracking_uuid", trackingUUID)
+			go q.discardIfArrives(afterAdd, trackingUUID)
 			return "", "", err
 		}
 		hash, found := q.awaitTaggedTorrent(afterAdd, trackingUUID)
@@ -178,6 +180,21 @@ func (q *QbittHandler) awaitTaggedTorrent(ctx context.Context, trackingUUID stri
 		case <-time.After(addRecoveryPoll):
 		}
 	}
+}
+
+// discardIfArrives removes a torrent that shows up under the tracking tag after
+// its request was cancelled, so a cancel never leaves an untracked download.
+func (q *QbittHandler) discardIfArrives(ctx context.Context, trackingUUID string) {
+	hash, found := q.awaitTaggedTorrent(ctx, trackingUUID)
+	if !found {
+		return
+	}
+	if err := q.c.DeleteTorrentsCtx(ctx, []string{hash}, true); err != nil {
+		q.logger.WarnContext(ctx, "Torrent arrived after its request was cancelled and could not be removed",
+			"error", err, "hash", hash, "tracking_uuid", trackingUUID)
+		return
+	}
+	q.logger.InfoContext(ctx, "Torrent arrived after its request was cancelled, removed", "hash", hash, "tracking_uuid", trackingUUID)
 }
 
 func (q *QbittHandler) queryQbittorrentWithRetries(

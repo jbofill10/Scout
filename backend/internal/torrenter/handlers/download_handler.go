@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -25,8 +26,11 @@ func NewDownloadHandler(interactor *interactors.DownloadInteractor, logger *slog
 
 func (h *DownloadHandler) DownloadTorrent(c *gin.Context) {
 	var req tvdb.Media
-	// Extract context for trace propagation and logging
-	ctx := c.Request.Context()
+	// The search and the torrent add outlive the caller's connection: the
+	// webserver restarting (or giving up) mid-request must not cancel work
+	// that is about to hand qBittorrent a torrent, or the torrent arrives
+	// untracked. The trace stays attached; only cancellation is dropped.
+	ctx := workContext(c)
 
 	if err := c.ShouldBind(&req); err != nil {
 		h.logger.ErrorContext(ctx, "Failed to bind request", telemetry.WithTraceContext(ctx, "error", err)...)
@@ -44,4 +48,12 @@ func (h *DownloadHandler) DownloadTorrent(c *gin.Context) {
 
 	h.logger.InfoContext(ctx, "Torrent download processed", telemetry.WithTraceContext(ctx, "media", req.Name, "result_count", len(results))...)
 	c.JSON(http.StatusOK, dlstatus.DownloadResponse{Results: results})
+}
+
+// workContext is the request's context without its cancellation: the trace
+// and values carry on, but a client that disconnects no longer aborts work the
+// torrenter has started on its behalf. Deadlines set by the torrenter itself
+// (the search deadline) and user cancels (the in-flight registry) still apply.
+func workContext(c *gin.Context) context.Context {
+	return context.WithoutCancel(c.Request.Context())
 }
