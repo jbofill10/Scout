@@ -6,8 +6,18 @@ The tvdb-proxy SHALL attach critic and audience scores to the media it returns, 
 `ratings` list of `{source, value, votes}` where `source` is `imdb` (value 0-10, with `votes`),
 `rotten_tomatoes` (the Tomatometer, 0-100) or `metacritic` (the Metascore, 0-100), in that order. The IMDb
 rating SHALL come from IMDb's public daily ratings table held in memory (`RATINGS_IMDB`, on by default); the
-Tomatometer and Metascore SHALL come from OMDb when an API key is configured (`OMDB_API_KEY`). Media whose
-IMDb id TVDB does not list, or that no source knows, SHALL carry no `ratings`.
+Tomatometer and Metascore SHALL come from the review scores Wikidata records (`RATINGS_WIKIDATA`, on by
+default) and, when an API key is configured (`OMDB_API_KEY`), from OMDb, whose figure wins. Media whose IMDb
+id TVDB does not list, or that no source knows, SHALL carry no `ratings`.
+
+#### Scenario: Tomatometer from Wikidata
+
+- **WHEN** Wikidata holds a Rotten Tomatoes review score ("93%") or a Metacritic score ("81/100") for a
+  title's IMDb id
+- **THEN** the proxy SHALL return them as `rotten_tomatoes` and `metacritic`, keeping the latest-dated score
+  per source and ignoring Rotten Tomatoes' "x/10" average
+- **AND** it SHALL ask Wikidata for up to 50 titles per query, caching answers for 7 days and misses for 24
+  hours
 
 #### Scenario: IMDb table loaded at startup
 

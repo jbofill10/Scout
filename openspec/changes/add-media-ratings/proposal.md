@@ -9,12 +9,14 @@ each card: the Tomatometer for movies and "something significant" for shows.
 
 ## What Changes
 
-- tvdb-proxy gains a ratings package (`internal/tvdbproxy/ratings`) with two sources. IMDb's public daily
+- tvdb-proxy gains a ratings package (`internal/tvdbproxy/ratings`) with three sources. IMDb's public daily
   ratings table (`title.ratings.tsv.gz`, no key) is held in memory and gives every title an IMDb rating.
-  OMDb, the only API that licenses the Rotten Tomatoes Tomatometer, adds the Tomatometer and Metascore when
-  `OMDB_API_KEY` is set. Both are keyed by IMDb id, which TVDB lists on search hits (`remote_ids`, now
-  decoded) and extended records; anything that arrives with only a TVDB id (library items, person-credit
-  search hits) is resolved through TVDB's short extended record.
+  Wikidata's recorded review scores (CC0, no key) give the Rotten Tomatoes Tomatometer and Metascore for
+  established titles. OMDb, the only API that licenses a current Tomatometer, adds the Tomatometer and
+  Metascore for everything when `OMDB_API_KEY` is set, winning over Wikidata's figure. All are keyed by IMDb
+  id, which TVDB lists on search hits (`remote_ids`, now decoded) and extended records; anything that arrives
+  with only a TVDB id (library items, person-credit search hits) is resolved through TVDB's short extended
+  record.
 - Search hits, popular rows and extended records carry `ratings` (`[{source, value, votes}]`). A new
   `POST /ratings/batch` rates titles by TVDB id; the webserver relays it at `/api/ratings/batch`. OMDb
   answers are cached for a week, misses for a day, a refused key pauses lookups for an hour, and a caller
@@ -22,10 +24,10 @@ each card: the Tomatometer for movies and "something significant" for shows.
 - The webserver's extended-record conversion carries `ratings` and `imdbId` into `Media`, so the detail
   endpoint and the enriched popular rows have them too.
 - Every poster card (Home, Shows, Movies, search results, Library) shows one score in its top-left corner:
-  the Tomatometer for movies when OMDb has it, otherwise the IMDb rating; the IMDb rating for shows. The
+  the Tomatometer for movies when a source has it, otherwise the IMDb rating; the IMDb rating for shows. The
   detail dialog lists every score.
-- New env `RATINGS_IMDB` (default true; `IMDB_RATINGS_URL` for tests) and `OMDB_API_KEY` (optional;
-  `OMDB_HOST` for tests).
+- New env `RATINGS_IMDB` and `RATINGS_WIKIDATA` (default true; `IMDB_RATINGS_URL` and `WIKIDATA_SPARQL_URL`
+  for tests) and `OMDB_API_KEY` (optional; `OMDB_HOST` for tests).
 
 ## Impact
 
@@ -39,8 +41,9 @@ each card: the Tomatometer for movies and "something significant" for shows.
   `types/MediaStatus.ts`.
 - Config: `.env.template`, `docker-compose.yml.template`, README, DEPLOYMENT.
 - External traffic: a 9 MB download from IMDb at startup and once a day; about 20 MB of memory for the
-  table. With an OMDb key, one lookup per title the proxy has not seen in a week (a free key allows 1,000 a
-  day; the warm popular rows need roughly 250 on a cold start). One short TVDB extended call per title that
+  table. One Wikidata SPARQL query per 50 titles the proxy has not seen in a week (two in flight at most).
+  With an OMDb key, one lookup per title the proxy has not seen in a week (a free key allows 1,000 a day;
+  the warm popular rows need roughly 250 on a cold start). One short TVDB extended call per title that
   arrives without an IMDb id, cached for a week.
 - Specs: `tvdb-proxy-api` (ratings enrichment, ratings batch, search hit mapping), `ui-netflix-layout`
   (media card), `ui-pages` (library page).

@@ -2,7 +2,7 @@
 
 ## Where ratings come from
 
-Two sources, both keyed by IMDb id, merged into one list (IMDb, Rotten Tomatoes, Metacritic):
+Three sources, all keyed by IMDb id, merged into one list (IMDb, Rotten Tomatoes, Metacritic):
 
 - **IMDb's public dataset** (`title.ratings.tsv.gz`, refreshed daily, no key). Every rated title's average
   and vote count, about 1.5 million rows. Parsed into 12-byte rows (numeric id, rating in tenths, votes)
@@ -10,12 +10,22 @@ Two sources, both keyed by IMDb id, merged into one list (IMDb, Rotten Tomatoes,
   serves (90 s cap, then retried in the background) so the webserver's first popular refresh already carries
   scores; replaced once a day, and a failed download keeps the old table. This is the baseline: every card
   can show a score with nothing configured.
-- **OMDb** (omdbapi.com, free key). Rotten Tomatoes has no public API; OMDb licenses the Tomatometer and
-  returns it next to IMDb's rating and the Metascore in one record. When a key is set its Tomatometer leads
-  on movie posters and the Metascore joins the dialog; its IMDb figure is dropped in favour of the table's,
-  which is fresher and always carries votes.
+- **Wikidata** (query service, no key, CC0). Film and series items carry "review score" (P444) statements
+  qualified by "review score by" (P447): the Tomatometer as "93%" (Q105584, Rotten Tomatoes; its "8.7/10"
+  average is skipped) and the Metascore as "81/100" (Q150248). One SPARQL query covers 50 IMDb ids (P345);
+  the latest-dated score per source is kept. Bots keep these current for established titles (29 of 40 of the
+  user's library movies had a Tomatometer) but they lag on brand-new releases (3 of 20 of the week's popular
+  movies), which is the gap OMDb closes.
+- **OMDb** (omdbapi.com, free key). Rotten Tomatoes has no public API; OMDb licenses a current Tomatometer
+  and returns it next to IMDb's rating and the Metascore in one record. When a key is set its Tomatometer and
+  Metascore win over Wikidata's; its IMDb figure is dropped in favour of the table's, which always carries
+  votes.
 
-Alternatives considered: TMDB (no Tomatometer), Trakt ratings (needs a client id the deployment lacks).
+`Service.LookupMany` runs the three in parallel per batch of ids and merges per id; `Lookup` is the one-id
+case and the batch extended handler rates a whole batch in one call.
+
+Alternatives considered: TMDB (no Tomatometer), Trakt ratings (needs a client id the deployment lacks),
+scraping rottentomatoes.com (undocumented endpoints, against its terms).
 
 ## Where the lookup lives
 

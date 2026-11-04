@@ -66,6 +66,34 @@ func (h *ExtendedHandler) GetExtended(c *gin.Context) {
 	c.JSON(http.StatusOK, info)
 }
 
+// rateBatch fills the ratings on every fetched record in one lookup, so a
+// row's worth of titles costs one scores query rather than one each.
+func (h *ExtendedHandler) rateBatch(ctx context.Context, results []BatchExtendedResponse) {
+	if h.rater == nil {
+		return
+	}
+	ids := make([]string, 0, len(results))
+	for _, result := range results {
+		if result.Data != nil {
+			if id := result.Data.Data.ImdbID(); id != "" {
+				ids = append(ids, id)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	scores := h.rater.LookupMany(ctx, ids)
+	for i := range results {
+		if results[i].Data == nil {
+			continue
+		}
+		if id := results[i].Data.Data.ImdbID(); id != "" {
+			results[i].Data.Data.Ratings = scores[id]
+		}
+	}
+}
+
 // GetBatchExtended handles batch requests for extended media information
 // POST /series/batch/extended
 // Input: Array of {id: string, mediaType: string}
@@ -121,7 +149,6 @@ func (h *ExtendedHandler) GetBatchExtended(c *gin.Context) {
 					"error", err)
 				response.Error = err.Error()
 			} else {
-				rateExtended(ctx, h.rater, info)
 				response.Data = info
 			}
 
@@ -134,6 +161,8 @@ func (h *ExtendedHandler) GetBatchExtended(c *gin.Context) {
 
 	wg.Wait()
 	close(ch)
+
+	h.rateBatch(ctx, results)
 
 	h.logger.InfoContext(ctx, "Batch extended request completed",
 		"total_requests", len(requests), "responses", len(results))

@@ -37,6 +37,19 @@ func (r *stubRater) Lookup(_ context.Context, imdbID string) []tvdb.Rating {
 	return r.known[imdbID]
 }
 
+func (r *stubRater) LookupMany(_ context.Context, imdbIDs []string) map[string][]tvdb.Rating {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lookups = append(r.lookups, imdbIDs...)
+	out := map[string][]tvdb.Rating{}
+	for _, id := range imdbIDs {
+		if ratings, ok := r.known[id]; ok {
+			out[id] = ratings
+		}
+	}
+	return out
+}
+
 type stubSearcher struct{ results []tvdb.Media }
 
 func (s stubSearcher) Search(context.Context, search.Query, string) ([]tvdb.Media, error) {
@@ -130,7 +143,8 @@ func TestExtendedHandlerRatesRecords(t *testing.T) {
 	}
 	assert.Equal(t, tomato, byID["1"])
 	assert.Nil(t, byID["2"])
-	assert.Equal(t, []string{"tt0000001", "tt0000001"}, rater.lookups, "records without an IMDb id are not looked up")
+	assert.Equal(t, []string{"tt0000001", "tt0000001"}, rater.lookups,
+		"one lookup for the single record, one batch lookup for the batch; records without an IMDb id are skipped")
 }
 
 // resolvingRater is a stubRater that also knows IMDb ids by "mediaType:id".
