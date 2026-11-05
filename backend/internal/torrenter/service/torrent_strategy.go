@@ -128,6 +128,7 @@ func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episo
 		return &models.SearchStrategy{
 			Query:          query,
 			MediaName:      name,
+			Names:          names,
 			Season:         episode.SeasonNumber,
 			Episode:        episode.Number,
 			EpisodeMeta:    episode,
@@ -146,6 +147,7 @@ func (q *QbittHandler) createSearchStrategy(req *tvdb.Media, episode *tvdb.Episo
 		return &models.SearchStrategy{
 			Query:          query,
 			MediaName:      name,
+			Names:          names,
 			Season:         episode.SeasonNumber,
 			Episode:        episode.AbsoluteNumber,
 			EpisodeMeta:    episode,
