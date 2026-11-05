@@ -167,19 +167,26 @@ func (q *QbittHandler) validateShowTorrent(torrent *prowlarr.Search, strategy *m
 		}
 	} else if parsed.IsSeasonal {
 		// For seasonal format (S##E##), check season and episode numbers
-		if parsed.Season != strategy.Season {
+		// against the episode itself, not the numbers the query was built
+		// with: an absolute-numbered query ("Show 15") still wants the
+		// release that calls the same episode S02E05.
+		wantSeason, wantEpisode := strategy.Season, strategy.Episode
+		if m := strategy.EpisodeMeta; m != nil && m.Number > 0 {
+			wantSeason, wantEpisode = m.SeasonNumber, m.Number
+		}
+		if parsed.Season != wantSeason {
 			return TorrentValidationResult{
 				IsValid:    false,
 				Confidence: 0.0,
-				Reason:     fmt.Sprintf("season mismatch: expected %d, got %d", strategy.Season, parsed.Season),
+				Reason:     fmt.Sprintf("season mismatch: expected %d, got %d", wantSeason, parsed.Season),
 				Parsed:     parsed,
 			}
 		}
-		if parsed.Episode != strategy.Episode {
+		if parsed.Episode != wantEpisode {
 			return TorrentValidationResult{
 				IsValid:    false,
 				Confidence: 0.0,
-				Reason:     fmt.Sprintf("episode mismatch: expected %d, got %d", strategy.Episode, parsed.Episode),
+				Reason:     fmt.Sprintf("episode mismatch: expected %d, got %d", wantEpisode, parsed.Episode),
 				Parsed:     parsed,
 			}
 		}
@@ -193,8 +200,8 @@ func (q *QbittHandler) validateShowTorrent(torrent *prowlarr.Search, strategy *m
 		}
 	}
 
-	// Layer 6: Show name validation
-	nameMatchScore := q.scoreNameMatch(parsed.ShowName, strategy.MediaName)
+	// Layer 6: Show name validation, against every name the show goes by
+	nameMatchScore := q.bestNameMatch(parsed.ShowName, strategy)
 	if nameMatchScore < 0.3 { // Threshold for minimum name match
 		return TorrentValidationResult{
 			IsValid:    false,
@@ -212,6 +219,19 @@ func (q *QbittHandler) validateShowTorrent(torrent *prowlarr.Search, strategy *m
 		Reason:     "validation passed",
 		Parsed:     parsed,
 	}
+}
+
+// bestNameMatch scores the release's show name against the name the query was
+// built under and every other name the show goes by, and keeps the best. A
+// release naming the show's title is the show whichever alias found it.
+func (q *QbittHandler) bestNameMatch(parsedName string, strategy *models.SearchStrategy) float64 {
+	best := q.scoreNameMatch(parsedName, strategy.MediaName)
+	for _, name := range strategy.Names {
+		if score := q.scoreNameMatch(parsedName, name); score > best {
+			best = score
+		}
+	}
+	return best
 }
 
 // numberedSeasonRe matches a season designation that carries a number:

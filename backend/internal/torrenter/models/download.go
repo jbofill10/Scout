@@ -90,7 +90,13 @@ type FileEntry struct {
 }
 
 type SearchStrategy struct {
-	MediaName   string
+	MediaName string
+	// Names is every name the show goes by (the title first, then its
+	// aliases). A query is built under one of them (MediaName), but a release
+	// naming any of them is the show: a search under the alias "Cyberpunk:
+	// Edgerunners 2" must accept "Cyberpunk Edgerunners S02E05". Empty on rows
+	// written before the field existed, which fall back to MediaName alone.
+	Names       []string
 	EpisodeMeta *tvdb.Episode
 	Query       string
 	Season      int
