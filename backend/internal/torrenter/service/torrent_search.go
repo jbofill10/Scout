@@ -144,6 +144,20 @@ func newExcludedTorrents(failed []*models.FailedTorrent) *excludedTorrents {
 	return ex
 }
 
+// exclude adds one more release (by hash and title) to the set, so a search
+// for a replacement never picks the torrent it is meant to replace.
+func (e *excludedTorrents) exclude(infoHash, title string) {
+	if e == nil {
+		return
+	}
+	if infoHash != "" {
+		e.hashes[strings.ToLower(infoHash)] = true
+	}
+	if title != "" {
+		e.titles[normalizeTitle(title)] = true
+	}
+}
+
 // normalizeTitle makes release titles comparable across sources: qBittorrent
 // HTML-encodes characters such as the apostrophe in "Marvel's" while Prowlarr
 // does not, and whitespace and case vary between listings of one release.

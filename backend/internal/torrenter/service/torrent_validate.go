@@ -225,13 +225,37 @@ func (q *QbittHandler) validateShowTorrent(torrent *prowlarr.Search, strategy *m
 // built under and every other name the show goes by, and keeps the best. A
 // release naming the show's title is the show whichever alias found it.
 func (q *QbittHandler) bestNameMatch(parsedName string, strategy *models.SearchStrategy) float64 {
-	best := q.scoreNameMatch(parsedName, strategy.MediaName)
-	for _, name := range strategy.Names {
-		if score := q.scoreNameMatch(parsedName, name); score > best {
-			best = score
+	names := append([]string{strategy.MediaName}, strategy.Names...)
+	best := 0.0
+	for _, candidate := range showNameForms(parsedName) {
+		for _, name := range names {
+			if score := q.scoreNameMatch(candidate, name); score > best {
+				best = score
+			}
 		}
 	}
 	return best
+}
+
+// showNameForms is the release's show name as parsed and, when it carries an
+// anime arc designation, without it: "JoJo's Bizarre Adventure Part 6: Stone
+// Ocean" is JoJo's Bizarre Adventure. Only a show's name is read this way; for
+// a film "Part 2" names a sequel and the movie validator never comes here.
+func showNameForms(parsedName string) []string {
+	forms := []string{parsedName}
+	if trimmed := trimArcDesignation(parsedName); trimmed != "" && trimmed != parsedName {
+		forms = append(forms, trimmed)
+	}
+	return forms
+}
+
+// arcDesignationRe matches "Part 6", "Part 6: Stone Ocean", "Part 6 - Stone
+// Ocean" and whatever follows, from the first "Part <number>" on.
+var arcDesignationRe = regexp.MustCompile(`(?i)\s+part\s+\d+\b.*$`)
+
+// trimArcDesignation drops an anime arc designation from a show name.
+func trimArcDesignation(name string) string {
+	return strings.TrimSpace(arcDesignationRe.ReplaceAllString(name, ""))
 }
 
 // numberedSeasonRe matches a season designation that carries a number:

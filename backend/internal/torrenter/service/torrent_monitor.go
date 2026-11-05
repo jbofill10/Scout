@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"sync"
 	"time"
@@ -193,6 +194,10 @@ func (q *QbittHandler) monitorTorrentCompletion(
 	// errorSince is when qBittorrent first reported the torrent in an error
 	// state; zero while it is not.
 	var errorSince time.Time
+	// lastCrawlCheck is when a crawling torrent was last compared with what the
+	// indexers offer; zero until the first check.
+	var lastCrawlCheck time.Time
+	crawl := crawlSettings()
 	// packTrimmed is set once a pack's unwanted files have been deselected,
 	// packStarted once its trimmed size has been checked against free space
 	// and the (paused) torrent resumed.
@@ -427,6 +432,26 @@ func (q *QbittHandler) monitorTorrentCompletion(
 				monitorSpan.SetStatus(codes.Error, "stalled")
 				return
 			}
+			// A download that moves, but so slowly it would take days, is alive
+			// only in name. When the indexers offer another copy it is swapped
+			// for it; when they do not, it is left to crawl and asked about again
+			// later. Nothing is removed before a replacement is in hand.
+			if match.Strategy.Pack == nil && isCrawling(now.Sub(start), &torrent, crawl) &&
+				(lastCrawlCheck.IsZero() || now.Sub(lastCrawlCheck) >= crawl.recheck) {
+				lastCrawlCheck = now
+				q.logger.WarnContext(monitorCtx, "Torrent is crawling, looking for a faster copy",
+					telemetry.WithTraceContext(monitorCtx,
+						"torrent_title", match.Torrent.Title,
+						"torrent_hash", infoHash,
+						"progress", torrent.Progress*100,
+						"seeds", torrent.NumSeeds,
+						"dlspeed", torrent.DlSpeed,
+						"eta", crawlETA(now.Sub(start), &torrent).Round(time.Minute).String())...)
+				if q.swapCrawlingTorrent(monitorCtx, request, match, infoHash, done, wg) {
+					monitorSpan.SetStatus(codes.Error, "crawling swarm swapped")
+					return
+				}
+			}
 			q.logger.InfoContext(monitorCtx, "Torrent downloading",
 				telemetry.WithTraceContext(monitorCtx,
 					"title", match.Torrent.Title,
@@ -438,6 +463,121 @@ func (q *QbittHandler) monitorTorrentCompletion(
 					"stalled_for", stalledFor.Round(time.Second).String())...)
 		}
 	}
+}
+
+// crawlRules say when a moving download counts as crawling: after grace of
+// downloading, with at most maxSeeds seeds connected and less than half done,
+// its average rate since it started implies more than maxETA to finish. A
+// crawling torrent is compared with the indexers every recheck.
+type crawlRules struct {
+	grace    time.Duration
+	maxETA   time.Duration
+	recheck  time.Duration
+	maxSeeds int64
+}
+
+// crawlSettings reads the crawl rules from CRAWL_GRACE, CRAWL_MAX_ETA and
+// CRAWL_RECHECK (Go durations), with the defaults below.
+func crawlSettings() crawlRules {
+	return crawlRules{
+		grace:    durationEnv("CRAWL_GRACE", defaultCrawlGrace),
+		maxETA:   durationEnv("CRAWL_MAX_ETA", defaultCrawlMaxETA),
+		recheck:  durationEnv("CRAWL_RECHECK", defaultCrawlRecheck),
+		maxSeeds: 1,
+	}
+}
+
+func durationEnv(name string, fallback time.Duration) time.Duration {
+	if v := os.Getenv(name); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return fallback
+}
+
+// crawlETA estimates how long a torrent still needs at the average rate it has
+// managed since it started. It is "forever" until the first byte lands.
+func crawlETA(elapsed time.Duration, t *qbittorrent.Torrent) time.Duration {
+	if t.Completed <= 0 || elapsed <= 0 {
+		return time.Duration(math.MaxInt64)
+	}
+	remaining := t.Size - t.Completed
+	if remaining <= 0 {
+		return 0
+	}
+	rate := float64(t.Completed) / elapsed.Seconds()
+	return time.Duration(float64(remaining) / rate * float64(time.Second))
+}
+
+// isCrawling applies crawlRules to a torrent that is downloading (not waiting,
+// not errored, not a dead swarm). Both the average rate since the start and
+// the rate right now must say "days": a torrent that sat queued for hours and
+// is pulling fast from its one seed now has a poor average and a fine ETA.
+func isCrawling(elapsed time.Duration, t *qbittorrent.Torrent, rules crawlRules) bool {
+	if elapsed < rules.grace || t.NumSeeds > rules.maxSeeds || t.Progress >= 0.5 {
+		return false
+	}
+	if t.DlSpeed > 0 {
+		remaining := t.Size - t.Completed
+		if time.Duration(float64(remaining)/float64(t.DlSpeed)*float64(time.Second)) <= rules.maxETA {
+			return false
+		}
+	}
+	return crawlETA(elapsed, t) > rules.maxETA
+}
+
+// swapCrawlingTorrent looks for another copy of what a crawling torrent is
+// downloading and, only when one is found, removes the crawler (blacklisting
+// the release) and starts the copy in its place, on the same request. It
+// reports whether the swap happened; when nothing better is listed the
+// crawler is kept, since a slow download beats no download.
+func (q *QbittHandler) swapCrawlingTorrent(
+	ctx context.Context,
+	request *models.SearchRequest,
+	match *models.TorrentMatch,
+	infoHash string,
+	done chan<- models.TorrentCompleteEvent,
+	wg *sync.WaitGroup,
+) bool {
+	ss := match.Strategy
+	if request == nil || request.Replaced >= maxDeadReplacements {
+		q.logger.InfoContext(ctx, "Crawling torrent kept: no request to search from or replacements exhausted",
+			telemetry.WithTraceContext(ctx, "tvdb_id", ss.EpisodeTvdbID, "torrent_hash", infoHash)...)
+		return false
+	}
+	media := request.Media
+	var strategies []*models.SearchStrategy
+	if request.Episode == nil {
+		strategies = q.createMovieSearchStrategy(&media)
+	} else {
+		strategies = q.createSearchStrategy(&media, request.Episode)
+	}
+	if len(strategies) == 0 {
+		return false
+	}
+
+	searchCtx, cancel := context.WithTimeout(ctx, episodeSearchDeadline)
+	defer cancel()
+	searchCtx = searchgate.WithRequest(searchCtx, searchgate.PriorityFor(media.Source), searchLabel(&media, strategies[0]))
+	excluded := q.loadExcludedTorrents(searchCtx, media.Id, ss.Season, ss.Episode)
+	excluded.exclude(infoHash, match.Torrent.Title)
+	outcome := q.searchForMatch(searchCtx, strategies, &media, excluded)
+	if outcome.match == nil {
+		q.logger.InfoContext(ctx, "No faster copy listed, keeping the crawling torrent",
+			telemetry.WithTraceContext(ctx, "media", media.Name, "season", ss.Season, "episode", ss.Episode)...)
+		return false
+	}
+
+	request.Replaced++
+	q.logger.WarnContext(ctx, "Swapping the crawling torrent for another copy",
+		telemetry.WithTraceContext(ctx, "media", media.Name, "season", ss.Season, "episode", ss.Episode,
+			"old_torrent", match.Torrent.Title, "new_torrent", outcome.match.Torrent.Title,
+			"new_seeders", outcome.match.Torrent.Seeders, "replacement", request.Replaced)...)
+	q.giveUpOnTorrent(ctx, match, infoHash, "crawling: replaced by a faster copy", true)
+	q.updateNotificationStatus(ctx, ss.EpisodeTvdbID, "Swapping a crawling download for a faster copy", notifications.StatusSearching)
+	q.initiateDownloadAndMonitor(outcome.winningCtx, outcome.match, request, done, wg)
+	return true
 }
 
 // isDeadSwarm decides that a download will not finish: it has sat at the same
@@ -502,6 +642,9 @@ func deadSwarmGrace() time.Duration {
 }
 
 const (
+	defaultCrawlGrace     = 30 * time.Minute
+	defaultCrawlMaxETA    = 24 * time.Hour
+	defaultCrawlRecheck   = 30 * time.Minute
 	defaultDeadSwarmGrace = 15 * time.Minute
 	// maxDeadReplacements bounds how many dead torrents are swapped out for one
 	// item before it is reported as failed.
